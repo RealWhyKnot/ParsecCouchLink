@@ -1,0 +1,11 @@
+build/
+_pico_sdk/
+*.uf2
+*.elf
+*.bin
+*.hex
+*.map
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile

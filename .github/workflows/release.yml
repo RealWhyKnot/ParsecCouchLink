@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version without leading v, such as 2026.5.15.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Pico toolchain
+        shell: pwsh
+        run: |
+          choco install ninja gcc-arm-embedded -y --no-progress
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $version = '${{ inputs.version }}'
+            $tag = "v$version"
+          } else {
+            $tag = '${{ github.ref_name }}'
+            $version = $tag.TrimStart('v')
+          }
+          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4})?$') {
+            throw "Invalid version '$version'. Expected YYYY.M.D.N or YYYY.M.D.N-XXXX."
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Build release zip
+        shell: pwsh
+        run: ./build.ps1 -Version '${{ steps.version.outputs.version }}' -Package
+
+      - name: Locate artifacts
+        id: artifact
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist/ParsecToDreamcast-v*.zip | Select-Object -First 1
+          if (-not $zip) { throw "No release zip found in dist/." }
+          $manifest = Get-ChildItem dist/ParsecToDreamcast-v*.manifest.tsv | Select-Object -First 1
+          if (-not $manifest) { throw "No release manifest found in dist/." }
+          $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+          "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
+          "zip_name=$($zip.Name)" >> $env:GITHUB_OUTPUT
+          "manifest=$($manifest.FullName)" >> $env:GITHUB_OUTPUT
+          "sha256=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ParsecToDreamcast-release
+          path: |
+            ${{ steps.artifact.outputs.zip }}
+            ${{ steps.artifact.outputs.manifest }}
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.version.outputs.tag }}
+          ZIP_PATH: ${{ steps.artifact.outputs.zip }}
+          ZIP_NAME: ${{ steps.artifact.outputs.zip_name }}
+          ZIP_SHA256: ${{ steps.artifact.outputs.sha256 }}
+          MANIFEST_PATH: ${{ steps.artifact.outputs.manifest }}
+        shell: pwsh
+        run: |
+          $notes = @"
+          Download $env:ZIP_NAME, extract the full zip, then run:
+
+              powershell -ExecutionPolicy Bypass -File .\setup.ps1
+
+          SHA256: $env:ZIP_SHA256
+
+          Full walkthrough: https://github.com/$env:GITHUB_REPOSITORY/wiki/Quick-Start
+          "@
+          $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
+          Set-Content -LiteralPath $notesPath -Value $notes -Encoding UTF8
+
+          gh release create $env:TAG_NAME $env:ZIP_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath

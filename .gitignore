@@ -1,0 +1,24 @@
+# Rust
+bridge/target/
+bridge/Cargo.lock.bak
+**/*.rs.bk
+
+# Pico build artifacts
+pico-bridge/build/
+pico-bridge/wifi_credentials.h
+
+# Release/build staging
+dist/
+release/
+.local_build_state.json
+build_log.txt
+build_stdout.txt
+build_stderr.txt
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

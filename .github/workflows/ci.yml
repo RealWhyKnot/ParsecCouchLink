@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'bridge/**'
+      - 'pico-bridge/**'
+      - 'scripts/**'
+      - 'build.ps1'
+      - 'setup.ps1'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Rust format
+        run: cargo fmt --manifest-path bridge/Cargo.toml -- --check
+
+      - name: Rust tests
+        run: cargo test --manifest-path bridge/Cargo.toml --locked
+
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Pico toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Build firmware
+        shell: pwsh
+        run: ./pico-bridge/scripts/build.ps1 -Release -BuildDir build
