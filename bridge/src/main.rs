@@ -22,11 +22,11 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "ptd-bridge",
+    name = "couchlink",
     version,
     about = "Parsec to retro-console bridge. Run with no arguments to stream. \
-             Run `ptd-bridge setup` to walk through first-time setup. \
-             Run `ptd-bridge doctor` to diagnose problems."
+             Run `couchlink setup` to walk through first-time setup. \
+             Run `couchlink doctor` to diagnose problems."
 )]
 struct Cli {
     /// Verbosity. -v for debug, -vv for trace.

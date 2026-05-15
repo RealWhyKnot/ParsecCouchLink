@@ -19,9 +19,9 @@ Local builds use the root `build.ps1`, which stages the same shape as a release 
 Output:
 
 ```text
-dist\ParsecToDreamcast\ptd-bridge.exe
-dist\ParsecToDreamcast\pico-bridge.uf2
-dist\ParsecToDreamcast\setup.ps1
+dist\ParsecCouchLink\couchlink.exe
+dist\ParsecCouchLink\couchlink-pico.uf2
+dist\ParsecCouchLink\setup.ps1
 ```
 
 ## Build A Release Zip
@@ -33,8 +33,8 @@ dist\ParsecToDreamcast\setup.ps1
 Output:
 
 ```text
-dist\ParsecToDreamcast-v<version>.zip
-dist\ParsecToDreamcast-v<version>.manifest.tsv
+dist\ParsecCouchLink-v<version>.zip
+dist\ParsecCouchLink-v<version>.manifest.tsv
 ```
 
 The manifest lists each file in the zip with size and SHA-256.

@@ -1,4 +1,4 @@
-//! `ptd-bridge test <which>` -- run a single check from the doctor ladder.
+//! `couchlink test <which>` -- run a single check from the doctor ladder.
 
 use anyhow::{anyhow, Result};
 

@@ -141,10 +141,10 @@ static char serial_str[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1];
 
 static const char *const string_desc_arr[] = {
     [STRID_LANGID]        = (const char[]){0x09, 0x04}, // English (US)
-    [STRID_MANUFACTURER]  = "ParsecToDreamcast",
-    [STRID_PRODUCT]       = "Pico Bridge",
+    [STRID_MANUFACTURER]  = "Parsec CouchLink",
+    [STRID_PRODUCT]       = "CouchLink Pico",
     [STRID_SERIAL]        = serial_str,
-    [STRID_CDC_INTERFACE] = "ParsecToDreamcast Setup",
+    [STRID_CDC_INTERFACE] = "Parsec CouchLink Setup",
 };
 
 // XInput wants Microsoft-y strings so xusb22.sys binds without

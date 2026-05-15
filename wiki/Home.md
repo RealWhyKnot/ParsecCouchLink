@@ -1,17 +1,17 @@
-# ParsecToDreamcast
+# Parsec CouchLink
 
-ParsecToDreamcast turns a remote Parsec gamepad into a real controller input for a retro console.
+Parsec CouchLink turns a remote Parsec gamepad into a real controller input for a retro console.
 
 ```
 Remote player
    |
    | Parsec virtual Xbox controller
    v
-Windows host running ptd-bridge.exe
+Windows host running couchlink.exe
    |
    | Wi-Fi
    v
-Raspberry Pi Pico 2 W running pico-bridge.uf2
+Raspberry Pi Pico 2 W running couchlink-pico.uf2
    |
    | USB as wired Xbox 360 controller
    v
@@ -35,8 +35,8 @@ Console player 2
 | File | Purpose |
 |---|---|
 | `setup.ps1` | The first-run setup script. |
-| `ptd-bridge.exe` | Windows app that reads the Parsec gamepad and sends state to the Pico. |
-| `pico-bridge.uf2` | Pico firmware flashed by setup. |
+| `couchlink.exe` | Windows app that reads the Parsec gamepad and sends state to the Pico. |
+| `couchlink-pico.uf2` | Pico firmware flashed by setup. |
 | `README.txt` | Short copy of the release-folder instructions. |
 
 ## Normal Flow

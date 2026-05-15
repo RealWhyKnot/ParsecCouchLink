@@ -3,19 +3,19 @@
 Start with:
 
 ```powershell
-.\ptd-bridge.exe doctor
+.\couchlink.exe doctor
 ```
 
 For a live log view:
 
 ```powershell
-.\ptd-bridge.exe logs --tail
+.\couchlink.exe logs --tail
 ```
 
 For a shareable support bundle:
 
 ```powershell
-.\ptd-bridge.exe bundle
+.\couchlink.exe bundle
 ```
 
 The bundle includes recent logs and diagnostic output. It does not include Wi-Fi credentials or SSID.
@@ -60,7 +60,7 @@ Check:
 Run:
 
 ```powershell
-.\ptd-bridge.exe configure-wifi
+.\couchlink.exe configure-wifi
 ```
 
 ## Discovery Fails
@@ -68,7 +68,7 @@ Run:
 Run:
 
 ```powershell
-.\ptd-bridge.exe test discover
+.\couchlink.exe test discover
 ```
 
 Common causes:
@@ -83,7 +83,7 @@ Common causes:
 Run:
 
 ```powershell
-.\ptd-bridge.exe test xinput
+.\couchlink.exe test xinput
 ```
 
 Parsec must expose the remote controller as an XInput gamepad on the host. A local wired Xbox controller is also enough for bench testing.
@@ -93,11 +93,11 @@ Parsec must expose the remote controller as an XInput gamepad on the host. A loc
 Log location is printed by:
 
 ```powershell
-.\ptd-bridge.exe logs
+.\couchlink.exe logs
 ```
 
 Attach a support bundle instead of hand-copying logs when possible:
 
 ```powershell
-.\ptd-bridge.exe bundle
+.\couchlink.exe bundle
 ```

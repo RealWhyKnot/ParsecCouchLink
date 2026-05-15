@@ -6,8 +6,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$BridgeExe = Join-Path $Root "ptd-bridge.exe"
-$Firmware = Join-Path $Root "pico-bridge.uf2"
+$BridgeExe = Join-Path $Root "couchlink.exe"
+$Firmware = Join-Path $Root "couchlink-pico.uf2"
 
 function Write-Section {
     param([string]$Text)
@@ -23,7 +23,7 @@ function Stop-Setup {
 }
 
 if (-not (Test-Path -LiteralPath $BridgeExe)) {
-    Stop-Setup "ptd-bridge.exe was not found next to setup.ps1. Extract the release zip first, or run build.ps1 from source."
+    Stop-Setup "couchlink.exe was not found next to setup.ps1. Extract the release zip first, or run build.ps1 from source."
 }
 
 if ($DoctorOnly) {
@@ -32,11 +32,11 @@ if ($DoctorOnly) {
 }
 
 if (-not (Test-Path -LiteralPath $Firmware)) {
-    Stop-Setup "pico-bridge.uf2 was not found next to setup.ps1. Download the full release zip, not just the script."
+    Stop-Setup "couchlink-pico.uf2 was not found next to setup.ps1. Download the full release zip, not just the script."
 }
 
 if (-not $SkipIntro) {
-    Write-Host "ParsecToDreamcast setup" -ForegroundColor Green
+    Write-Host "Parsec CouchLink setup" -ForegroundColor Green
     Write-Host ""
     Write-Host "This will flash your Pico, put your Wi-Fi on it, test that the PC can find it, and offer to add the bridge to Windows startup."
     Write-Host ""
@@ -51,7 +51,7 @@ if (-not $SkipIntro) {
 
     Write-Section "What will happen"
     Write-Host "1. Hold BOOTSEL while plugging the Pico into this PC."
-    Write-Host "2. The script copies pico-bridge.uf2 onto the Pico."
+    Write-Host "2. The script copies couchlink-pico.uf2 onto the Pico."
     Write-Host "3. The Pico reboots as a USB serial setup device."
     Write-Host "4. You enter your 2.4 GHz Wi-Fi credentials."
     Write-Host "5. The Pico joins Wi-Fi and the bridge checks discovery."
@@ -67,7 +67,7 @@ $ExitCode = $LASTEXITCODE
 
 if ($ExitCode -eq 0) {
     Write-Section "Done"
-    Write-Host "Leave the Pico plugged into your console adapter. Have the remote player join through Parsec, then run ptd-bridge.exe or reboot if you accepted the startup shortcut."
+    Write-Host "Leave the Pico plugged into your console adapter. Have the remote player join through Parsec, then run couchlink.exe or reboot if you accepted the startup shortcut."
     exit 0
 }
 

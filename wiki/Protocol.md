@@ -2,7 +2,7 @@
 
 This page is for maintainers. Normal users should start with [[Quick Start]].
 
-ParsecToDreamcast has two small protocols:
+Parsec CouchLink has two small protocols:
 
 - Runtime UDP over Wi-Fi while the bridge is streaming controller state.
 - USB-CDC setup mode while Wi-Fi credentials are being provisioned.

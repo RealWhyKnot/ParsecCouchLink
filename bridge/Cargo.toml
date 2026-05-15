@@ -1,13 +1,13 @@
 [package]
-name = "ptd-bridge"
+name = "parsec-couchlink"
 version = "0.1.0"
 edition = "2021"
-description = "Windows host-side bridge between Parsec virtual gamepads and a Pico 2 W USB HID gamepad."
+description = "Windows host-side bridge between Parsec virtual gamepads and a Pico 2 W controller adapter."
 license = "GPL-3.0-or-later"
-repository = "https://github.com/RealWhyKnot/ParsecToDreamcast"
+repository = "https://github.com/RealWhyKnot/ParsecCouchLink"
 
 [[bin]]
-name = "ptd-bridge"
+name = "couchlink"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,4 +1,4 @@
-//! `ptd-bridge run` -- the default mode. Reads the Parsec virtual
+//! `couchlink run` -- the default mode. Reads the Parsec virtual
 //! controller via XInput, broadcasts to find the Pico on LAN, then
 //! streams state and heartbeats. Survives Pico reboots: on peer staleness
 //! it returns to discovery automatically.
@@ -13,7 +13,7 @@ use crate::{config, discovery, network, protocol, xinput};
 
 pub async fn run() -> Result<()> {
     tracing::info!(
-        "ptd-bridge v{} starting in run mode",
+        "couchlink v{} starting in run mode",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -21,7 +21,7 @@ pub async fn run() -> Result<()> {
     if !cfg.setup_complete {
         tracing::warn!(
             "setup_complete = false in config. If this is a fresh install, \
-             run `ptd-bridge setup` first."
+             run `couchlink setup` first."
         );
     }
 

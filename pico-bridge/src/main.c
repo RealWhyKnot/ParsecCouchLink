@@ -96,7 +96,7 @@ static void setup_mode_main_loop(void) {
 int main(void) {
     stdio_init_all();
     diag_log_init();
-    diag_log_msg("pico-bridge boot");
+    diag_log_msg("couchlink-pico boot");
 
     boot_mode_t mode = boot_mode_decide();
     tusb_init();

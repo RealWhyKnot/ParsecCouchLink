@@ -8,5 +8,5 @@
 
 ---
 
-- [Releases](https://github.com/RealWhyKnot/ParsecToDreamcast/releases)
-- [Source](https://github.com/RealWhyKnot/ParsecToDreamcast)
+- [Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases)
+- [Source](https://github.com/RealWhyKnot/ParsecCouchLink)

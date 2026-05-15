@@ -1,4 +1,4 @@
-//! `ptd-bridge configure-wifi` -- re-provision a Pico that's in setup mode
+//! `couchlink configure-wifi` -- re-provision a Pico that's in setup mode
 //! over USB-CDC. Prompts for SSID + password, sends `SET_WIFI`, then
 //! `REBOOT_TO_RUN`.
 //!
@@ -13,7 +13,7 @@ use zeroize::Zeroize;
 use crate::cdc;
 
 pub async fn run() -> Result<()> {
-    println!("ptd-bridge configure-wifi");
+    println!("couchlink configure-wifi");
     println!();
     println!(
         "Looking for a Pico in setup mode (VID 0x{:04X}, PID 0x{:04X})...",
@@ -22,7 +22,7 @@ pub async fn run() -> Result<()> {
     );
 
     let port = cdc::find_setup_port()
-        .context("no Pico in setup mode. Hold BOOTSEL and re-flash, or run `ptd-bridge setup`.")?;
+        .context("no Pico in setup mode. Hold BOOTSEL and re-flash, or run `couchlink setup`.")?;
     println!("Found Pico on {port}");
 
     // dialoguer is blocking; isolate it from the async runtime.
@@ -60,7 +60,7 @@ pub async fn run() -> Result<()> {
     println!();
     println!(
         "Pico will reboot. Once it has joined the network it will respond \
-         to `ptd-bridge test discover`."
+         to `couchlink test discover`."
     );
     Ok(())
 }

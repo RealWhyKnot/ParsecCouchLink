@@ -1,4 +1,4 @@
-//! `ptd-bridge logs` -- print where logs live, or tail the latest one.
+//! `couchlink logs` -- print where logs live, or tail the latest one.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,7 +15,7 @@ pub async fn run(tail: bool) -> Result<()> {
     let mut entries: Vec<PathBuf> = match std::fs::read_dir(&dir) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().starts_with("ptd-bridge"))
+            .filter(|e| e.file_name().to_string_lossy().starts_with("couchlink"))
             .map(|e| e.path())
             .collect(),
         Err(_) => Vec::new(),

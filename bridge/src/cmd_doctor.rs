@@ -1,4 +1,4 @@
-//! `ptd-bridge doctor` -- run every diagnostic check and report
+//! `couchlink doctor` -- run every diagnostic check and report
 //! PASS/WARN/FAIL/SKIP with a one-line hint per failure. Exit codes:
 //! 0 clean, 1 warnings, 2 hard fail, 3 setup not complete.
 //!
@@ -22,7 +22,7 @@ pub enum CheckResult {
 }
 
 pub async fn run() -> Result<()> {
-    println!("ptd-bridge doctor v{}", env!("CARGO_PKG_VERSION"));
+    println!("couchlink doctor v{}", env!("CARGO_PKG_VERSION"));
     println!();
 
     let mut passes = 0;
@@ -77,7 +77,7 @@ pub async fn run() -> Result<()> {
 
     let setup_complete = config::load().map(|c| c.setup_complete).unwrap_or(false);
     if !setup_complete && fails == 0 {
-        println!("(note: config marks setup as incomplete; run `ptd-bridge setup`)");
+        println!("(note: config marks setup as incomplete; run `couchlink setup`)");
         std::process::exit(3);
     }
     if fails > 0 {
@@ -146,10 +146,10 @@ pub async fn check_xinput() -> CheckResult {
 pub async fn check_startup_shortcut() -> CheckResult {
     #[cfg(windows)]
     {
-        match crate::known_folders::shortcut_path_for("ptd-bridge") {
+        match crate::known_folders::shortcut_path_for("Parsec CouchLink") {
             Ok(p) if p.exists() => CheckResult::Pass(format!("{}", p.display())),
             Ok(p) => CheckResult::Warn(format!(
-                "not installed at {}. Run `ptd-bridge setup` to install autostart.",
+                "not installed at {}. Run `couchlink setup` to install autostart.",
                 p.display(),
             )),
             Err(e) => CheckResult::Fail(
@@ -179,7 +179,7 @@ pub async fn check_firewall() -> CheckResult {
                     CheckResult::Warn(
                         "Windows Firewall is on for the current profile. UDP/4242 \
                          may be blocked. If discovery fails, allow it with: \
-                         `netsh advfirewall firewall add rule name=ptd-bridge dir=in \
+                         `netsh advfirewall firewall add rule name=couchlink dir=in \
                          action=allow protocol=UDP localport=4242` (needs admin)."
                             .into(),
                     )
@@ -225,7 +225,7 @@ pub async fn check_discover() -> CheckResult {
             return CheckResult::Fail(
                 format!("UDP bind failed: {e}"),
                 "Another process owns the port, or firewall blocks all UDP \
-                 outbound. Run `ptd-bridge test firewall`."
+                 outbound. Run `couchlink test firewall`."
                     .into(),
             );
         }
@@ -240,7 +240,7 @@ pub async fn check_discover() -> CheckResult {
     if let Err(e) = socket.send_to(&discover, "255.255.255.255:4242").await {
         return CheckResult::Fail(
             format!("UDP broadcast send failed: {e}"),
-            "Likely a firewall rule blocking outbound UDP. Run `ptd-bridge test firewall`.".into(),
+            "Likely a firewall rule blocking outbound UDP. Run `couchlink test firewall`.".into(),
         );
     }
 
@@ -261,13 +261,13 @@ pub async fn check_discover() -> CheckResult {
             },
             Err(e) => CheckResult::Fail(
                 format!("malformed reply from {from}: {e}"),
-                "Run `ptd-bridge bundle` and send the result to the maintainer.".into(),
+                "Run `couchlink bundle` and send the result to the maintainer.".into(),
             ),
         },
         _ => CheckResult::Fail(
             "no Pico replied within 3 s".into(),
             "Confirm Pico is powered, joined your Wi-Fi, and on the same LAN as this PC. \
-             If unsure, run `ptd-bridge configure-wifi` to re-provision."
+             If unsure, run `couchlink configure-wifi` to re-provision."
                 .into(),
         ),
     }

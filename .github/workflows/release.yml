@@ -59,9 +59,9 @@ jobs:
         id: artifact
         shell: pwsh
         run: |
-          $zip = Get-ChildItem dist/ParsecToDreamcast-v*.zip | Select-Object -First 1
+          $zip = Get-ChildItem dist/ParsecCouchLink-v*.zip | Select-Object -First 1
           if (-not $zip) { throw "No release zip found in dist/." }
-          $manifest = Get-ChildItem dist/ParsecToDreamcast-v*.manifest.tsv | Select-Object -First 1
+          $manifest = Get-ChildItem dist/ParsecCouchLink-v*.manifest.tsv | Select-Object -First 1
           if (-not $manifest) { throw "No release manifest found in dist/." }
           $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
           "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
@@ -72,7 +72,7 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ParsecToDreamcast-release
+          name: ParsecCouchLink-release
           path: |
             ${{ steps.artifact.outputs.zip }}
             ${{ steps.artifact.outputs.manifest }}

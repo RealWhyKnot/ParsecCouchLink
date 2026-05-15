@@ -10,6 +10,6 @@ Edit pages here, not on the GitHub web UI after bootstrap. Web edits are overwri
 
 The GitHub Wiki repo only exists after a maintainer creates the first page through the web UI. If the sync workflow says the wiki repo does not exist, create any placeholder page at:
 
-<https://github.com/RealWhyKnot/ParsecToDreamcast/wiki>
+<https://github.com/RealWhyKnot/ParsecCouchLink/wiki>
 
 Then re-run the workflow. The placeholder page is replaced by this directory on the next sync.

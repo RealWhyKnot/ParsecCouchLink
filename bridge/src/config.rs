@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 const QUALIFIER: &str = "";
 const ORGANIZATION: &str = "";
-const APPLICATION: &str = "ParsecToDreamcast";
+const APPLICATION: &str = "ParsecCouchLink";
 
 pub fn dirs() -> Result<ProjectDirs> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
@@ -41,7 +41,7 @@ pub struct Config {
     /// Path to the .uf2 used during the most recent flash, if known.
     pub last_uf2: Option<PathBuf>,
     /// Set after setup finishes successfully. Bridge run mode warns if
-    /// this is false to nudge the user toward `ptd-bridge setup`.
+    /// this is false to nudge the user toward `couchlink setup`.
     pub setup_complete: bool,
 }
 

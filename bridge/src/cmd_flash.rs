@@ -1,4 +1,4 @@
-//! `ptd-bridge flash --uf2 <path>` -- find a Pico in BOOTSEL mode and copy
+//! `couchlink flash --uf2 <path>` -- find a Pico in BOOTSEL mode and copy
 //! a UF2 onto it. BOOTSEL is the boot-loader mode entered by holding the
 //! BOOTSEL button while applying USB power; the Pico enumerates as a USB
 //! mass-storage device named RPI-RP2 (RP2040) or RP2350 (RP2350).
@@ -44,7 +44,7 @@ pub async fn run(uf2: PathBuf) -> Result<()> {
     let dest_name = uf2
         .file_name()
         .map(|n| n.to_owned())
-        .unwrap_or_else(|| "pico-bridge.uf2".into());
+        .unwrap_or_else(|| "couchlink-pico.uf2".into());
     let dest = mount.join(&dest_name);
 
     println!("Copying {} -> {} ...", uf2.display(), dest.display());

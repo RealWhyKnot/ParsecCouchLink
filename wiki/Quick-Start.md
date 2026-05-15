@@ -13,7 +13,7 @@ This is the path for a new Pico user starting from a release zip.
 
 ## Install
 
-1. Download the latest `ParsecToDreamcast-v*.zip` from Releases.
+1. Download the latest `ParsecCouchLink-v*.zip` from Releases.
 2. Extract the full zip to a normal folder. Avoid `Program Files`.
 3. Open PowerShell in that folder.
 4. Run:
@@ -28,7 +28,7 @@ The script explains each step before it starts. In short:
 
 1. Hold BOOTSEL on the Pico.
 2. Plug the Pico into the PC while still holding BOOTSEL.
-3. Setup copies `pico-bridge.uf2` to the Pico.
+3. Setup copies `couchlink-pico.uf2` to the Pico.
 4. The Pico reboots as a USB serial setup device.
 5. Enter the 2.4 GHz Wi-Fi credentials when prompted.
 6. Setup waits for the Pico to join Wi-Fi and answer discovery.
@@ -40,25 +40,25 @@ The script explains each step before it starts. In short:
 Setup ends with:
 
 ```text
-Setup is complete. From now on, ptd-bridge runs at logon.
+Setup is complete. From now on, couchlink runs at logon.
 ```
 
-Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, and leave `ptd-bridge.exe` running on the Windows host.
+Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, and leave `couchlink.exe` running on the Windows host.
 
 ## Daily Use
 
 If the Startup shortcut was added, Windows starts the bridge at logon. If not, run:
 
 ```powershell
-.\ptd-bridge.exe
+.\couchlink.exe
 ```
 
 Useful checks:
 
 ```powershell
-.\ptd-bridge.exe doctor
-.\ptd-bridge.exe logs --tail
-.\ptd-bridge.exe bundle
+.\couchlink.exe doctor
+.\couchlink.exe logs --tail
+.\couchlink.exe bundle
 ```
 
 ## Reconfigure Wi-Fi
@@ -66,7 +66,7 @@ Useful checks:
 If the router or Wi-Fi password changes:
 
 ```powershell
-.\ptd-bridge.exe configure-wifi
+.\couchlink.exe configure-wifi
 ```
 
 If the Pico cannot enter setup mode, follow [[Setup and Flashing]].

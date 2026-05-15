@@ -8,7 +8,7 @@
 #
 # After a successful build:
 #   build\pico_bridge.uf2  <- drag this onto a BOOTSEL Pico, or pass it
-#                              to `ptd-bridge flash --uf2`.
+#                              to `couchlink flash --uf2`.
 
 param(
     [string]$Board = "pico2_w",

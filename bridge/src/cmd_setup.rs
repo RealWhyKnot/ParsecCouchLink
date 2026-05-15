@@ -1,4 +1,4 @@
-//! `ptd-bridge setup` -- end-to-end first-run wizard.
+//! `couchlink setup` -- end-to-end first-run wizard.
 //!
 //! Walks the operator through: hardware confirmation, BOOTSEL flash,
 //! Wi-Fi provisioning over CDC, run-mode reboot, LAN discovery, XInput
@@ -19,7 +19,7 @@ use zeroize::Zeroize;
 use crate::{cdc, config, protocol};
 
 pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
-    println!("ptd-bridge setup");
+    println!("couchlink setup");
     println!();
     println!(
         "This walks through preparing your Pico 2 W and connecting it to \
@@ -49,7 +49,7 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
     config::save(&cfg).context("saving config")?;
 
     println!();
-    println!("Setup is complete. From now on, ptd-bridge runs at logon.");
+    println!("Setup is complete. From now on, couchlink runs at logon.");
     println!("Have the remote player connect via Parsec to start using the bridge.");
     Ok(())
 }
@@ -99,9 +99,9 @@ async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<PathBuf> {
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
     let prompt = if default.is_empty() {
-        "Path to the pico-bridge.uf2 firmware to flash".to_string()
+        "Path to the couchlink-pico.uf2 firmware to flash".to_string()
     } else {
-        format!("Path to the pico-bridge.uf2 firmware to flash (Enter for {default})")
+        format!("Path to the couchlink-pico.uf2 firmware to flash (Enter for {default})")
     };
 
     let entered: String = tokio::task::spawn_blocking(move || {
@@ -206,7 +206,7 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
         if started.elapsed() > timeout {
             bail!(
                 "no Pico answered within {} s. Check Wi-Fi credentials with \
-                 `ptd-bridge configure-wifi`.",
+                 `couchlink configure-wifi`.",
                 timeout.as_secs(),
             );
         }
@@ -254,7 +254,7 @@ async fn stage_smoke_test() -> Result<()> {
         println!("  XInput input observed. Looks good.");
     } else {
         println!(
-            "  No XInput change in 30 s -- skipping. You can re-run `ptd-bridge test xinput` later."
+            "  No XInput change in 30 s -- skipping. You can re-run `couchlink test xinput` later."
         );
     }
     Ok(())
@@ -265,12 +265,12 @@ async fn stage_install_autostart() -> Result<()> {
     println!("[7/7] Autostart on logon");
 
     let install = ask_yes_no(
-        "Install a Startup-folder shortcut so ptd-bridge runs at every logon?",
+        "Install a Startup-folder shortcut so couchlink runs at every logon?",
         true,
     )
     .await?;
     if !install {
-        println!("  Skipped. You can install later by running `ptd-bridge setup` again.");
+        println!("  Skipped. You can install later by running `couchlink setup` again.");
         return Ok(());
     }
 
@@ -278,13 +278,13 @@ async fn stage_install_autostart() -> Result<()> {
     {
         let exe = std::env::current_exe().context("can't resolve own .exe path")?;
         let working_dir = exe.parent().map(|p| p.to_path_buf());
-        let link_path = crate::known_folders::shortcut_path_for("ptd-bridge")?;
+        let link_path = crate::known_folders::shortcut_path_for("Parsec CouchLink")?;
         crate::known_folders::create_shortcut(
             &link_path,
             &exe,
             "run",
             working_dir.as_deref(),
-            "ParsecToDreamcast bridge",
+            "Parsec CouchLink",
         )?;
         println!("  Shortcut created at {}", link_path.display());
     }

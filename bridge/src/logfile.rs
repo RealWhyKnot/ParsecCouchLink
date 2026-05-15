@@ -21,7 +21,7 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
 
     let make_filter = || {
         EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(format!("ptd_bridge={default_level}")))
+            .unwrap_or_else(|_| EnvFilter::new(format!("parsec_couchlink={default_level}")))
     };
 
     let stderr_layer = tracing_subscriber::fmt::layer()
@@ -40,7 +40,7 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
     let log_dir = config::log_dir()?;
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
-        .filename_prefix("ptd-bridge")
+        .filename_prefix("couchlink")
         .filename_suffix("log")
         .max_log_files(7)
         .build(&log_dir)?;

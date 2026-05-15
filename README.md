@@ -1,10 +1,10 @@
-# ParsecToDreamcast
+# Parsec CouchLink
 
-ParsecToDreamcast lets a remote Parsec player use a real retro console as player 2.
+Parsec CouchLink lets a remote Parsec player use a real retro console as player 2.
 
 The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W presents that input as a wired Xbox 360 controller to a USB-to-console adapter such as USB4MAPLE.
 
-**[Wiki](https://github.com/RealWhyKnot/ParsecToDreamcast/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecToDreamcast/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecToDreamcast/wiki/Troubleshooting)**
+**[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
 
 ## What You Need
 
@@ -17,8 +17,8 @@ The Windows host reads the Parsec virtual Xbox controller, sends the button stat
 
 ## Quick Start
 
-1. Download the latest `ParsecToDreamcast-v*.zip` from Releases.
-2. Extract the whole zip to a normal folder, such as `Downloads` or `C:\Tools\ParsecToDreamcast`.
+1. Download the latest `ParsecCouchLink-v*.zip` from Releases.
+2. Extract the whole zip to a normal folder, such as `Downloads` or `C:\Tools\ParsecCouchLink`.
 3. Open PowerShell in the extracted folder.
 4. Run:
 
@@ -26,7 +26,7 @@ The Windows host reads the Parsec virtual Xbox controller, sends the button stat
    powershell -ExecutionPolicy Bypass -File .\setup.ps1
    ```
 
-5. Follow the prompts. The script flashes the Pico, provisions Wi-Fi, checks that the PC can find it, and can add `ptd-bridge.exe` to Windows startup.
+5. Follow the prompts. The script flashes the Pico, provisions Wi-Fi, checks that the PC can find it, and can add `couchlink.exe` to Windows startup.
 
 After setup, have the remote player join through Parsec. The bridge sends their gamepad to the Pico, and the console sees the Pico as a wired controller.
 
@@ -35,22 +35,22 @@ After setup, have the remote player join through Parsec. The bridge sends their 
 | File | Purpose |
 |---|---|
 | `setup.ps1` | First-run setup script. Start here. |
-| `ptd-bridge.exe` | Windows bridge. Runs at logon or manually. |
-| `pico-bridge.uf2` | Firmware copied to the Pico during setup. |
+| `couchlink.exe` | Windows bridge. Runs at logon or manually. |
+| `couchlink-pico.uf2` | Firmware copied to the Pico during setup. |
 | `README.txt` | Short release-folder instructions. |
 | `LICENSE` / `NOTICE` | License text and release archive notes. |
 
 ## Daily Use
 
-If you accepted the startup shortcut during setup, sign into Windows and leave the bridge running. If not, run `ptd-bridge.exe` before the Parsec session starts.
+If you accepted the startup shortcut during setup, sign into Windows and leave the bridge running. If not, run `couchlink.exe` before the Parsec session starts.
 
 Useful commands:
 
 ```powershell
-.\ptd-bridge.exe doctor
-.\ptd-bridge.exe logs --tail
-.\ptd-bridge.exe configure-wifi
-.\ptd-bridge.exe bundle
+.\couchlink.exe doctor
+.\couchlink.exe logs --tail
+.\couchlink.exe configure-wifi
+.\couchlink.exe bundle
 ```
 
 ## Source Layout

@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Throwaway bench listener for ptd-bridge.exe development.
+Throwaway bench listener for couchlink.exe development.
 
-Binds UDP 4242, decodes incoming ParsecToDreamcast wire-protocol datagrams
+Binds UDP 4242, decodes incoming Parsec CouchLink wire-protocol datagrams
 per wiki/Protocol.md, replies to discover packets with a fake Pico ack, and
 prints decoded state in real time.
 
 Use this to verify the bridge end of the chain before any Pico firmware
 exists: run this script on the same machine (or another LAN host), start
-ptd-bridge.exe, watch packets flow.
+couchlink.exe, watch packets flow.
 
 Usage:
     python listen.py [--port 4242] [--fw 0.1.0] [--hw 1]

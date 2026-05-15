@@ -1,4 +1,4 @@
-//! `ptd-bridge bundle` -- produce a ZIP of recent logs, a doctor re-run,
+//! `couchlink bundle` -- produce a ZIP of recent logs, a doctor re-run,
 //! and a manifest.json with non-sensitive system info. Intended to be
 //! attached to a DM when something's not working.
 //!
@@ -24,7 +24,7 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 
     let out_path = output.unwrap_or_else(|| {
         let stamp = Local::now().format("%Y%m%d-%H%M%S");
-        PathBuf::from(format!("ptd-bundle-{stamp}.zip"))
+        PathBuf::from(format!("couchlink-bundle-{stamp}.zip"))
     });
     let f = std::fs::File::create(&out_path)
         .with_context(|| format!("creating {}", out_path.display()))?;
@@ -145,7 +145,7 @@ async fn run_doctor_silently() -> String {
     ];
     let mut out = String::new();
     out.push_str(&format!(
-        "ptd-bridge doctor (bundled, no terminal styling)\n  bridge v{}\n  time {}\n\n",
+        "couchlink doctor (bundled, no terminal styling)\n  bridge v{}\n  time {}\n\n",
         env!("CARGO_PKG_VERSION"),
         chrono::Local::now().to_rfc3339(),
     ));

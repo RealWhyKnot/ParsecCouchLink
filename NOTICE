@@ -1,4 +1,4 @@
-ParsecToDreamcast NOTICE
+Parsec CouchLink NOTICE
 
 Copyright (C) 2026 WhyKnot and other contributors
 
@@ -8,8 +8,8 @@ Free Software Foundation. See LICENSE for the full text.
 
 Release archives published from this repository contain:
 
-- ptd-bridge.exe, built from the Rust sources in bridge/.
-- pico-bridge.uf2, built from the Pico firmware sources in pico-bridge/.
+- couchlink.exe, built from the Rust sources in bridge/.
+- couchlink-pico.uf2, built from the Pico firmware sources in pico-bridge/.
 
 The build uses Rust crates from crates.io and the Raspberry Pi Pico SDK. Those
 components retain their own upstream licenses.

@@ -1,10 +1,10 @@
 # Setup and Flashing
 
-`setup.ps1` is the release entrypoint. It wraps `ptd-bridge.exe setup --uf2 .\pico-bridge.uf2` so the user does not have to find the firmware file by hand.
+`setup.ps1` is the release entrypoint. It wraps `couchlink.exe setup --uf2 .\couchlink-pico.uf2` so the user does not have to find the firmware file by hand.
 
 ## What Setup Does
 
-1. Checks that the release folder has `ptd-bridge.exe` and `pico-bridge.uf2`.
+1. Checks that the release folder has `couchlink.exe` and `couchlink-pico.uf2`.
 2. Tells the user what hardware is needed.
 3. Starts the bridge setup wizard.
 4. Flashes the Pico in BOOTSEL mode.
@@ -48,17 +48,17 @@ If the Pico has bad Wi-Fi credentials:
 The firmware clears saved Wi-Fi and reboots into setup mode. Then run:
 
 ```powershell
-.\ptd-bridge.exe configure-wifi
+.\couchlink.exe configure-wifi
 ```
 
-If the Pico appears as a removable drive instead, it is in the hardware bootloader rather than firmware setup mode. Flash `pico-bridge.uf2` again and then retry the recovery steps.
+If the Pico appears as a removable drive instead, it is in the hardware bootloader rather than firmware setup mode. Flash `couchlink-pico.uf2` again and then retry the recovery steps.
 
 ## Manual Flash
 
 Manual flash is still available:
 
 ```powershell
-.\ptd-bridge.exe flash --uf2 .\pico-bridge.uf2
+.\couchlink.exe flash --uf2 .\couchlink-pico.uf2
 ```
 
-Or drag `pico-bridge.uf2` onto the `RPI-RP2` or `RP2350` drive.
+Or drag `couchlink-pico.uf2` onto the `RPI-RP2` or `RP2350` drive.
