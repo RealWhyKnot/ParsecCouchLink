@@ -29,6 +29,25 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Rust cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bridge/target
+          key: ${{ runner.os }}-bridge-${{ hashFiles('bridge/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bridge-
+
+      - name: Pico build cache
+        uses: actions/cache@v5
+        with:
+          path: dist/pico-build
+          key: ${{ runner.os }}-pico-${{ hashFiles('pico-bridge/CMakeLists.txt', 'pico-bridge/pico_sdk_import.cmake', 'pico-bridge/scripts/build.ps1', 'pico-bridge/src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-pico-
+
       - name: Install Pico toolchain
         shell: pwsh
         run: |

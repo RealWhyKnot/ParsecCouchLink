@@ -29,6 +29,17 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Rust cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bridge/target
+          key: ${{ runner.os }}-bridge-${{ hashFiles('bridge/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bridge-
+
       - name: Rust format
         run: cargo fmt --manifest-path bridge/Cargo.toml -- --check
 
@@ -41,6 +52,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Pico build cache
+        uses: actions/cache@v5
+        with:
+          path: pico-bridge/build
+          key: ${{ runner.os }}-pico-${{ hashFiles('pico-bridge/CMakeLists.txt', 'pico-bridge/pico_sdk_import.cmake', 'pico-bridge/scripts/build.ps1', 'pico-bridge/src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-pico-
 
       - name: Install Pico toolchain
         run: |

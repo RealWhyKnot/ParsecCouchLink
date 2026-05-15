@@ -18,7 +18,7 @@ if (NOT PICO_SDK_PATH)
         include(FetchContent)
         set(FETCHCONTENT_BASE_DIR_save ${FETCHCONTENT_BASE_DIR})
         set(FETCHCONTENT_BASE_DIR ${CMAKE_BINARY_DIR}/_pico_sdk)
-        set(PICO_SDK_FETCH_FROM_GIT_TAG "2.1.0" CACHE STRING "pico-sdk git tag")
+        set(PICO_SDK_FETCH_FROM_GIT_TAG "2.2.0" CACHE STRING "pico-sdk git tag")
         FetchContent_Declare(
             pico_sdk
             GIT_REPOSITORY https://github.com/raspberrypi/pico-sdk.git
