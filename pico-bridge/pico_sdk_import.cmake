@@ -17,7 +17,9 @@ if (NOT PICO_SDK_PATH)
     if (PICO_SDK_FETCH_FROM_GIT OR DEFINED ENV{PICO_SDK_FETCH_FROM_GIT})
         include(FetchContent)
         set(FETCHCONTENT_BASE_DIR_save ${FETCHCONTENT_BASE_DIR})
-        set(FETCHCONTENT_BASE_DIR ${CMAKE_BINARY_DIR}/_pico_sdk)
+        # Share the SDK clone across per-board build dirs (build-pico2w/,
+        # build-picow/, etc.) so dual-board builds don't re-clone ~200 MB.
+        set(FETCHCONTENT_BASE_DIR ${CMAKE_SOURCE_DIR}/build-_pico_sdk)
         set(PICO_SDK_FETCH_FROM_GIT_TAG "2.2.0" CACHE STRING "pico-sdk git tag")
         FetchContent_Declare(
             pico_sdk

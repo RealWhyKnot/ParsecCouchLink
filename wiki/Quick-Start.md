@@ -6,9 +6,11 @@ This is the path for a new Pico user starting from a release zip.
 
 - Windows 10/11 PC.
 - Parsec installed and working.
-- Raspberry Pi Pico 2 W.
+- One of these Pico boards:
+  - Raspberry Pi Pico 2 W (RP2350 + Wi-Fi) -- the default target.
+  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- equivalent, often easier to find in retail (e.g. Micro Center stocks the Pico WH at ~$6).
 - Micro-USB data cable. Charge-only cables will fail.
-- 2.4 GHz Wi-Fi name and password. Pico 2 W cannot join 5 GHz-only networks.
+- 2.4 GHz Wi-Fi name and password. Both Pico variants use the CYW43439 radio, which is 2.4 GHz only -- 5 GHz-only networks won't work.
 - USB4MAPLE or another USB-to-console adapter that accepts a wired Xbox 360 controller.
 
 ## Install
@@ -28,7 +30,7 @@ The script explains each step before it starts. In short:
 
 1. Hold BOOTSEL on the Pico.
 2. Plug the Pico into the PC while still holding BOOTSEL.
-3. Setup copies `couchlink-pico.uf2` to the Pico.
+3. Setup detects which Pico is in BOOTSEL and copies the matching firmware (`couchlink-pico2w.uf2` for the RP2350 board, `couchlink-picow.uf2` for the RP2040 board).
 4. The Pico reboots as a USB serial setup device.
 5. Enter the 2.4 GHz Wi-Fi credentials when prompted.
 6. Setup waits for the Pico to join Wi-Fi and answer discovery.

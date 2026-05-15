@@ -2,16 +2,18 @@
 
 Parsec CouchLink lets a remote Parsec player use a real retro console as player 2.
 
-The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W presents that input as a wired Xbox 360 controller to a USB-to-console adapter such as USB4MAPLE.
+The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a wired Xbox 360 controller to a USB-to-console adapter such as USB4MAPLE.
 
 **[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
 
 ## What You Need
 
 - Windows 10/11 PC running Parsec
-- Raspberry Pi Pico 2 W
+- One of these Pico boards:
+  - Raspberry Pi Pico 2 W (RP2350 + Wi-Fi)  -- the default target, ~$7
+  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi)  -- also fully supported, ~$5-6
 - Micro-USB data cable
-- 2.4 GHz Wi-Fi name and password
+- 2.4 GHz Wi-Fi name and password (both boards use a 2.4 GHz-only radio)
 - USB4MAPLE or another USB-to-console adapter that accepts a wired Xbox 360 controller
 - The console and controller adapter you want to use
 
@@ -36,9 +38,12 @@ After setup, have the remote player join through Parsec. The bridge sends their 
 |---|---|
 | `setup.ps1` | First-run setup script. Start here. |
 | `couchlink.exe` | Windows bridge. Runs at logon or manually. |
-| `couchlink-pico.uf2` | Firmware copied to the Pico during setup. |
+| `couchlink-pico2w.uf2` | Firmware for the Pico 2 W (RP2350). |
+| `couchlink-picow.uf2` | Firmware for the Pico W / Pico WH (RP2040). |
 | `README.txt` | Short release-folder instructions. |
 | `LICENSE` / `NOTICE` | License text and release archive notes. |
+
+Setup detects which Pico you have at BOOTSEL time and uses the matching UF2 automatically. Only one of the two firmware files is written to your Pico.
 
 ## Daily Use
 

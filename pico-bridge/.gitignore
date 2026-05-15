@@ -1,5 +1,9 @@
 build/
+build-pico2w/
+build-picow/
+build-_pico_sdk/
 _pico_sdk/
+dist/
 *.uf2
 *.elf
 *.bin

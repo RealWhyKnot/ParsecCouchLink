@@ -43,7 +43,10 @@ jobs:
       - name: Pico build cache
         uses: actions/cache@v5
         with:
-          path: dist/pico-build
+          path: |
+            pico-bridge/build-_pico_sdk
+            pico-bridge/build-pico2w
+            pico-bridge/build-picow
           key: ${{ runner.os }}-pico-${{ hashFiles('pico-bridge/CMakeLists.txt', 'pico-bridge/pico_sdk_import.cmake', 'pico-bridge/scripts/build.ps1', 'pico-bridge/src/**') }}
           restore-keys: |
             ${{ runner.os }}-pico-

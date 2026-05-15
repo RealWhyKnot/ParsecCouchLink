@@ -22,8 +22,10 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
     println!("couchlink setup");
     println!();
     println!(
-        "This walks through preparing your Pico 2 W and connecting it to \
-         the bridge. It is safe to re-run."
+        "This walks through preparing your Pico and connecting it to the \
+         bridge. Pico 2 W and Pico W (or Pico WH) are both supported -- \
+         the wizard picks the matching firmware automatically. Re-running \
+         setup is safe."
     );
     println!();
 
@@ -61,8 +63,8 @@ async fn stage_preflight() -> Result<()> {
     println!("  log dir:    {}", config::log_dir()?.display());
 
     let ok = ask_yes_no(
-        "You should have on hand: a Raspberry Pi Pico 2 W, a micro-USB cable, \
-         your USB4MAPLE adapter, and your console. Ready?",
+        "You should have on hand: a Raspberry Pi Pico 2 W or Pico W (RP2040), \
+         a micro-USB data cable, your USB4MAPLE adapter, and your console. Ready?",
         true,
     )
     .await?;
@@ -72,7 +74,7 @@ async fn stage_preflight() -> Result<()> {
     Ok(())
 }
 
-async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<PathBuf> {
+async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<Option<PathBuf>> {
     println!();
     println!("[2/7] Pico firmware (.uf2)");
 
@@ -80,48 +82,29 @@ async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<PathBuf> {
         if !p.exists() {
             bail!("UF2 not found: {}", p.display());
         }
-        let ext_ok = p
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("uf2"))
-            .unwrap_or(false);
-        if !ext_ok {
-            bail!("not a .uf2 file: {}", p.display());
+        if p.is_file() {
+            let ext_ok = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("uf2"))
+                .unwrap_or(false);
+            if !ext_ok {
+                bail!("not a .uf2 file: {}", p.display());
+            }
         }
         println!("  Using firmware from {}", p.display());
-        return Ok(p);
+        return Ok(Some(p));
     }
 
-    let cfg = config::load().unwrap_or_default();
-    let default = cfg
-        .last_uf2
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let prompt = if default.is_empty() {
-        "Path to the couchlink-pico.uf2 firmware to flash".to_string()
-    } else {
-        format!("Path to the couchlink-pico.uf2 firmware to flash (Enter for {default})")
-    };
-
-    let entered: String = tokio::task::spawn_blocking(move || {
-        let theme = ColorfulTheme::default();
-        let mut input = Input::<String>::with_theme(&theme).with_prompt(prompt);
-        if !default.is_empty() {
-            input = input.default(default);
-        }
-        input.interact_text()
-    })
-    .await??;
-
-    let p = PathBuf::from(entered);
-    if !p.exists() {
-        bail!("UF2 not found: {}", p.display());
-    }
-    Ok(p)
+    // No override: defer to the flash step, which detects which Pico
+    // (RP2040 vs RP2350) is in BOOTSEL and picks the matching UF2 from
+    // the release folder.
+    println!("  Firmware will be auto-selected once the Pico is in BOOTSEL.");
+    println!("  (couchlink-pico2w.uf2 for Pico 2 W, couchlink-picow.uf2 for Pico W / WH.)");
+    Ok(None)
 }
 
-async fn stage_flash(uf2: PathBuf) -> Result<()> {
+async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     println!();
     println!("[3/7] Flash the Pico");
     println!(

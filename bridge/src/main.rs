@@ -54,11 +54,13 @@ enum Command {
     /// Run every diagnostic check; report PASS/WARN/FAIL/SKIP with hints.
     /// Exit codes: 0 clean, 1 warnings only, 2 hard fail, 3 setup incomplete.
     Doctor,
-    /// Find a Pico in BOOTSEL mode and copy a UF2 onto it.
+    /// Find a Pico in BOOTSEL mode and copy a UF2 onto it. With no --uf2,
+    /// the matching couchlink-pico2w.uf2 / couchlink-picow.uf2 is picked
+    /// from next to the executable (or its `dist/` folder).
     Flash {
-        /// Path to the .uf2 firmware to flash.
+        /// Path to a .uf2 file, or a directory containing one. Optional.
         #[arg(short, long)]
-        uf2: PathBuf,
+        uf2: Option<PathBuf>,
     },
     /// Re-push Wi-Fi credentials to a Pico in setup mode via USB-CDC.
     ConfigureWifi,

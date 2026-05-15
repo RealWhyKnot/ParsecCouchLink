@@ -66,18 +66,23 @@ if (-not (Test-Path -LiteralPath $BridgeExe)) {
 }
 Copy-Item -LiteralPath $BridgeExe -Destination (Join-Path $StageDir "couchlink.exe") -Force
 
-$PicoBuildDir = "..\dist\pico-build"
-$FirmwareSource = Join-Path $RepoRoot "dist\pico-build\pico_bridge.uf2"
+$PicoDistDir       = Join-Path $RepoRoot "pico-bridge\dist"
+$FirmwarePico2w    = Join-Path $PicoDistDir "couchlink-pico2w.uf2"
+$FirmwarePicow     = Join-Path $PicoDistDir "couchlink-picow.uf2"
 if (-not $SkipPico) {
     Write-Host ""
-    Write-Host "Building Pico firmware..." -ForegroundColor Cyan
-    & (Join-Path $RepoRoot "pico-bridge\scripts\build.ps1") -Release -BuildDir $PicoBuildDir
+    Write-Host "Building Pico firmware (both boards)..." -ForegroundColor Cyan
+    & (Join-Path $RepoRoot "pico-bridge\scripts\build.ps1") -Release
     if ($LASTEXITCODE -ne 0) { throw "Pico firmware build failed" }
 }
-if (-not (Test-Path -LiteralPath $FirmwareSource)) {
-    throw "Missing firmware at $FirmwareSource"
+if (-not (Test-Path -LiteralPath $FirmwarePico2w)) {
+    throw "Missing firmware at $FirmwarePico2w (run without -SkipPico)"
 }
-Copy-Item -LiteralPath $FirmwareSource -Destination (Join-Path $StageDir "couchlink-pico.uf2") -Force
+if (-not (Test-Path -LiteralPath $FirmwarePicow)) {
+    throw "Missing firmware at $FirmwarePicow (run without -SkipPico)"
+}
+Copy-Item -LiteralPath $FirmwarePico2w -Destination (Join-Path $StageDir "couchlink-pico2w.uf2") -Force
+Copy-Item -LiteralPath $FirmwarePicow  -Destination (Join-Path $StageDir "couchlink-picow.uf2")  -Force
 
 Copy-Item -LiteralPath (Join-Path $RepoRoot "setup.ps1") -Destination (Join-Path $StageDir "setup.ps1") -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot "LICENSE") -Destination (Join-Path $StageDir "LICENSE") -Force

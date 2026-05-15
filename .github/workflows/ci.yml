@@ -56,7 +56,10 @@ jobs:
       - name: Pico build cache
         uses: actions/cache@v5
         with:
-          path: pico-bridge/build
+          path: |
+            pico-bridge/build-_pico_sdk
+            pico-bridge/build-pico2w
+            pico-bridge/build-picow
           key: ${{ runner.os }}-pico-${{ hashFiles('pico-bridge/CMakeLists.txt', 'pico-bridge/pico_sdk_import.cmake', 'pico-bridge/scripts/build.ps1', 'pico-bridge/src/**') }}
           restore-keys: |
             ${{ runner.os }}-pico-
@@ -66,6 +69,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
 
-      - name: Build firmware
+      - name: Build firmware (both boards)
         shell: pwsh
-        run: ./pico-bridge/scripts/build.ps1 -Release -BuildDir build
+        run: ./pico-bridge/scripts/build.ps1 -Release
+
+      - name: Verify both UF2s present
+        shell: pwsh
+        run: |
+          $files = @(
+            'pico-bridge/dist/couchlink-pico2w.uf2',
+            'pico-bridge/dist/couchlink-picow.uf2'
+          )
+          foreach ($f in $files) {
+            if (-not (Test-Path -LiteralPath $f)) { throw "Missing $f" }
+            $size = (Get-Item -LiteralPath $f).Length
+            Write-Host "$f -- $size bytes"
+          }

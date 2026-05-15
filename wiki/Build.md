@@ -20,9 +20,12 @@ Output:
 
 ```text
 dist\ParsecCouchLink\couchlink.exe
-dist\ParsecCouchLink\couchlink-pico.uf2
+dist\ParsecCouchLink\couchlink-pico2w.uf2
+dist\ParsecCouchLink\couchlink-picow.uf2
 dist\ParsecCouchLink\setup.ps1
 ```
+
+Both Pico variants are built every time. The release setup script picks the matching firmware at flash time based on which Pico is in BOOTSEL, so only one of the two UF2s is actually written to a given device.
 
 ## Build A Release Zip
 
@@ -57,8 +60,19 @@ The Pico helper can also be run directly:
 
 ```powershell
 cd pico-bridge
-.\scripts\build.ps1 -Release
+.\scripts\build.ps1 -Release            # both boards
+.\scripts\build.ps1 -Release -Board pico2_w   # Pico 2 W only
+.\scripts\build.ps1 -Release -Board pico_w    # Pico W / WH only
 ```
+
+Outputs land in `pico-bridge\dist\`:
+
+```text
+pico-bridge\dist\couchlink-pico2w.uf2
+pico-bridge\dist\couchlink-picow.uf2
+```
+
+The pico-sdk clone is shared across per-board build directories (`build-pico2w/`, `build-picow/`) via a sibling `build-_pico_sdk/` folder, so a dual-board build only fetches the SDK once.
 
 ## GitHub Workflows
 

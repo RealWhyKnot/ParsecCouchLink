@@ -5,9 +5,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BridgeExe = Join-Path $Root "couchlink.exe"
-$Firmware = Join-Path $Root "couchlink-pico.uf2"
+$Pico2wUf2 = Join-Path $Root "couchlink-pico2w.uf2"
+$PicowUf2  = Join-Path $Root "couchlink-picow.uf2"
+$LegacyUf2 = Join-Path $Root "couchlink-pico.uf2"   # pre-dual-board release name
 
 function Write-Section {
     param([string]$Text)
@@ -23,7 +25,7 @@ function Stop-Setup {
 }
 
 if (-not (Test-Path -LiteralPath $BridgeExe)) {
-    Stop-Setup "couchlink.exe was not found next to setup.ps1. Extract the release zip first, or run build.ps1 from source."
+    Stop-Setup "couchlink.exe was not found next to setup.ps1. Extract the release zip first, or run pico-bridge\scripts\build.ps1 and bridge\cargo build --release from source."
 }
 
 if ($DoctorOnly) {
@@ -31,8 +33,12 @@ if ($DoctorOnly) {
     exit $LASTEXITCODE
 }
 
-if (-not (Test-Path -LiteralPath $Firmware)) {
-    Stop-Setup "couchlink-pico.uf2 was not found next to setup.ps1. Download the full release zip, not just the script."
+$HavePico2w = Test-Path -LiteralPath $Pico2wUf2
+$HavePicow  = Test-Path -LiteralPath $PicowUf2
+$HaveLegacy = Test-Path -LiteralPath $LegacyUf2
+
+if (-not ($HavePico2w -or $HavePicow -or $HaveLegacy)) {
+    Stop-Setup "No firmware file found next to setup.ps1. Expected at least one of: couchlink-pico2w.uf2, couchlink-picow.uf2. Download the full release zip, not just the script."
 }
 
 if (-not $SkipIntro) {
@@ -42,16 +48,23 @@ if (-not $SkipIntro) {
     Write-Host ""
     Write-Host "Have these ready:"
     Write-Host "  - Windows 10/11 PC running Parsec"
-    Write-Host "  - Raspberry Pi Pico 2 W"
+    Write-Host "  - Raspberry Pi Pico 2 W or Pico W (or Pico WH)"
     Write-Host "  - Micro-USB data cable"
     Write-Host "  - 2.4 GHz Wi-Fi name and password"
     Write-Host "  - USB4MAPLE or another USB-to-console adapter"
+    Write-Host ""
+    Write-Host "Available firmware in this folder:"
+    if ($HavePico2w) { Write-Host "  - couchlink-pico2w.uf2  (for Pico 2 W / RP2350)" }
+    if ($HavePicow)  { Write-Host "  - couchlink-picow.uf2   (for Pico W / WH / RP2040)" }
+    if ($HaveLegacy -and -not $HavePico2w) {
+        Write-Host "  - couchlink-pico.uf2    (legacy name; used as the Pico 2 W image)"
+    }
     Write-Host ""
     Write-Host "The Wi-Fi password is sent to the Pico over USB setup mode. It is not saved on this PC."
 
     Write-Section "What will happen"
     Write-Host "1. Hold BOOTSEL while plugging the Pico into this PC."
-    Write-Host "2. The script copies couchlink-pico.uf2 onto the Pico."
+    Write-Host "2. The bridge detects which Pico you have and copies the matching firmware."
     Write-Host "3. The Pico reboots as a USB serial setup device."
     Write-Host "4. You enter your 2.4 GHz Wi-Fi credentials."
     Write-Host "5. The Pico joins Wi-Fi and the bridge checks discovery."
@@ -62,7 +75,9 @@ if (-not $SkipIntro) {
 }
 
 Write-Section "Starting bridge setup"
-& $BridgeExe setup --uf2 $Firmware
+# No --uf2 -- couchlink.exe picks couchlink-pico2w.uf2 / couchlink-picow.uf2
+# from this folder based on which Pico shows up in BOOTSEL.
+& $BridgeExe setup
 $ExitCode = $LASTEXITCODE
 
 if ($ExitCode -eq 0) {
