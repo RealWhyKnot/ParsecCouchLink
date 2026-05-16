@@ -20,7 +20,7 @@ const RESCAN_EVERY_N_TICKS: u32 = 500;
 
 const ERROR_SUCCESS: u32 = 0;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Snapshot {
     pub slot: Option<u32>,
     pub state: GamepadState,
@@ -29,16 +29,6 @@ pub struct Snapshot {
     /// downstream consumers don't read it today.
     #[allow(dead_code)]
     pub packet_number: u32,
-}
-
-impl Default for Snapshot {
-    fn default() -> Self {
-        Self {
-            slot: None,
-            state: GamepadState::default(),
-            packet_number: 0,
-        }
-    }
 }
 
 pub fn spawn(tx: watch::Sender<Snapshot>) {

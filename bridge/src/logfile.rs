@@ -9,30 +9,37 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::Layer;
 
 use crate::config;
 
 pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
-    let default_level = match verbose {
-        0 => "info",
-        1 => "debug",
-        _ => "trace",
-    };
-
-    let make_filter = || {
-        EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(format!("parsec_couchlink={default_level}")))
+    let (stderr_filter_str, file_filter_str) = if std::env::var("RUST_LOG").is_ok() {
+        let v = std::env::var("RUST_LOG").unwrap();
+        (v.clone(), v)
+    } else {
+        let stderr_lvl = match verbose {
+            0 => "info",
+            1 => "debug",
+            _ => "trace",
+        };
+        let file_lvl = match verbose {
+            0 => "debug",
+            _ => "trace",
+        };
+        (
+            format!("parsec_couchlink={stderr_lvl}"),
+            format!("parsec_couchlink={file_lvl}"),
+        )
     };
 
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
-        .with_writer(std::io::stderr);
+        .with_writer(std::io::stderr)
+        .with_filter(EnvFilter::new(stderr_filter_str));
 
     if !file_logging {
-        tracing_subscriber::registry()
-            .with(make_filter())
-            .with(stderr_layer)
-            .init();
+        tracing_subscriber::registry().with(stderr_layer).init();
         return Ok(None);
     }
 
@@ -49,10 +56,10 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
     let file_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(false)
-        .with_writer(nonblock);
+        .with_writer(nonblock)
+        .with_filter(EnvFilter::new(file_filter_str));
 
     tracing_subscriber::registry()
-        .with(make_filter())
         .with(stderr_layer)
         .with(file_layer)
         .init();

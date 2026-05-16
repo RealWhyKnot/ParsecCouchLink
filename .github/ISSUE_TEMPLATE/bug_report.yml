@@ -1,0 +1,89 @@
+name: Bug report
+description: Something didn't work the way you expected.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The more of the
+        fields below you can fill in, the faster I can get to the
+        cause.
+
+        Before opening: run `.\couchlink.exe bundle` and drag the
+        resulting `couchlink-bundle-*.zip` into the comment box at
+        the bottom. The bundle has logs, doctor output, and (if
+        the Pico is in setup mode) firmware diagnostics. It does
+        NOT contain your Wi-Fi password.
+
+  - type: input
+    id: bridge_version
+    attributes:
+      label: Bridge version
+      description: From `.\couchlink.exe --version`, or the zip you downloaded.
+      placeholder: "v2026.5.15.2"
+    validations:
+      required: true
+
+  - type: input
+    id: firmware_version
+    attributes:
+      label: Pico firmware version
+      description: "Printed by setup at stage 4, by doctor's `discover` check, or `unknown` if you never got that far."
+      placeholder: "v1.0.0 or unknown"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: board
+    attributes:
+      label: Which Pico do you have?
+      options:
+        - Pico W (RP2040)
+        - Pico WH (RP2040, with headers)
+        - Pico 2 W (RP2350)
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: windows_version
+    attributes:
+      label: Windows version
+      description: Run `ver` in cmd, or check Settings -> System -> About.
+      placeholder: "Windows 11 23H2"
+    validations:
+      required: false
+
+  - type: input
+    id: command
+    attributes:
+      label: What did you run?
+      placeholder: ".\\setup.ps1   /   .\\couchlink.exe doctor   /   ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: false
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened?
+      description: Paste the error from the terminal, if there was one.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: bundle
+    attributes:
+      label: Bundle
+      options:
+        - label: I've attached a bundle ZIP from `.\couchlink.exe bundle`.
+          required: false
+        - label: I tried to make a bundle but `couchlink.exe` didn't run / didn't exist.
+          required: false

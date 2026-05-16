@@ -32,6 +32,14 @@ pub fn log_dir() -> Result<PathBuf> {
     Ok(dirs()?.data_local_dir().join("logs"))
 }
 
+/// Directory for panic crash files. Sibling of `log_dir()`.
+pub fn crash_dir() -> Result<PathBuf> {
+    Ok(log_dir()?
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("log_dir has no parent"))?
+        .join("crashes"))
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     /// Last known Pico identity. Used to warn when a different Pico

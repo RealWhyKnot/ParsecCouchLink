@@ -3,7 +3,7 @@
 //! streams state and heartbeats. Survives Pico reboots: on peer staleness
 //! it returns to discovery automatically.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tokio::net::UdpSocket;
@@ -12,10 +12,7 @@ use tokio::sync::watch;
 use crate::{config, discovery, network, protocol, xinput};
 
 pub async fn run() -> Result<()> {
-    tracing::info!(
-        "couchlink v{} starting in run mode",
-        env!("CARGO_PKG_VERSION")
-    );
+    tracing::info!("run: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
 
     let cfg = config::load().unwrap_or_default();
     if !cfg.setup_complete {
@@ -50,17 +47,24 @@ async fn supervisor_loop(
     stats_tx: watch::Sender<network::Stats>,
 ) -> Result<()> {
     loop {
-        tracing::info!("entering discovery, broadcasting for a Pico on LAN");
-        let (peer, info) = discovery::run(&socket).await?;
+        tracing::info!("run: entering discovery, broadcasting for a Pico on LAN");
+        let disc_start = Instant::now();
+        // Log once if no Pico has replied after 30 s so the log shows the silence.
+        let silence_warn = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            tracing::warn!("run: no Pico discovery reply in 30 s -- still searching");
+        });
+        let disc_result = discovery::run(&socket).await;
+        silence_warn.abort();
+        let (peer, info) = disc_result?;
         tracing::info!(
-            "Pico found at {peer} -- proto v{} fw v{}.{}.{} board 0x{:02X} uid 0x{:08X} uptime {}s",
-            info.proto_version,
+            "run: discovered Pico {} fw v{}.{}.{} uid 0x{:08X} (found after {} s)",
+            peer,
             info.fw_major,
             info.fw_minor,
             info.fw_patch,
-            info.board_type,
             info.unique_id_short,
-            info.uptime_seconds,
+            disc_start.elapsed().as_secs(),
         );
 
         if info.proto_version != protocol::PROTO_VERSION {

@@ -13,11 +13,11 @@ mod known_folders;
 mod logfile;
 mod network;
 mod protocol;
+mod support;
 mod xinput;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -82,15 +82,31 @@ enum Command {
     },
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
-    let _log_guard = logfile::init(cli.verbose, !cli.no_log_file)?;
+    let log_guard = match logfile::init(cli.verbose, !cli.no_log_file) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("failed to initialize logging: {e:#}");
+            std::process::exit(2);
+        }
+    };
+    install_panic_hook();
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
+    let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?;
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            tracing::error!("tokio runtime build failed: {e:#}");
+            drop(log_guard);
+            support::print_help_footer();
+            std::process::exit(2);
+        }
+    };
 
-    rt.block_on(async move {
+    let result: anyhow::Result<()> = rt.block_on(async move {
         match cli.command.unwrap_or(Command::Run) {
             Command::Run => cmd_run::run().await,
             Command::Setup { uf2 } => cmd_setup::run(uf2).await,
@@ -101,5 +117,58 @@ fn main() -> Result<()> {
             Command::Logs { tail } => cmd_logs::run(tail).await,
             Command::Bundle { output } => cmd_bundle::run(output).await,
         }
-    })
+    });
+
+    drop(log_guard);
+
+    if let Err(e) = result {
+        eprintln!();
+        eprintln!("couchlink exited with an error:");
+        eprintln!("  {e:#}");
+        support::print_help_footer();
+        std::process::exit(1);
+    }
+}
+
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    // Chain the default hook so the user still sees the panic message on stderr,
+    // then append our footer so they know where to find logs and how to report.
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = write_crash_file(info);
+        default_hook(info);
+        support::print_help_footer();
+    }));
+}
+
+fn write_crash_file(info: &std::panic::PanicHookInfo<'_>) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = crate::config::crash_dir().map_err(|e| std::io::Error::other(e.to_string()))?;
+    std::fs::create_dir_all(&dir)?;
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let path = dir.join(format!("couchlink-{stamp}.txt"));
+    let mut f = std::fs::File::create(&path)?;
+    writeln!(f, "couchlink panic")?;
+    writeln!(f, "version: {}", env!("CARGO_PKG_VERSION"))?;
+    writeln!(f, "time (UTC): {}", chrono::Utc::now().to_rfc3339())?;
+    if let Some(loc) = info.location() {
+        writeln!(
+            f,
+            "location: {}:{}:{}",
+            loc.file(),
+            loc.line(),
+            loc.column()
+        )?;
+    }
+    let payload = info
+        .payload()
+        .downcast_ref::<&str>()
+        .copied()
+        .map(String::from)
+        .or_else(|| info.payload().downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "<non-string panic payload>".to_string());
+    writeln!(f, "message: {payload}")?;
+    writeln!(f, "---- backtrace ----")?;
+    writeln!(f, "{}", std::backtrace::Backtrace::force_capture())?;
+    Ok(())
 }

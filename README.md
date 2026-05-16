@@ -58,6 +58,24 @@ Useful commands:
 .\couchlink.exe bundle
 ```
 
+## Reporting bugs
+
+If something went wrong, the fastest path is:
+
+1. `.\couchlink.exe bundle`
+2. Open an issue at <https://github.com/RealWhyKnot/ParsecCouchLink/issues>
+3. Fill in the form and drag the generated ZIP into the comment box.
+
+The bundle contains logs, doctor output, and (if the Pico is in setup
+mode) firmware diagnostics. It does NOT contain your Wi-Fi password.
+
+If the bridge won't run at all, the setup transcript at
+`%LOCALAPPDATA%\ParsecToDreamcast\logs\setup-*.log` is the next-best
+thing -- attach that instead.
+
+See the wiki's [Reporting-Bugs](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Reporting-Bugs)
+page for the full version.
+
 ## Source Layout
 
 - `bridge/` - Rust Windows bridge and setup wizard.

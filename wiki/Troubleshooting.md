@@ -1,5 +1,9 @@
 # Troubleshooting
 
+If you've already tried the doctor and still can't get unstuck, jump
+straight to [Reporting bugs](Reporting-Bugs.md) -- it covers what to
+attach to an issue.
+
 Start with:
 
 ```powershell

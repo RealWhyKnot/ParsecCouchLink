@@ -5,6 +5,16 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$LogDir = Join-Path $env:LOCALAPPDATA "ParsecToDreamcast\logs"
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+$Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$TranscriptPath = Join-Path $LogDir "setup-$Stamp.log"
+try {
+    Start-Transcript -Path $TranscriptPath -IncludeInvocationHeader | Out-Null
+} catch {
+    Write-Host "(transcript could not start: $($_.Exception.Message))" -ForegroundColor DarkYellow
+}
+
 $Root      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BridgeExe = Join-Path $Root "couchlink.exe"
 $Pico2wUf2 = Join-Path $Root "couchlink-pico2w.uf2"
@@ -21,6 +31,7 @@ function Stop-Setup {
     param([string]$Message)
     Write-Host ""
     Write-Host $Message -ForegroundColor Red
+    try { Stop-Transcript | Out-Null } catch {}
     exit 1
 }
 
@@ -83,10 +94,23 @@ $ExitCode = $LASTEXITCODE
 if ($ExitCode -eq 0) {
     Write-Section "Done"
     Write-Host "Leave the Pico plugged into your console adapter. Have the remote player join through Parsec, then run couchlink.exe or reboot if you accepted the startup shortcut."
+    Stop-Transcript | Out-Null
     exit 0
 }
 
 Write-Section "Setup did not finish"
-Write-Host "Run this for a health check after fixing the issue:"
+Write-Host ""
+Write-Host "If you'd like help, here's everything we'd want to see:"
+Write-Host "  1. This transcript:  $TranscriptPath"
+Write-Host "  2. Bridge logs:      $LogDir"
+Write-Host "  3. A bundle ZIP:     .\couchlink.exe bundle"
+Write-Host "     (the bundle includes logs, doctor output, and -- if the Pico is"
+Write-Host "      still in setup mode -- firmware diagnostics. No Wi-Fi password.)"
+Write-Host ""
+Write-Host "Open an issue with the bundle attached:"
+Write-Host "  https://github.com/RealWhyKnot/ParsecCouchLink/issues" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "For a quick local self-check first, run:"
 Write-Host "  powershell -ExecutionPolicy Bypass -File .\setup.ps1 -DoctorOnly"
+Stop-Transcript | Out-Null
 exit $ExitCode

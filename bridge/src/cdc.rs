@@ -208,6 +208,28 @@ impl PicoSetup {
         Ok(resp)
     }
 
+    // Like exchange() but produces a command-specific NACK error message.
+    fn exchange_named(&mut self, cmd_label: &str, command: u8, payload: &[u8]) -> Result<Frame> {
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1);
+        let frame = encode(command, seq, payload);
+        self.port.write_all(&frame).context("writing CDC frame")?;
+        self.port.flush().ok();
+        let resp = self.read_one_frame()?;
+        if resp.command == RSP_NACK {
+            let code = resp.payload.first().copied().unwrap_or(ERR_INTERNAL);
+            let detail = resp.payload.get(1).copied().unwrap_or(0);
+            return Err(anyhow!(
+                "Pico rejected {}: {} (code 0x{:02X}, detail 0x{:02X})",
+                cmd_label,
+                err_name(code),
+                code,
+                detail,
+            ));
+        }
+        Ok(resp)
+    }
+
     fn read_one_frame(&mut self) -> Result<Frame> {
         let mut buf = Vec::with_capacity(MAX_FRAME);
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -248,7 +270,7 @@ impl PicoSetup {
     }
 
     pub fn hello(&mut self) -> Result<HelloAck> {
-        let resp = self.exchange(CMD_HELLO, &[])?;
+        let resp = self.exchange_named("HELLO", CMD_HELLO, &[])?;
         if resp.command != RSP_HELLO {
             bail!("unexpected response 0x{:02X} to HELLO", resp.command);
         }
@@ -278,10 +300,27 @@ impl PicoSetup {
         buf.extend_from_slice(ssid.as_bytes());
         buf.push(password.len() as u8);
         buf.extend_from_slice(password.as_bytes());
-        let result = self.exchange(CMD_SET_WIFI, &buf);
+        // exchange_named is called via a manual inline here so we can zeroize
+        // buf and password before propagating any error.
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1);
+        let frame = encode(CMD_SET_WIFI, seq, &buf);
         buf.zeroize();
+        let write_result = self.port.write_all(&frame).context("writing CDC frame");
+        self.port.flush().ok();
         password.zeroize();
-        let resp = result?;
+        write_result?;
+        let resp = self.read_one_frame()?;
+        if resp.command == RSP_NACK {
+            let code = resp.payload.first().copied().unwrap_or(ERR_INTERNAL);
+            let detail = resp.payload.get(1).copied().unwrap_or(0);
+            return Err(anyhow!(
+                "Pico rejected SET_WIFI: {} (code 0x{:02X}, detail 0x{:02X})",
+                err_name(code),
+                code,
+                detail,
+            ));
+        }
         if resp.command != RSP_SET_WIFI {
             bail!("unexpected response 0x{:02X} to SET_WIFI", resp.command);
         }
@@ -289,7 +328,7 @@ impl PicoSetup {
     }
 
     pub fn reboot_to_run(&mut self) -> Result<()> {
-        let resp = self.exchange(CMD_REBOOT_TO_RUN, &[])?;
+        let resp = self.exchange_named("REBOOT_TO_RUN", CMD_REBOOT_TO_RUN, &[])?;
         if resp.command != RSP_REBOOT {
             bail!(
                 "unexpected response 0x{:02X} to REBOOT_TO_RUN",
@@ -297,6 +336,21 @@ impl PicoSetup {
             );
         }
         Ok(())
+    }
+
+    /// Fetch the firmware's in-RAM diagnostic ring buffer. Returns the
+    /// captured bytes as UTF-8 (lossy on invalid sequences). Empty string
+    /// means the buffer was empty; an Err means a transport or protocol
+    /// failure.
+    pub fn get_log_buffer(&mut self) -> Result<String> {
+        let resp = self.exchange_named("GET_LOG_BUFFER", CMD_GET_LOG_BUFFER, &[])?;
+        if resp.command != RSP_LOG_BUFFER {
+            bail!(
+                "unexpected response 0x{:02X} to GET_LOG_BUFFER",
+                resp.command
+            );
+        }
+        Ok(String::from_utf8_lossy(&resp.payload).into_owned())
     }
 }
 

@@ -82,24 +82,58 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
     println!("Hold the BOOTSEL button on the Pico and plug it into this PC now.");
     println!("Looking for an RPI-RP2 or RP2350 drive (60 s timeout)...");
 
-    let (mount, board) = wait_for_bootsel_mount(Duration::from_secs(60)).await?;
+    tracing::info!("flash: waiting for BOOTSEL drive (RPI-RP2 or RP2350)...");
+    let start = Instant::now();
+    let (mount, board) = wait_for_bootsel_mount(Duration::from_secs(60))
+        .await
+        .inspect_err(|_| {
+            tracing::error!("flash: timeout after 60s -- no BOOTSEL drive observed")
+        })?;
+    let elapsed = start.elapsed().as_secs();
+    tracing::info!(
+        "flash: BOOTSEL drive {} mounted as {} after {} s",
+        board.label(),
+        mount.display(),
+        elapsed,
+    );
     println!("Detected {} at {}", board.label(), mount.display());
 
     let uf2_path =
         resolve_uf2_path(uf2.as_deref(), board).context("resolving which UF2 to flash")?;
     println!("Using firmware: {}", uf2_path.display());
+    // Log after resolve so the path in the file is always the final resolved one.
+    tracing::info!(
+        "flash: using UF2 path={} source={}",
+        uf2_path.display(),
+        if uf2.is_some() {
+            "override"
+        } else {
+            "auto-pick"
+        },
+    );
 
     // Optional pre-flight: peek the UF2 header and warn if the family ID
     // does not match the BOOTSEL board. We warn rather than block so
     // operators with custom builds can still force a write.
     match read_uf2_family_id(&uf2_path).await {
         Ok(Some(family)) => {
-            if !board.accepts_family(family) {
+            if board.accepts_family(family) {
+                tracing::debug!(
+                    "flash: family-id ok (0x{:08X} accepted by {})",
+                    family,
+                    board.label()
+                );
+            } else {
                 println!(
                     "  warning: UF2 family ID 0x{:08X} does not match the detected board {}. \
                      The bootloader will likely reject it after reset.",
                     family,
                     board.label(),
+                );
+                tracing::warn!(
+                    "flash: family-id mismatch -- board={} got 0x{:08X}",
+                    board.label(),
+                    family,
                 );
             }
         }
@@ -108,7 +142,7 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
             // bootloader complain if it really is malformed.
         }
         Err(e) => {
-            tracing::debug!("UF2 family-ID peek skipped: {e}");
+            tracing::debug!("flash: family-id peek failed: {e}");
         }
     }
 
@@ -129,6 +163,7 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
     let n = bytes.len();
     match tokio::fs::write(&dest, bytes).await {
         Ok(()) => {
+            tracing::info!("flash: copied {} bytes to {}", n, dest.display());
             println!(
                 "Wrote {} bytes. The Pico should now reboot into the new firmware.",
                 n,
@@ -136,6 +171,9 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
         }
         Err(e) => {
             if !mount.exists() {
+                tracing::info!(
+                    "flash: drive vanished after copy -- treating as success, Pico is rebooting"
+                );
                 println!(
                     "Pico rebooted mid-write (this is normal). Approximately {} bytes \
                      transferred before reboot.",

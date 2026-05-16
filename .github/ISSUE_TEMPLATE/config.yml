@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting
+    about: Check this first -- common issues and the diagnostic ladder.
+  - name: Reporting a bug
+    url: https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Reporting-Bugs
+    about: How to make a bundle and what to include in the report.

@@ -58,6 +58,7 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
 
 async fn stage_preflight() -> Result<()> {
     println!("[1/7] Pre-flight");
+    tracing::info!("setup: stage 1/7 -- pre-flight");
     config::ensure_dirs().context("creating config/log dirs")?;
     println!("  config dir: {}", config::config_dir()?.display());
     println!("  log dir:    {}", config::log_dir()?.display());
@@ -77,6 +78,7 @@ async fn stage_preflight() -> Result<()> {
 async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<Option<PathBuf>> {
     println!();
     println!("[2/7] Pico firmware (.uf2)");
+    tracing::info!("setup: stage 2/7 -- pick UF2");
 
     if let Some(p) = uf2_override {
         if !p.exists() {
@@ -107,6 +109,7 @@ async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<Option<PathBuf>
 async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     println!();
     println!("[3/7] Flash the Pico");
+    tracing::info!("setup: stage 3/7 -- flash");
     println!(
         "  Disconnect the Pico if it's already plugged in, then hold the BOOTSEL \
          button and plug it back in."
@@ -114,12 +117,14 @@ async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     ask_press_enter("Press Enter when you've plugged the Pico in with BOOTSEL held.").await?;
     crate::cmd_flash::run(uf2).await?;
     println!("  Flash complete. The Pico is rebooting into setup mode.");
+    tracing::info!("setup: stage 3/7 complete -- Pico rebooting into setup mode");
     Ok(())
 }
 
 async fn stage_wifi_provisioning() -> Result<()> {
     println!();
     println!("[4/7] Wi-Fi provisioning over USB-CDC");
+    tracing::info!("setup: stage 4/7 -- Wi-Fi provisioning");
     println!(
         "  Wait a few seconds for the Pico to come back as a USB serial device, \
          then continue."
@@ -129,12 +134,22 @@ async fn stage_wifi_provisioning() -> Result<()> {
         .await
         .context("Pico did not appear as a USB serial device")?;
     println!("  Pico in setup mode on {port}");
+    tracing::info!("setup: setup-mode CDC port found at {port}");
 
     let mut pico = cdc::PicoSetup::open_named(&port).context("opening CDC port for setup")?;
     let hello = pico.hello().context("CDC HELLO failed")?;
     println!(
         "  Pico firmware v{}.{}.{} (proto v{}, board 0x{:02X})",
         hello.fw_major, hello.fw_minor, hello.fw_patch, hello.proto_version, hello.board_type,
+    );
+    tracing::info!(
+        "setup: HELLO ok -- fw v{}.{}.{} proto v{} board 0x{:02X} creds_present={}",
+        hello.fw_major,
+        hello.fw_minor,
+        hello.fw_patch,
+        hello.proto_version,
+        hello.board_type,
+        hello.creds_present(),
     );
     if hello.proto_version != cdc::PROTO_VERSION {
         bail!(
@@ -151,9 +166,11 @@ async fn stage_wifi_provisioning() -> Result<()> {
         .await?;
         if !overwrite {
             println!("  Keeping existing credentials. Skipping ahead to discovery.");
+            tracing::info!("setup: keeping existing creds, rebooting to run mode");
             pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;
             return Ok(());
         }
+        tracing::info!("setup: existing creds will be overwritten");
     }
 
     let mut creds = tokio::task::spawn_blocking(prompt_wifi_credentials).await??;
@@ -164,10 +181,16 @@ async fn stage_wifi_provisioning() -> Result<()> {
     let mut password = std::mem::take(&mut creds.password);
     drop(creds);
     println!("  Sending credentials...");
+    tracing::debug!(
+        "setup: sending SET_WIFI ssid_len={} password_len={}",
+        ssid.len(),
+        password.len(),
+    );
     let result = pico.set_wifi(&ssid, &mut password);
     password.zeroize();
     result.context("SET_WIFI failed")?;
     println!("  Stored. Rebooting Pico into run mode.");
+    tracing::info!("setup: SET_WIFI ack received, rebooting to run mode");
     pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;
     Ok(())
 }
@@ -175,6 +198,7 @@ async fn stage_wifi_provisioning() -> Result<()> {
 async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
     println!();
     println!("[5/7] LAN discovery");
+    tracing::info!("setup: stage 5/7 -- LAN discovery");
     println!("  Waiting for the Pico to join your Wi-Fi and answer a discover broadcast...");
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     socket.set_broadcast(true)?;
@@ -187,6 +211,11 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
 
     loop {
         if started.elapsed() > timeout {
+            tracing::error!(
+                "setup: discovery timeout after {} s, {} broadcasts sent",
+                timeout.as_secs(),
+                seq,
+            );
             bail!(
                 "no Pico answered within {} s. Check Wi-Fi credentials with \
                  `couchlink configure-wifi`.",
@@ -208,6 +237,16 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
                             info.unique_id_short,
                             info.uptime_seconds,
                         );
+                        tracing::info!(
+                            "setup: discovery ack from {from} fw v{}.{}.{} uid 0x{:08X} \
+                             uptime {}s after {} broadcasts",
+                            info.fw_major,
+                            info.fw_minor,
+                            info.fw_patch,
+                            info.unique_id_short,
+                            info.uptime_seconds,
+                            seq,
+                        );
                         return Ok((from.ip().to_string(), info));
                     }
                 }
@@ -221,6 +260,7 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
 async fn stage_smoke_test() -> Result<()> {
     println!();
     println!("[6/7] Smoke test");
+    tracing::info!("setup: stage 6/7 -- XInput smoke test");
     println!(
         "  Plug a controller into your PC (or have someone join your Parsec with \
          their gamepad). Then press a button."
@@ -246,6 +286,7 @@ async fn stage_smoke_test() -> Result<()> {
 async fn stage_install_autostart() -> Result<()> {
     println!();
     println!("[7/7] Autostart on logon");
+    tracing::info!("setup: stage 7/7 -- autostart shortcut");
 
     let install = ask_yes_no(
         "Install a Startup-folder shortcut so couchlink runs at every logon?",

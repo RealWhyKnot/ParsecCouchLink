@@ -11,7 +11,7 @@ use anyhow::Result;
 use console::style;
 use tokio::net::UdpSocket;
 
-use crate::{cdc, config, protocol};
+use crate::{cdc, config, protocol, support};
 
 #[derive(Debug)]
 pub enum CheckResult {
@@ -21,7 +21,10 @@ pub enum CheckResult {
     Fail(String, String),
 }
 
+pub type BoxedCheck = std::pin::Pin<Box<dyn std::future::Future<Output = CheckResult>>>;
+
 pub async fn run() -> Result<()> {
+    tracing::info!("doctor: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
     println!("couchlink doctor v{}", env!("CARGO_PKG_VERSION"));
     println!();
 
@@ -30,10 +33,7 @@ pub async fn run() -> Result<()> {
     let mut fails = 0;
     let mut skips = 0;
 
-    let checks: Vec<(
-        &str,
-        std::pin::Pin<Box<dyn std::future::Future<Output = CheckResult>>>,
-    )> = vec![
+    let checks: Vec<(&str, BoxedCheck)> = vec![
         ("paths", Box::pin(check_paths())),
         ("xinput", Box::pin(check_xinput())),
         ("startup", Box::pin(check_startup_shortcut())),
@@ -51,19 +51,23 @@ pub async fn run() -> Result<()> {
         match &res {
             CheckResult::Pass(m) => {
                 println!("{}  ({:>5} ms)  {}", style("PASS").green(), ms, m);
+                tracing::debug!("doctor: {} -> PASS ({}ms)", name, ms);
                 passes += 1;
             }
             CheckResult::Warn(m) => {
                 println!("{}  ({:>5} ms)  {}", style("WARN").yellow(), ms, m);
+                tracing::debug!("doctor: {} -> WARN ({}ms)", name, ms);
                 warns += 1;
             }
             CheckResult::Skip(m) => {
                 println!("{}  ({:>5} ms)  {}", style("SKIP").dim(), ms, m);
+                tracing::debug!("doctor: {} -> SKIP ({}ms)", name, ms);
                 skips += 1;
             }
             CheckResult::Fail(m, hint) => {
                 println!("{}  ({:>5} ms)  {}", style("FAIL").red(), ms, m);
                 println!("                hint: {}", hint);
+                tracing::debug!("doctor: {} -> FAIL ({}ms)", name, ms);
                 fails += 1;
             }
         }
@@ -81,6 +85,8 @@ pub async fn run() -> Result<()> {
         std::process::exit(3);
     }
     if fails > 0 {
+        tracing::error!("doctor: {} fail(s), suggesting bundle", fails);
+        support::print_help_footer();
         std::process::exit(2);
     }
     if warns > 0 {
