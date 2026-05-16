@@ -130,7 +130,7 @@ async fn stage_wifi_provisioning() -> Result<()> {
          then continue."
     );
 
-    let port = wait_for_setup_cdc(Duration::from_secs(60))
+    let port = wait_for_setup_cdc(Duration::from_secs(120))
         .await
         .context("Pico did not appear as a USB serial device")?;
     println!("  Pico in setup mode on {port}");
@@ -386,17 +386,27 @@ fn prompt_wifi_credentials() -> Result<WifiCreds> {
 }
 
 async fn wait_for_setup_cdc(timeout: Duration) -> Result<String> {
-    let deadline = std::time::Instant::now() + timeout;
+    let started = std::time::Instant::now();
+    let deadline = started + timeout;
+    let mut next_beat = started + Duration::from_secs(10);
+    let total = timeout.as_secs();
     loop {
         if let Ok(name) = cdc::find_setup_port() {
             return Ok(name);
         }
-        if std::time::Instant::now() >= deadline {
+        let now = std::time::Instant::now();
+        if now >= deadline {
             bail!(
                 "Pico did not appear in setup mode within {} s. \
                  Confirm the firmware really booted -- the on-board LED should be on.",
                 timeout.as_secs(),
             );
+        }
+        if now >= next_beat {
+            let elapsed = now.duration_since(started).as_secs();
+            println!("  ... still waiting for USB enumeration ({elapsed}s/{total}s)");
+            tracing::info!("setup: still waiting for setup-mode CDC port ({elapsed}s/{total}s)");
+            next_beat = now + Duration::from_secs(10);
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }

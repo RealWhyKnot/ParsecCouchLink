@@ -19,6 +19,17 @@
 #include "pico/unique_id.h"
 
 #include "boot_mode.h"
+#include "version.h"
+
+// bcdDevice is keyed by Windows usbflags / driver-binding cache. Bumping
+// it on a CDC-protocol break forces Windows to re-bind usbser.sys after
+// a re-flash, sidestepping cached bindings from an older firmware that
+// exposed a different interface layout. The firmware-side semver macros
+// only bump on protocol breaks by definition, so deriving bcdDevice
+// from them gets the right invalidation for free.
+#define BCD8(n)  ((((n) / 10) << 4) | ((n) % 10))
+#define BCD_DEVICE_VERSION \
+    (((uint16_t)BCD8(PICO_BRIDGE_FW_MAJOR) << 8) | (uint16_t)BCD8(PICO_BRIDGE_FW_MINOR))
 
 // -------- common: device descriptors -----------------------------------
 
@@ -33,7 +44,7 @@ static const tusb_desc_device_t desc_device_cdc = {
 
     .idVendor           = 0x2E8A,  // Raspberry Pi
     .idProduct          = 0xCAF0,  // sub-licensed; see raspberrypi/usb-pid
-    .bcdDevice          = 0x0100,
+    .bcdDevice          = BCD_DEVICE_VERSION,
 
     .iManufacturer      = 0x01,
     .iProduct           = 0x02,

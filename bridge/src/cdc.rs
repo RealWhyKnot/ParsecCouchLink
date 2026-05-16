@@ -328,14 +328,80 @@ impl PicoSetup {
     }
 
     pub fn reboot_to_run(&mut self) -> Result<()> {
-        let resp = self.exchange_named("REBOOT_TO_RUN", CMD_REBOOT_TO_RUN, &[])?;
-        if resp.command != RSP_REBOOT {
-            bail!(
-                "unexpected response 0x{:02X} to REBOOT_TO_RUN",
-                resp.command
-            );
+        // After CMD_REBOOT_TO_RUN, three outcomes are all acceptable:
+        //   - the firmware replies RSP_REBOOT and then reboots (happy path),
+        //   - the host sees a read/write error because the device disconnected
+        //     before the reply made it across (race; firmware always reboots
+        //     after handling, so the operation succeeded),
+        //   - deadline elapses with the port still open and no reply
+        //     (genuine failure; firmware hung).
+        // The previous implementation propagated the second case as a hard
+        // error, masking successful reboots as failures in the wizard.
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1);
+        let frame = encode(CMD_REBOOT_TO_RUN, seq, &[]);
+        if let Err(e) = self.port.write_all(&frame) {
+            if e.kind() != std::io::ErrorKind::TimedOut {
+                tracing::info!(
+                    "reboot: write returned {:?} -- treating as success (Pico rebooted)",
+                    e.kind(),
+                );
+                return Ok(());
+            }
+            return Err(e).context("writing REBOOT_TO_RUN frame");
         }
-        Ok(())
+        self.port.flush().ok();
+
+        let deadline = Instant::now() + Duration::from_millis(750);
+        let mut buf = Vec::with_capacity(MAX_FRAME);
+        loop {
+            let mut tmp = [0u8; 64];
+            match self.port.read(&mut tmp) {
+                Ok(0) => {}
+                Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    if Instant::now() >= deadline {
+                        tracing::warn!(
+                            "reboot: no RSP and port still open after 750 ms ({} bytes buffered)",
+                            buf.len(),
+                        );
+                        bail!("REBOOT_TO_RUN: no response and port still open after 750 ms");
+                    }
+                }
+                Err(e) => {
+                    tracing::info!(
+                        "reboot: read returned {:?} -- treating as success (Pico rebooted)",
+                        e.kind(),
+                    );
+                    return Ok(());
+                }
+            }
+            if let Some(start) = find_magic(&buf) {
+                if start > 0 {
+                    buf.drain(..start);
+                }
+                if let Ok((frame, _consumed)) = try_decode(&buf) {
+                    if frame.command == RSP_REBOOT {
+                        tracing::info!("reboot: got RSP_REBOOT (0x85)");
+                        return Ok(());
+                    }
+                    if frame.command == RSP_NACK {
+                        let code = frame.payload.first().copied().unwrap_or(ERR_INTERNAL);
+                        let detail = frame.payload.get(1).copied().unwrap_or(0);
+                        return Err(anyhow!(
+                            "Pico rejected REBOOT_TO_RUN: {} (code 0x{:02X}, detail 0x{:02X})",
+                            err_name(code),
+                            code,
+                            detail,
+                        ));
+                    }
+                    bail!(
+                        "unexpected response 0x{:02X} to REBOOT_TO_RUN",
+                        frame.command,
+                    );
+                }
+            }
+        }
     }
 
     /// Fetch the firmware's in-RAM diagnostic ring buffer. Returns the

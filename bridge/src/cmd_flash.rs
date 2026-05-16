@@ -61,20 +61,41 @@ impl BootselBoard {
     /// RP2350 has three variants (secure / non-secure / RISC-V); all
     /// are acceptable for our needs since we ship the secure ARM build.
     pub fn accepts_family(self, family_id: u32) -> bool {
-        const RP2040: u32 = 0xE48BFF56;
-        const RP2350_ARM_S: u32 = 0xE48BFF59;
-        const RP2350_ARM_NS: u32 = 0xE48BFF5A;
-        const RP2350_RISCV: u32 = 0xE48BFF5B;
-        const ABSOLUTE: u32 = 0xE48BFF57; // universal; any chip accepts it
         match self {
-            BootselBoard::Rp2040 => matches!(family_id, RP2040 | ABSOLUTE),
+            BootselBoard::Rp2040 => matches!(family_id, FAMILY_RP2040 | FAMILY_ABSOLUTE),
             BootselBoard::Rp2350 => {
                 matches!(
                     family_id,
-                    RP2350_ARM_S | RP2350_ARM_NS | RP2350_RISCV | ABSOLUTE
+                    FAMILY_RP2350_ARM_S
+                        | FAMILY_RP2350_ARM_NS
+                        | FAMILY_RP2350_RISCV
+                        | FAMILY_ABSOLUTE
                 )
             }
         }
+    }
+}
+
+// UF2 family IDs from microsoft/uf2 `uf2families.json`. ABSOLUTE is the
+// universal family any chip's boot ROM accepts.
+const FAMILY_RP2040: u32 = 0xE48BFF56;
+const FAMILY_ABSOLUTE: u32 = 0xE48BFF57;
+const FAMILY_DATA: u32 = 0xE48BFF58;
+const FAMILY_RP2350_ARM_S: u32 = 0xE48BFF59;
+const FAMILY_RP2350_ARM_NS: u32 = 0xE48BFF5A;
+const FAMILY_RP2350_RISCV: u32 = 0xE48BFF5B;
+
+/// Short human label for a UF2 family ID. Used in operator-facing
+/// error messages so a mismatch reads naturally.
+fn family_name(family_id: u32) -> &'static str {
+    match family_id {
+        FAMILY_RP2040 => "rp2040",
+        FAMILY_ABSOLUTE => "absolute",
+        FAMILY_DATA => "data",
+        FAMILY_RP2350_ARM_S => "rp2350-arm-s",
+        FAMILY_RP2350_ARM_NS => "rp2350-arm-ns",
+        FAMILY_RP2350_RISCV => "rp2350-riscv",
+        _ => "unknown",
     }
 }
 
@@ -112,9 +133,11 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
         },
     );
 
-    // Optional pre-flight: peek the UF2 header and warn if the family ID
-    // does not match the BOOTSEL board. We warn rather than block so
-    // operators with custom builds can still force a write.
+    // Pre-flight: peek the UF2 header and refuse to write if the family
+    // ID does not match the BOOTSEL board. The bootloader silently
+    // discards wrong-family blocks and remounts as BOOTSEL with no
+    // feedback to the operator -- a copy that looks like it succeeded
+    // but produces a device that never enumerates. Block here instead.
     match read_uf2_family_id(&uf2_path).await {
         Ok(Some(family)) => {
             if board.accepts_family(family) {
@@ -124,22 +147,36 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
                     board.label()
                 );
             } else {
-                println!(
-                    "  warning: UF2 family ID 0x{:08X} does not match the detected board {}. \
-                     The bootloader will likely reject it after reset.",
-                    family,
+                tracing::error!(
+                    "flash: UF2 family mismatch -- board={} (drive {}) but UF2 family=0x{:08X} \
+                     ({}). Expected file for this board: {}",
                     board.label(),
+                    mount.display(),
+                    family,
+                    family_name(family),
+                    board.canonical_uf2(),
                 );
-                tracing::warn!(
-                    "flash: family-id mismatch -- board={} got 0x{:08X}",
-                    board.label(),
+                bail!(
+                    "UF2 family mismatch: {} has family 0x{:08X} ({}), but the detected \
+                     BOOTSEL drive is {}. The bootloader would silently reject this write \
+                     and the Pico would never come out of BOOTSEL.\n\n  For {}, use {}.",
+                    uf2_path.display(),
                     family,
+                    family_name(family),
+                    board.label(),
+                    board.label(),
+                    board.canonical_uf2(),
                 );
             }
         }
         Ok(None) => {
-            // Not a recognizable UF2 magic; let the copy proceed and the
-            // bootloader complain if it really is malformed.
+            // Not a recognizable UF2 magic. Let the copy proceed and the
+            // bootloader complain if it really is malformed -- we don't
+            // want to block manual recovery flows with non-standard files.
+            tracing::warn!(
+                "flash: UF2 magic not recognized in {}; skipping family check",
+                uf2_path.display(),
+            );
         }
         Err(e) => {
             tracing::debug!("flash: family-id peek failed: {e}");
@@ -397,4 +434,44 @@ fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
 #[cfg(not(windows))]
 fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rp2040_accepts_rp2040_and_absolute_only() {
+        let b = BootselBoard::Rp2040;
+        assert!(b.accepts_family(FAMILY_RP2040));
+        assert!(b.accepts_family(FAMILY_ABSOLUTE));
+        assert!(!b.accepts_family(FAMILY_DATA));
+        assert!(!b.accepts_family(FAMILY_RP2350_ARM_S));
+        assert!(!b.accepts_family(FAMILY_RP2350_ARM_NS));
+        assert!(!b.accepts_family(FAMILY_RP2350_RISCV));
+        assert!(!b.accepts_family(0xDEADBEEF));
+    }
+
+    #[test]
+    fn rp2350_accepts_rp2350_variants_and_absolute_only() {
+        let b = BootselBoard::Rp2350;
+        assert!(b.accepts_family(FAMILY_RP2350_ARM_S));
+        assert!(b.accepts_family(FAMILY_RP2350_ARM_NS));
+        assert!(b.accepts_family(FAMILY_RP2350_RISCV));
+        assert!(b.accepts_family(FAMILY_ABSOLUTE));
+        assert!(!b.accepts_family(FAMILY_RP2040));
+        assert!(!b.accepts_family(FAMILY_DATA));
+        assert!(!b.accepts_family(0xDEADBEEF));
+    }
+
+    #[test]
+    fn family_name_covers_known_ids() {
+        assert_eq!(family_name(FAMILY_RP2040), "rp2040");
+        assert_eq!(family_name(FAMILY_ABSOLUTE), "absolute");
+        assert_eq!(family_name(FAMILY_DATA), "data");
+        assert_eq!(family_name(FAMILY_RP2350_ARM_S), "rp2350-arm-s");
+        assert_eq!(family_name(FAMILY_RP2350_ARM_NS), "rp2350-arm-ns");
+        assert_eq!(family_name(FAMILY_RP2350_RISCV), "rp2350-riscv");
+        assert_eq!(family_name(0xDEADBEEF), "unknown");
+    }
 }
