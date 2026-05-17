@@ -25,6 +25,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # Full history + all tags so the release-body step can diff
+          # commits against the previous version tag for the changelog.
+          fetch-depth: 0
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -109,15 +113,108 @@ jobs:
           MANIFEST_PATH: ${{ steps.artifact.outputs.manifest }}
         shell: pwsh
         run: |
-          $notes = @"
-          Download $env:ZIP_NAME, extract the full zip, then run:
+          # Build the release body. Top section is a conventional-commit
+          # changelog grouped by type, extracted from `git log $prev..$tag`.
+          # Bottom section is the static install instructions.
 
-              powershell -ExecutionPolicy Bypass -File .\setup.ps1
+          $prevTag = git tag --list 'v*' --sort=-version:refname |
+                     Where-Object { $_ -ne $env:TAG_NAME } |
+                     Select-Object -First 1
 
-          SHA256: $env:ZIP_SHA256
+          $sections = [ordered]@{
+              feat     = 'Features'
+              fix      = 'Bug Fixes'
+              perf     = 'Performance'
+              refactor = 'Refactors'
+              docs     = 'Documentation'
+              test     = 'Tests'
+              ci       = 'CI'
+              build    = 'Build'
+              chore    = 'Chores'
+              style    = 'Style'
+              revert   = 'Reverts'
+              other    = 'Other'
+          }
+          $groups = @{}
+          $breaking = @()
 
-          Full walkthrough: https://github.com/$env:GITHUB_REPOSITORY/wiki/Quick-Start
-          "@
+          if ($prevTag) {
+              $range = "$prevTag..$env:TAG_NAME"
+              $logLines = git log $range --pretty=format:"%h%x09%s" --no-merges
+              foreach ($line in $logLines) {
+                  if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                  $parts = $line -split "`t", 2
+                  $sha = $parts[0]
+                  $subject = $parts[1]
+                  if ($subject -match '^(?<type>\w+)(\((?<scope>[^)]+)\))?(?<bang>!)?:\s*(?<desc>.+)$') {
+                      $type = $matches['type'].ToLowerInvariant()
+                      $scope = $matches['scope']
+                      $isBreaking = -not [string]::IsNullOrEmpty($matches['bang'])
+                      $desc = $matches['desc']
+                      if (-not $sections.Contains($type)) { $type = 'other' }
+                      if ($scope) {
+                          $entry = "- ``$sha`` **${scope}**: $desc"
+                      } else {
+                          $entry = "- ``$sha`` $desc"
+                      }
+                      if ($isBreaking) {
+                          if ($scope) {
+                              $breaking += "- ``$sha`` **${scope}**: $desc"
+                          } else {
+                              $breaking += "- ``$sha`` $desc"
+                          }
+                      }
+                      if (-not $groups.ContainsKey($type)) { $groups[$type] = @() }
+                      $groups[$type] += $entry
+                  } else {
+                      if (-not $groups.ContainsKey('other')) { $groups['other'] = @() }
+                      $groups['other'] += "- ``$sha`` $subject"
+                  }
+              }
+          }
+
+          $out = New-Object System.Collections.Generic.List[string]
+          if ($prevTag) {
+              $out.Add("## Changes since $prevTag")
+              $out.Add("")
+              if ($breaking.Count -gt 0) {
+                  $out.Add("### Breaking Changes")
+                  $out.Add("")
+                  foreach ($e in $breaking) { $out.Add($e) }
+                  $out.Add("")
+              }
+              $emitted = $false
+              foreach ($key in $sections.Keys) {
+                  if ($groups.ContainsKey($key) -and $groups[$key].Count -gt 0) {
+                      $emitted = $true
+                      $out.Add("### $($sections[$key])")
+                      $out.Add("")
+                      foreach ($e in $groups[$key]) { $out.Add($e) }
+                      $out.Add("")
+                  }
+              }
+              if (-not $emitted) {
+                  $out.Add("_No conventional-commit changes since $prevTag._")
+                  $out.Add("")
+              }
+              $out.Add("**Full diff:** https://github.com/$env:GITHUB_REPOSITORY/compare/$prevTag...$env:TAG_NAME")
+              $out.Add("")
+          } else {
+              $out.Add("Initial release.")
+              $out.Add("")
+          }
+
+          $out.Add("## Install")
+          $out.Add("")
+          $out.Add("Download ``$env:ZIP_NAME``, extract the full zip, then run:")
+          $out.Add("")
+          $out.Add("    powershell -ExecutionPolicy Bypass -File .\setup.ps1")
+          $out.Add("")
+          $out.Add("SHA256: ``$env:ZIP_SHA256``")
+          $out.Add("")
+          $out.Add("Full walkthrough: https://github.com/$env:GITHUB_REPOSITORY/wiki/Quick-Start")
+
+          $notes = $out -join "`n"
           $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding UTF8
 
