@@ -57,20 +57,27 @@ If the Startup shortcut was added, Windows starts the bridge at logon. If not, r
 .\couchlink.exe
 ```
 
-Useful checks:
+Each subcommand also has a one-shot PowerShell wrapper in the release folder. Right-click and "Run with PowerShell", or call from an existing PowerShell prompt:
 
 ```powershell
-.\couchlink.exe doctor
-.\couchlink.exe logs --tail
-.\couchlink.exe bundle
+.\doctor.ps1            # run every diagnostic check
+.\logs.ps1 --tail       # follow the active log file
+.\bundle.ps1            # produce a support-bundle ZIP for bug reports
+.\flash.ps1             # re-flash without re-running setup
+.\configure-wifi.ps1    # re-send Wi-Fi credentials (Pico must be in setup mode)
+.\test.ps1 <name>       # run one diagnostic check by name
 ```
+
+The wrappers record a transcript under `%LOCALAPPDATA%\ParsecCouchLink\logs` so a failed run can be attached to a bug report later. The bare `couchlink.exe` form works too -- the wrappers are just shortcuts that pre-name the subcommand and capture a transcript.
 
 ## Reconfigure Wi-Fi
 
 If the router or Wi-Fi password changes:
 
 ```powershell
-.\couchlink.exe configure-wifi
+.\configure-wifi.ps1
 ```
+
+(equivalent to `.\couchlink.exe configure-wifi`.)
 
 If the Pico cannot enter setup mode, follow [[Setup and Flashing]].

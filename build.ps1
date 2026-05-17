@@ -84,20 +84,54 @@ if (-not (Test-Path -LiteralPath $FirmwarePicow)) {
 Copy-Item -LiteralPath $FirmwarePico2w -Destination (Join-Path $StageDir "couchlink-pico2w.uf2") -Force
 Copy-Item -LiteralPath $FirmwarePicow  -Destination (Join-Path $StageDir "couchlink-picow.uf2")  -Force
 
-Copy-Item -LiteralPath (Join-Path $RepoRoot "setup.ps1") -Destination (Join-Path $StageDir "setup.ps1") -Force
+$ScriptFiles = @(
+    "setup.ps1",
+    "doctor.ps1",
+    "bundle.ps1",
+    "flash.ps1",
+    "configure-wifi.ps1",
+    "logs.ps1",
+    "test.ps1"
+)
+foreach ($script in $ScriptFiles) {
+    $src = Join-Path $RepoRoot $script
+    if (-not (Test-Path -LiteralPath $src)) {
+        throw "Missing wrapper script: $src"
+    }
+    Copy-Item -LiteralPath $src -Destination (Join-Path $StageDir $script) -Force
+}
 Copy-Item -LiteralPath (Join-Path $RepoRoot "LICENSE") -Destination (Join-Path $StageDir "LICENSE") -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot "NOTICE") -Destination (Join-Path $StageDir "NOTICE") -Force
 
 $ReleaseReadme = @"
 Parsec CouchLink $FullVersion
 
-1. Extract the full zip.
+First-time setup
+----------------
+1. Extract the full zip into one folder (avoid Program Files).
 2. Open PowerShell in this folder.
 3. Run:
    powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
-The setup script flashes the Pico, provisions Wi-Fi, checks discovery, and can
-add couchlink.exe to Windows startup.
+The setup script flashes the Pico, provisions Wi-Fi, checks discovery,
+and can add couchlink.exe to Windows startup.
+
+Daily use
+---------
+Each subcommand also has a one-shot wrapper script. Right-click and
+"Run with PowerShell", or call from an existing PowerShell prompt:
+
+  couchlink.exe          start the bridge for a Parsec session
+  doctor.ps1             run every diagnostic check
+  bundle.ps1             produce a support-bundle ZIP for bug reports
+  logs.ps1               print log path (use --tail to follow live)
+  flash.ps1              re-flash without re-running setup
+  configure-wifi.ps1     re-send Wi-Fi credentials (Pico must be in setup mode)
+  test.ps1 <name>        run one diagnostic check by name
+
+The wrappers record a transcript under
+  %LOCALAPPDATA%\ParsecCouchLink\logs
+so a failed run can be attached to a bug report.
 "@
 Set-Content -LiteralPath (Join-Path $StageDir "README.txt") -Value $ReleaseReadme -Encoding ASCII
 
