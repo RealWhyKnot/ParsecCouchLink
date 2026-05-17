@@ -129,9 +129,8 @@ async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     println!("  signal -- a stray press during reboot will erase the");
     println!("  credentials you are about to enter.");
     println!();
-    ask_press_enter(
-        "Press Enter once the RPI-RP2 or RP2350 drive has appeared in Windows."
-    ).await?;
+    ask_press_enter("Press Enter once the RPI-RP2 or RP2350 drive has appeared in Windows.")
+        .await?;
     crate::cmd_flash::run(uf2).await?;
     println!("  Flash complete. The Pico is rebooting into setup mode --");
     println!("  leave the BOOTSEL button alone during this reboot.");
