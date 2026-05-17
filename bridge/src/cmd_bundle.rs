@@ -92,9 +92,14 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
         }
     }
 
-    // Logs: last 3 couchlink-*.log and last 3 setup-*.log, kept separate.
+    // Logs: last 3 couchlink.*.log (bridge, written by tracing-appender's
+    // daily rotation as couchlink.YYYY-MM-DD.log) and last 3 setup-*.log
+    // (PowerShell transcripts from setup.ps1 / the wrapper scripts).
+    // The bridge prefix was previously "couchlink-" which never matched
+    // tracing-appender's actual filename format and silently produced
+    // bundles with zero bridge logs.
     if let Ok(log_dir) = config::log_dir() {
-        bundle_log_prefix(&log_dir, "couchlink-", &mut zip, opts)?;
+        bundle_log_prefix(&log_dir, "couchlink.", &mut zip, opts)?;
         bundle_log_prefix(&log_dir, "setup-", &mut zip, opts)?;
     }
 
