@@ -28,14 +28,16 @@ This is the path for a new Pico user starting from a release zip.
 
 The script explains each step before it starts. In short:
 
-1. Hold BOOTSEL on the Pico.
-2. Plug the Pico into the PC while still holding BOOTSEL.
-3. Setup detects which Pico is in BOOTSEL and copies the matching firmware (`couchlink-pico2w.uf2` for the RP2350 board, `couchlink-picow.uf2` for the RP2040 board).
-4. The Pico reboots as a USB serial setup device.
-5. Enter the 2.4 GHz Wi-Fi credentials when prompted.
-6. Setup waits for the Pico to join Wi-Fi and answer discovery.
-7. Press a button on the Parsec gamepad or a local Xbox controller for the smoke test.
-8. Accept the Startup shortcut if you want the bridge to run at every logon.
+1. Press and **hold** the BOOTSEL button on the Pico.
+2. With BOOTSEL still held, plug the Pico into the PC using a micro-USB **data** cable (charge-only cables will not work).
+3. **Release BOOTSEL** as soon as Windows shows a removable drive named `RPI-RP2` (Pico W or Pico WH) or `RP2350` (Pico 2 W). The Pico stays in flash mode after you let go -- you do not need to keep the button held while the firmware copies.
+4. Setup detects which Pico is in BOOTSEL and copies the matching firmware (`couchlink-pico2w.uf2` for the RP2350 board, `couchlink-picow.uf2` for the RP2040 board).
+5. The Pico reboots into our firmware. **Do not press BOOTSEL during the reboot** -- the firmware reads BOOTSEL during its first three seconds of run time as a "wipe saved Wi-Fi" signal, and a stray press will erase the credentials you are about to enter.
+6. The Pico comes back as a USB serial setup device.
+7. Enter the 2.4 GHz Wi-Fi credentials when prompted.
+8. Setup waits for the Pico to join Wi-Fi and answer discovery.
+9. Press a button on the Parsec gamepad or a local Xbox controller for the smoke test.
+10. Accept the Startup shortcut if you want the bridge to run at every logon.
 
 ## What Success Looks Like
 

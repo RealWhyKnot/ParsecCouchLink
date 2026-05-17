@@ -110,13 +110,31 @@ async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     println!();
     println!("[3/7] Flash the Pico");
     tracing::info!("setup: stage 3/7 -- flash");
-    println!(
-        "  Disconnect the Pico if it's already plugged in, then hold the BOOTSEL \
-         button and plug it back in."
-    );
-    ask_press_enter("Press Enter when you've plugged the Pico in with BOOTSEL held.").await?;
+    println!("  How to put the Pico into BOOTSEL (flashing) mode:");
+    println!();
+    println!("    1. Unplug the Pico if it is currently connected.");
+    println!("    2. Press and HOLD the BOOTSEL button on the Pico.");
+    println!("    3. With BOOTSEL still held, plug the Pico into this PC");
+    println!("       using a micro-USB DATA cable (charge-only cables fail).");
+    println!("    4. Watch File Explorer for a new removable drive named");
+    println!("       RPI-RP2 (Pico W or Pico WH) or RP2350 (Pico 2 W).");
+    println!("    5. RELEASE the BOOTSEL button as soon as that drive appears.");
+    println!("       The Pico stays in BOOTSEL mode after you let go -- you");
+    println!("       do NOT need to keep the button held during the copy.");
+    println!();
+    println!("  After the copy finishes, the Pico will reboot into our");
+    println!("  firmware automatically. Do NOT press BOOTSEL during that");
+    println!("  reboot. The firmware reads BOOTSEL during its first three");
+    println!("  seconds of run time as a \"wipe saved Wi-Fi credentials\"");
+    println!("  signal -- a stray press during reboot will erase the");
+    println!("  credentials you are about to enter.");
+    println!();
+    ask_press_enter(
+        "Press Enter once the RPI-RP2 or RP2350 drive has appeared in Windows."
+    ).await?;
     crate::cmd_flash::run(uf2).await?;
-    println!("  Flash complete. The Pico is rebooting into setup mode.");
+    println!("  Flash complete. The Pico is rebooting into setup mode --");
+    println!("  leave the BOOTSEL button alone during this reboot.");
     tracing::info!("setup: stage 3/7 complete -- Pico rebooting into setup mode");
     Ok(())
 }
@@ -397,8 +415,13 @@ async fn wait_for_setup_cdc(timeout: Duration) -> Result<String> {
         let now = std::time::Instant::now();
         if now >= deadline {
             bail!(
-                "Pico did not appear in setup mode within {} s. \
-                 Confirm the firmware really booted -- the on-board LED should be on.",
+                "Pico did not appear as a USB CDC serial device within {} s. \
+                 Open Device Manager and check Ports (COM & LPT) for a new COM port, \
+                 or Other devices for an entry with VID 2E8A:CAF0. \
+                 If nothing shows at all, the firmware likely did not boot -- try a \
+                 different micro-USB data cable or USB port and re-run setup. \
+                 If a COM port does appear but setup still fails, run \
+                 `couchlink.exe bundle` and attach the resulting zip to a bug report.",
                 timeout.as_secs(),
             );
         }

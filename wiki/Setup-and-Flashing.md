@@ -30,12 +30,14 @@ Wi-Fi is 2.4 GHz only on both -- the underlying CYW43439 radio doesn't do 5 GHz.
 
 Use this when setup asks for the Pico in BOOTSEL mode:
 
-1. Unplug the Pico.
-2. Hold the BOOTSEL button.
-3. Plug the Pico into the PC while holding BOOTSEL.
-4. Release BOOTSEL after Windows shows the removable drive (`RPI-RP2` or `RP2350`).
+1. Unplug the Pico if it is currently connected.
+2. Press and **hold** the BOOTSEL button on the Pico.
+3. With BOOTSEL still held, plug the Pico into the PC using a micro-USB **data** cable.
+4. **Release BOOTSEL** as soon as Windows shows the removable drive (`RPI-RP2` for Pico W or Pico WH, `RP2350` for Pico 2 W). The Pico stays in flash mode after release -- you do not need to keep the button held while the firmware copies.
 
 The bridge looks for either drive label, picks the matching UF2 from the release folder, and copies it. The Pico usually reboots as soon as the copy completes.
+
+**Do not press BOOTSEL again while the Pico is rebooting into the new firmware.** The firmware reads BOOTSEL during its first three seconds of run time as a "wipe saved Wi-Fi credentials" signal. A stray press during reboot will erase any credentials that are saved and put you back at the provisioning prompt.
 
 ## Setup Mode
 
@@ -49,20 +51,23 @@ Then the Pico joins Wi-Fi and starts listening for the bridge on UDP port 4242.
 
 ## Recovery
 
-If the Pico has bad Wi-Fi credentials:
+If the Pico has bad Wi-Fi credentials saved, it reboots into run mode (an XInput controller, not a serial device) on every plug-in, so `configure-wifi` cannot reach it. The firmware provides a credential-wipe trigger on the BOOTSEL button. The **timing is different from BOOTSEL flashing** -- this is the most common source of confusion.
+
+For BOOTSEL flashing you press the button **before** plugging in. For a credential wipe you press it **after** plugging in:
 
 1. Unplug the Pico.
-2. Hold BOOTSEL.
-3. Plug it back in.
-4. Keep holding BOOTSEL for at least 3 seconds after power-on.
+2. Plug the Pico back in **without** pressing BOOTSEL. Wait roughly one second.
+3. Within the first three seconds after plug-in, press and **hold** the BOOTSEL button.
+4. Keep holding for at least three full seconds.
+5. Release BOOTSEL.
 
-The firmware clears saved Wi-Fi and reboots into setup mode. Then run:
+The firmware reads the BOOTSEL pin three seconds into its boot. If the button is held at that moment, it clears saved Wi-Fi and reboots into setup mode. Then run:
 
 ```powershell
 .\couchlink.exe configure-wifi
 ```
 
-If the Pico appears as a removable drive instead, it is in the hardware bootloader rather than firmware setup mode. Re-run setup (which will re-flash) and then retry the recovery steps.
+If the Pico instead appears as a removable drive named `RPI-RP2` or `RP2350`, you held BOOTSEL during plug-in by mistake -- that puts the Pico into the boot ROM's flashing mode, not the firmware's credential-wipe path. Unplug, wait a second, and try the recovery steps again without holding BOOTSEL while you plug in.
 
 ## Manual Flash
 

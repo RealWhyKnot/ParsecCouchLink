@@ -5,6 +5,7 @@
 #include "hardware/structs/sio.h"
 #include "hardware/sync.h"
 #include "hardware/gpio.h"
+#include "tusb.h"
 
 #include "flash_creds.h"
 #include "diag_log.h"
@@ -33,9 +34,19 @@ static bool __no_inline_not_in_flash_func(read_bootsel_button)(void) {
 bool boot_mode_bootsel_held(void) {
     // Wait 3 seconds, then sample once. The recovery procedure is to
     // unplug, plug back in, and hold BOOTSEL for the first 3 seconds.
-    // The delay avoids wiping creds on an accidental tap.
-    sleep_ms(3000);
-    return read_bootsel_button();
+    // The delay avoids wiping creds on an accidental tap. tud_task()
+    // is pumped during the wait so USB enumeration can run in parallel
+    // -- caller must have already invoked tusb_init().
+    const uint32_t wait_ms = 3000;
+    absolute_time_t deadline = make_timeout_time_ms(wait_ms);
+    while (!time_reached(deadline)) {
+        tud_task();
+        sleep_us(500);
+    }
+    bool held = read_bootsel_button();
+    diag_log_printf("boot: BOOTSEL window done (held=%s, waited=%u ms)",
+                    held ? "yes" : "no", (unsigned)wait_ms);
+    return held;
 }
 
 boot_mode_t boot_mode_decide(void) {

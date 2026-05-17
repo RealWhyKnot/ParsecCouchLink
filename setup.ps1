@@ -74,9 +74,9 @@ if (-not $SkipIntro) {
     Write-Host "The Wi-Fi password is sent to the Pico over USB setup mode. It is not saved on this PC."
 
     Write-Section "What will happen"
-    Write-Host "1. Hold BOOTSEL while plugging the Pico into this PC."
+    Write-Host "1. Hold BOOTSEL, plug the Pico in, then release as soon as Windows shows a removable drive (RPI-RP2 or RP2350)."
     Write-Host "2. The bridge detects which Pico you have and copies the matching firmware."
-    Write-Host "3. The Pico reboots as a USB serial setup device."
+    Write-Host "3. The Pico reboots as a USB serial setup device. (Do not press BOOTSEL during this reboot.)"
     Write-Host "4. You enter your 2.4 GHz Wi-Fi credentials."
     Write-Host "5. The Pico joins Wi-Fi and the bridge checks discovery."
     Write-Host "6. The bridge can add a Windows Startup shortcut."

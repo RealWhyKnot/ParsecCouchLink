@@ -201,7 +201,15 @@ bool cdc_handlers_reboot_pending(void) {
 }
 
 void cdc_handlers_poll(void) {
-    if (!tud_cdc_connected()) {
+    static bool last_connected = false;
+    bool connected = tud_cdc_connected();
+    if (connected != last_connected) {
+        diag_log_msg(connected ? "cdc: host opened the port (DTR asserted)"
+                               : "cdc: host closed the port (DTR cleared)");
+        last_connected = connected;
+    }
+
+    if (!connected) {
         // No host attached; drain accidentally-buffered RX so we don't
         // accumulate stale bytes from a previous host.
         if (tud_cdc_available()) {

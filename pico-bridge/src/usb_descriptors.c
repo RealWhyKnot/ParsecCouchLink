@@ -19,6 +19,7 @@
 #include "pico/unique_id.h"
 
 #include "boot_mode.h"
+#include "diag_log.h"
 #include "version.h"
 
 // bcdDevice is keyed by Windows usbflags / driver-binding cache. Bumping
@@ -72,6 +73,11 @@ static const tusb_desc_device_t desc_device_xinput = {
 };
 
 uint8_t const *tud_descriptor_device_cb(void) {
+    static bool logged = false;
+    if (!logged) {
+        diag_log_msg("usb: host requested device descriptor (enum step 1)");
+        logged = true;
+    }
     return (uint8_t const *)(boot_mode_current() == BOOT_MODE_RUN
                              ? &desc_device_xinput
                              : &desc_device_cdc);
@@ -132,6 +138,11 @@ static const uint8_t desc_configuration_xinput[] = {
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
+    static bool logged = false;
+    if (!logged) {
+        diag_log_msg("usb: host requested configuration descriptor (enum step 2)");
+        logged = true;
+    }
     if (boot_mode_current() == BOOT_MODE_RUN) {
         return desc_configuration_xinput;
     }
@@ -220,4 +231,30 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
     // Discarded: rumble (msg 0x00, len 8) and LED (msg 0x01, len 3).
     // Acked via the read.
     tud_vendor_read_flush();
+}
+
+// -------- USB lifecycle diagnostics ------------------------------------
+//
+// These weak callbacks fire when the host transitions us through the
+// USB device states. Together with the descriptor-request logs above
+// they let an operator triage enumeration failures by reading the
+// diag log: "device descriptor" without "mounted" means the host gave
+// up between SET_ADDRESS and SET_CONFIGURATION; no "device descriptor"
+// at all means the host never started talking to us (cable, port, or
+// firmware-didn't-boot).
+
+void tud_mount_cb(void) {
+    diag_log_msg("usb: mounted (enumeration complete)");
+}
+
+void tud_umount_cb(void) {
+    diag_log_msg("usb: unmounted (host disconnected or bus reset)");
+}
+
+void tud_suspend_cb(bool remote_wakeup_en) {
+    diag_log_printf("usb: suspended (remote_wakeup=%d)", (int)remote_wakeup_en);
+}
+
+void tud_resume_cb(void) {
+    diag_log_msg("usb: resumed");
 }

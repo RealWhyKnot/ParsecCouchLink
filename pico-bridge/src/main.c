@@ -18,6 +18,7 @@
 #include "flash_creds.h"
 #include "gamepad_state.h"
 #include "net_udp.h"
+#include "version.h"
 #include "watchdog.h"
 #include "wifi.h"
 #include "xinput.h"
@@ -96,10 +97,26 @@ static void setup_mode_main_loop(void) {
 int main(void) {
     stdio_init_all();
     diag_log_init();
-    diag_log_msg("couchlink-pico boot");
+    diag_log_printf("boot: couchlink-pico fw=%d.%d.%d board=0x%02X",
+                    PICO_BRIDGE_FW_MAJOR, PICO_BRIDGE_FW_MINOR,
+                    PICO_BRIDGE_FW_PATCH, PICO_BRIDGE_BOARD_TYPE);
+
+    // tusb_init() must run before any blocking wait so the host's USB
+    // enumeration handshake can complete during boot. On RP2040 the D+
+    // pull-up asserts from hardware reset, so the host begins probing
+    // the device the instant VBUS is present; if tusb_init() hasn't run
+    // yet, the host sees an unresponsive device and may abandon the
+    // port before we even get to the main loop. The BOOTSEL recovery
+    // window inside boot_mode_decide() now pumps tud_task() while it
+    // waits, so CDC enumerates in parallel with the hold check instead
+    // of after it.
+    tusb_init();
+    diag_log_msg("boot: tusb_init done");
 
     boot_mode_t mode = boot_mode_decide();
-    tusb_init();
+    diag_log_printf("boot: entering %s main loop",
+                    mode == BOOT_MODE_RUN ? "run" : "setup");
+
     if (mode == BOOT_MODE_RUN) {
         run_mode_main_loop();
     } else {

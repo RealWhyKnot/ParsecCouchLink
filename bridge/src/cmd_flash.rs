@@ -100,8 +100,10 @@ fn family_name(family_id: u32) -> &'static str {
 }
 
 pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
-    println!("Hold the BOOTSEL button on the Pico and plug it into this PC now.");
-    println!("Looking for an RPI-RP2 or RP2350 drive (60 s timeout)...");
+    println!("Looking for a Pico in BOOTSEL mode (RPI-RP2 or RP2350 drive, 60 s timeout)...");
+    println!("If your Pico is not in BOOTSEL yet: hold the BOOTSEL button, plug the Pico");
+    println!("into this PC with a micro-USB data cable, then release BOOTSEL as soon as");
+    println!("the RPI-RP2 or RP2350 drive appears in File Explorer.");
 
     tracing::info!("flash: waiting for BOOTSEL drive (RPI-RP2 or RP2350)...");
     let start = Instant::now();
