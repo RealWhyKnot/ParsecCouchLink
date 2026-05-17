@@ -258,3 +258,25 @@ void tud_suspend_cb(bool remote_wakeup_en) {
 void tud_resume_cb(void) {
     diag_log_msg("usb: resumed");
 }
+
+// Fires whenever the host changes DTR or RTS via SET_CONTROL_LINE_STATE.
+// In our setup-mode handshake, the bridge explicitly asserts DTR+RTS
+// right after opening the COM port, so a healthy bundle will show this
+// callback firing within milliseconds of "usb: mounted". If a bundle
+// shows mount-without-line-state, the host opened the port but never
+// drove DTR -- check the bridge logs for an "asserted DTR" line.
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
+    diag_log_printf("cdc: line state itf=%u dtr=%d rts=%d",
+                    (unsigned)itf, (int)dtr, (int)rts);
+}
+
+// Fires whenever the host changes line coding (baud, parity, etc.).
+// Logged once so we can see whether the host did the full open sequence.
+void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *coding) {
+    static bool logged = false;
+    if (!logged) {
+        diag_log_printf("cdc: line coding itf=%u baud=%u (logged once per boot)",
+                        (unsigned)itf, (unsigned)coding->bit_rate);
+        logged = true;
+    }
+}

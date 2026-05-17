@@ -130,8 +130,9 @@ Each subcommand also has a one-shot wrapper script. Right-click and
   test.ps1 <name>        run one diagnostic check by name
 
 The wrappers record a transcript under
-  %LOCALAPPDATA%\ParsecCouchLink\logs
-so a failed run can be attached to a bug report.
+  %LOCALAPPDATA%\ParsecCouchLink\data\logs
+alongside the bridge's own logs, so one folder has everything a
+bug report needs.
 "@
 Set-Content -LiteralPath (Join-Path $StageDir "README.txt") -Value $ReleaseReadme -Encoding ASCII
 

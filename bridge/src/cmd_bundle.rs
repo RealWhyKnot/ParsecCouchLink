@@ -18,7 +18,7 @@ use crate::{cdc, config};
 
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
     let pico_diag = try_capture_pico_diag().await;
-    let pico_diag_captured = pico_diag.is_some();
+    let pico_diag_captured = pico_diag.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
 
     let crash_files = collect_crash_file_names();
     let setup_transcripts = collect_setup_transcript_names();
@@ -45,10 +45,30 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     zip.start_file("doctor.txt", opts)?;
     zip.write_all(doctor_text.as_bytes())?;
 
-    if let Some(text) = pico_diag.as_deref() {
-        zip.start_file("pico-diag.txt", opts)?;
-        zip.write_all(text.as_bytes())?;
-    }
+    // Always write pico-diag.txt. If CDC capture failed (no port, port
+    // open failed, GET_LOG_BUFFER timed out, or the buffer was empty),
+    // the file contains a diagnostic stub explaining which branch took
+    // that path. An absent file would be ambiguous; an explicit stub is
+    // self-narrating.
+    let pico_diag_body = match pico_diag.as_deref() {
+        Some(text) if !text.is_empty() => text.to_string(),
+        Some(_) => "(firmware diagnostic ring buffer was empty when bundle ran -- \
+                    this means the Pico was reachable over CDC but had no log entries. \
+                    Usually the Pico rebooted between the failure and bundle. If the \
+                    failure was at boot, re-run the failing command and immediately run \
+                    bundle while the Pico is still in setup mode.)"
+            .to_string(),
+        None => "(firmware diagnostic could not be captured over USB CDC -- the Pico \
+                 either wasn't enumerated as a setup-mode serial device, didn't \
+                 respond to GET_LOG_BUFFER, or rebooted before bundle could reach \
+                 it. Re-plug the Pico, hold it in BOOTSEL, flash with `flash.ps1`, \
+                 wait for it to come back as a setup-mode serial device, then run \
+                 bundle. See the bridge log (logs/couchlink-*.log) for the specific \
+                 CDC failure.)"
+            .to_string(),
+    };
+    zip.start_file("pico-diag.txt", opts)?;
+    zip.write_all(pico_diag_body.as_bytes())?;
 
     // Crash files from crash_dir().
     if let Ok(crash_dir) = config::crash_dir() {

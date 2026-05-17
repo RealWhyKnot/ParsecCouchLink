@@ -5,7 +5,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$LogDir = Join-Path $env:LOCALAPPDATA "ParsecToDreamcast\logs"
+# Use the bridge's canonical log directory so transcripts, bridge logs,
+# crash files, and bundles all live under one tree -- the path printed
+# in error footers and in the wiki always points at this directory.
+$LogDir = Join-Path $env:LOCALAPPDATA "ParsecCouchLink\data\logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $TranscriptPath = Join-Path $LogDir "setup-$Stamp.log"

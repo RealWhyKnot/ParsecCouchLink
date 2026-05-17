@@ -17,7 +17,7 @@ The ZIP contains:
 - `manifest.json` -- versions and timestamps
 - `doctor.txt` -- full output of `couchlink.exe doctor`
 - Recent bridge log files
-- Setup transcripts from `%LOCALAPPDATA%\ParsecToDreamcast\logs\`
+- Setup transcripts from `%LOCALAPPDATA%\ParsecCouchLink\data\logs\`
 - Crash files, if any
 - `pico-diag.txt` -- firmware diagnostics, if the Pico is currently in setup mode
 
@@ -44,7 +44,7 @@ Fill in the form fields, then drag the ZIP into the comment box at the bottom of
 
 If `couchlink.exe` doesn't start, the bundle command won't work. In that case:
 
-1. Grab the setup transcript at `%LOCALAPPDATA%\ParsecToDreamcast\logs\setup-*.log` and attach it to the issue.
+1. Grab the setup transcript at `%LOCALAPPDATA%\ParsecCouchLink\data\logs\setup-*.log` and attach it to the issue.
 2. Include a screenshot of the terminal showing the error.
 
 If `couchlink.exe` starts but fails at the doctor stage, paste the doctor output as text in the issue body -- it's short and easier to read inline than as an attachment.

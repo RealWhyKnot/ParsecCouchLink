@@ -201,25 +201,23 @@ bool cdc_handlers_reboot_pending(void) {
 }
 
 void cdc_handlers_poll(void) {
+    // Log DTR transitions so a bundle clearly shows whether the host
+    // ever opened the port. DTR is informational only -- bytes are
+    // processed whenever they arrive, regardless of DTR state. The
+    // previous behaviour was to drop incoming bytes whenever DTR was
+    // low, which silently ate HELLO from hosts that send before they
+    // assert DTR (or that never assert it on `open`).
     static bool last_connected = false;
     bool connected = tud_cdc_connected();
     if (connected != last_connected) {
-        diag_log_msg(connected ? "cdc: host opened the port (DTR asserted)"
-                               : "cdc: host closed the port (DTR cleared)");
+        diag_log_msg(connected ? "cdc: DTR asserted by host (line opened)"
+                               : "cdc: DTR cleared by host (line closed)");
         last_connected = connected;
     }
 
-    if (!connected) {
-        // No host attached; drain accidentally-buffered RX so we don't
-        // accumulate stale bytes from a previous host.
-        if (tud_cdc_available()) {
-            uint8_t scratch[64];
-            tud_cdc_read(scratch, sizeof(scratch));
-        }
-        return;
-    }
-
-    // Drain incoming bytes into rx_buf.
+    // Drain incoming bytes into rx_buf regardless of DTR state. Bytes
+    // are queued in TinyUSB's CDC FIFO until we read them; if the host
+    // never opens the line they stay there until reboot, which is fine.
     while (tud_cdc_available() && rx_len < sizeof(rx_buf)) {
         size_t want = sizeof(rx_buf) - rx_len;
         if (want > 64) want = 64;
@@ -234,6 +232,9 @@ void cdc_handlers_poll(void) {
         if (st == CDC_DECODE_NEED_MORE) break;
 
         if (st == CDC_DECODE_OK) {
+            diag_log_printf("cdc: dispatching cmd=0x%02X seq=%u payload=%u bytes",
+                            (unsigned)view.command, (unsigned)view.seq,
+                            (unsigned)view.payload_len);
             uint8_t reply[CDC_MAX_FRAME];
             size_t n = cdc_dispatch(&view, reply, sizeof(reply));
             if (n > 0) tud_cdc_write(reply, n);
@@ -244,10 +245,14 @@ void cdc_handlers_poll(void) {
         } else {
             // Resync: drop one byte and retry.
             if (st == CDC_DECODE_BAD_CRC) {
+                diag_log_msg("cdc: BAD_CRC, resyncing one byte");
                 send_nack(rx_buf[6], CDC_ERR_BAD_CRC, 0);
             } else if (st == CDC_DECODE_BAD_VERSION) {
+                diag_log_printf("cdc: BAD_VERSION (got 0x%02X), resyncing one byte",
+                                (unsigned)rx_buf[2]);
                 send_nack(rx_buf[6], CDC_ERR_BAD_VERSION, rx_buf[2]);
             } else if (st == CDC_DECODE_BAD_LENGTH) {
+                diag_log_msg("cdc: BAD_LENGTH, resyncing one byte");
                 send_nack(0, CDC_ERR_BAD_LENGTH, 0);
             }
             tud_cdc_write_flush();

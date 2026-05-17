@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 $Root      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BridgeExe = Join-Path $Root "couchlink.exe"
 
-$LogDir = Join-Path $env:LOCALAPPDATA "ParsecCouchLink\logs"
+$LogDir = Join-Path $env:LOCALAPPDATA "ParsecCouchLink\data\logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $TranscriptPath = Join-Path $LogDir "configure-wifi-$Stamp.log"

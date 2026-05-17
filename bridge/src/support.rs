@@ -12,7 +12,9 @@ pub fn issue_url() -> String {
 pub fn print_help_footer() {
     let log_dir = crate::config::log_dir()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "(unknown -- check %LOCALAPPDATA%\\ParsecToDreamcast)".to_string());
+        .unwrap_or_else(|_| {
+            "(unknown -- check %LOCALAPPDATA%\\ParsecCouchLink\\data\\logs)".to_string()
+        });
     eprintln!();
     eprintln!("If this looks wrong:");
     eprintln!("  logs:   {}", log_dir);

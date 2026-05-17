@@ -173,19 +173,11 @@ impl PicoSetup {
     /// Find the first Pico in setup mode (VID 2E8A, PID CAF0) and open it.
     pub fn open() -> Result<Self> {
         let port_name = find_setup_port()?;
-        let port = serialport::new(&port_name, 1_000_000)
-            .timeout(Duration::from_millis(500))
-            .open()
-            .with_context(|| format!("opening serial port {port_name}"))?;
-        Ok(Self { port, seq: 0 })
+        open_and_assert(&port_name)
     }
 
     pub fn open_named(port_name: &str) -> Result<Self> {
-        let port = serialport::new(port_name, 1_000_000)
-            .timeout(Duration::from_millis(500))
-            .open()
-            .with_context(|| format!("opening serial port {port_name}"))?;
-        Ok(Self { port, seq: 0 })
+        open_and_assert(port_name)
     }
 
     pub fn exchange(&mut self, command: u8, payload: &[u8]) -> Result<Frame> {
@@ -438,6 +430,37 @@ impl HelloAck {
 
 fn find_magic(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == FRAME_MAGIC)
+}
+
+// Open the named serial port and explicitly assert DTR + RTS. The
+// firmware's tud_cdc_connected() is driven by DTR, and some Windows
+// serial-port opens leave DTR low until the application drives it.
+// Without the explicit assert, the firmware sees "host not opened"
+// and silently discards incoming bytes, including HELLO -- which
+// then times out 3 s later with no obvious clue why. The line state
+// transitions also surface in the firmware's diag log via
+// tud_cdc_line_state_cb, so a bundle from a successful open vs. a
+// failed open look visibly different.
+fn open_and_assert(port_name: &str) -> Result<PicoSetup> {
+    let mut port = serialport::new(port_name, 1_000_000)
+        .timeout(Duration::from_millis(500))
+        .open()
+        .with_context(|| format!("opening serial port {port_name}"))?;
+
+    match port.write_data_terminal_ready(true) {
+        Ok(()) => tracing::info!("cdc: asserted DTR on {port_name}"),
+        Err(e) => {
+            tracing::warn!("cdc: could not assert DTR on {port_name}: {e:?} -- HELLO may time out")
+        }
+    }
+    match port.write_request_to_send(true) {
+        Ok(()) => tracing::info!("cdc: asserted RTS on {port_name}"),
+        Err(e) => {
+            tracing::warn!("cdc: could not assert RTS on {port_name}: {e:?} -- usually harmless")
+        }
+    }
+
+    Ok(PicoSetup { port, seq: 0 })
 }
 
 pub fn find_setup_port() -> Result<String> {
