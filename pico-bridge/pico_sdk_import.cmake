@@ -30,7 +30,20 @@ if (NOT PICO_SDK_PATH)
         FetchContent_GetProperties(pico_sdk)
         if (NOT pico_sdk_POPULATED)
             message(STATUS "Fetching pico-sdk @ ${PICO_SDK_FETCH_FROM_GIT_TAG}")
+            # CMake 3.30 deprecated calling FetchContent_Populate(name) after
+            # FetchContent_Declare(name). The replacement, FetchContent_Make-
+            # Available, also calls add_subdirectory on the populated source.
+            # That is not the right pattern for the pico-sdk: it is included
+            # later via pico_sdk_init.cmake, not added as a subproject. Pin
+            # CMP0169 to OLD locally so we keep the manual Populate flow
+            # without spamming the configure log. Stays valid until CMP0169
+            # is removed outright, which has not been scheduled.
+            cmake_policy(PUSH)
+            if (POLICY CMP0169)
+                cmake_policy(SET CMP0169 OLD)
+            endif ()
             FetchContent_Populate(pico_sdk)
+            cmake_policy(POP)
             set(PICO_SDK_PATH ${pico_sdk_SOURCE_DIR})
         endif ()
         set(FETCHCONTENT_BASE_DIR ${FETCHCONTENT_BASE_DIR_save})
