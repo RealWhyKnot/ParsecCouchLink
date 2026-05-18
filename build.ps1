@@ -28,8 +28,8 @@ $StageDir = Join-Path $DistRoot "ParsecCouchLink"
 $StateFile = Join-Path $RepoRoot ".local_build_state.json"
 
 if ($Version) {
-    if ($Version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4})?$') {
-        throw "Invalid -Version '$Version'. Expected YYYY.M.D.N or YYYY.M.D.N-XXXX."
+    if ($Version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4}|-beta(\.\d+)?)?$') {
+        throw "Invalid -Version '$Version'. Expected YYYY.M.D.N, YYYY.M.D.N-XXXX, or YYYY.M.D.N-beta[.N]."
     }
     $FullVersion = $Version
 } else {
