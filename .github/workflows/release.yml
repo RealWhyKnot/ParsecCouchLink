@@ -71,9 +71,11 @@ jobs:
             $tag = '${{ github.ref_name }}'
             $version = $tag.TrimStart('v')
           }
-          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4})?$') {
-            throw "Invalid version '$version'. Expected YYYY.M.D.N or YYYY.M.D.N-XXXX."
+          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4}|-beta(\.\d+)?)?$') {
+            throw "Invalid version '$version'. Expected YYYY.M.D.N, YYYY.M.D.N-XXXX, or YYYY.M.D.N-beta[.N]."
           }
+          $isBeta = $tag -like '*-beta*'
+          "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
@@ -218,4 +220,6 @@ jobs:
           $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding UTF8
 
-          gh release create $env:TAG_NAME $env:ZIP_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath
+          $extra = @()
+          if ('${{ steps.version.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          gh release create $env:TAG_NAME $env:ZIP_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath @extra
