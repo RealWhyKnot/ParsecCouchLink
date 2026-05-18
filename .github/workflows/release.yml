@@ -71,8 +71,8 @@ jobs:
             $tag = '${{ github.ref_name }}'
             $version = $tag.TrimStart('v')
           }
-          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4}|-beta(\.\d+)?)?$') {
-            throw "Invalid version '$version'. Expected YYYY.M.D.N, YYYY.M.D.N-XXXX, or YYYY.M.D.N-beta[.N]."
+          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4}|-beta)?$') {
+            throw "Invalid version '$version'. Expected YYYY.M.D.N, YYYY.M.D.N-XXXX, or YYYY.M.D.N-beta."
           }
           $isBeta = $tag -like '*-beta*'
           "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
