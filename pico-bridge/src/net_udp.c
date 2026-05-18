@@ -12,6 +12,35 @@
 #include "gamepad_state.h"
 #include "version.h"
 
+// Translate an lwIP err_t to a short name. Without this every
+// udp_sendto failure looks the same in pico-diag.txt -- with it,
+// memory pressure (ERR_MEM, often a sign that PBUF_POOL_SIZE needs
+// raising under burst), routing failures (ERR_RTE, AP dropped),
+// netif-down (ERR_IF), and config bugs (ERR_VAL / ERR_ARG) are
+// distinguishable at a glance.
+static const char *lwip_err_name(err_t e) {
+    switch (e) {
+        case ERR_OK:         return "OK";
+        case ERR_MEM:        return "ERR_MEM";
+        case ERR_BUF:        return "ERR_BUF";
+        case ERR_TIMEOUT:    return "ERR_TIMEOUT";
+        case ERR_RTE:        return "ERR_RTE";
+        case ERR_INPROGRESS: return "ERR_INPROGRESS";
+        case ERR_VAL:        return "ERR_VAL";
+        case ERR_WOULDBLOCK: return "ERR_WOULDBLOCK";
+        case ERR_USE:        return "ERR_USE";
+        case ERR_ALREADY:    return "ERR_ALREADY";
+        case ERR_ISCONN:     return "ERR_ISCONN";
+        case ERR_CONN:       return "ERR_CONN";
+        case ERR_IF:         return "ERR_IF";
+        case ERR_ABRT:       return "ERR_ABRT";
+        case ERR_RST:        return "ERR_RST";
+        case ERR_CLSD:       return "ERR_CLSD";
+        case ERR_ARG:        return "ERR_ARG";
+        default:             return "ERR_???";
+    }
+}
+
 #define UDP_PORT          4242
 #define WIRE_PKT_SIZE     17
 #define MAGIC             0xA5
@@ -77,12 +106,15 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     buf[16] = crc8(buf, 16);
 
     struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, WIRE_PKT_SIZE, PBUF_RAM);
-    if (!p) return;
+    if (!p) {
+        diag_log_msg("net_udp: ack pbuf_alloc failed (ERR_MEM)");
+        return;
+    }
     memcpy(p->payload, buf, WIRE_PKT_SIZE);
     err_t e = udp_sendto(pcb, p, to_addr, to_port);
     pbuf_free(p);
     if (e != ERR_OK) {
-        diag_log_printf("net_udp: ack send err=%d", (int)e);
+        diag_log_printf("net_udp: ack send err=%d (%s)", (int)e, lwip_err_name(e));
     } else {
         diag_log_printf("net_udp: ack -> %u.%u.%u.%u:%u (in_seq=%u)",
                         ip4_addr1(ip_2_ip4(to_addr)),
@@ -156,12 +188,16 @@ static void send_keepalive(void) {
     build_state_fields(buf, TYPE_HEARTBEAT, out_seq++);
     buf[16] = crc8(buf, 16);
     struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, WIRE_PKT_SIZE, PBUF_RAM);
-    if (!p) return;
+    if (!p) {
+        diag_log_msg("net_udp: keepalive pbuf_alloc failed (ERR_MEM)");
+        return;
+    }
     memcpy(p->payload, buf, WIRE_PKT_SIZE);
     err_t e = udp_sendto(pcb, p, &peer_addr, peer_port);
     pbuf_free(p);
     if (e != ERR_OK) {
-        diag_log_printf("net_udp: keepalive send err=%d", (int)e);
+        diag_log_printf("net_udp: keepalive send err=%d (%s)",
+                        (int)e, lwip_err_name(e));
     }
 }
 
@@ -173,7 +209,8 @@ bool net_udp_init(void) {
     }
     err_t e = udp_bind(pcb, IP_ANY_TYPE, UDP_PORT);
     if (e != ERR_OK) {
-        diag_log_printf("net_udp: udp_bind err=%d", (int)e);
+        diag_log_printf("net_udp: udp_bind err=%d (%s)",
+                        (int)e, lwip_err_name(e));
         return false;
     }
     udp_recv(pcb, on_recv, NULL);

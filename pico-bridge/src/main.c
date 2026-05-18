@@ -9,6 +9,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
+#include "pico/unique_id.h"
 #include "hardware/watchdog.h"
 #include "tusb.h"
 
@@ -18,6 +19,7 @@
 #include "flash_creds.h"
 #include "gamepad_state.h"
 #include "net_udp.h"
+#include "reset_reason.h"
 #include "version.h"
 #include "watchdog.h"
 #include "wifi.h"
@@ -26,6 +28,28 @@
 volatile gamepad_state_t g_gamepad_state = {0};
 volatile uint32_t        g_last_packet_ms = 0;
 volatile uint8_t         g_parsec_connected = 0;
+
+static void log_reset_reason(const reset_reason_info_t *info) {
+    diag_log_printf("boot: reset-reason=%s", reset_reason_name(info->reason));
+    if (info->reason == RESET_REASON_FAULT) {
+        diag_log_printf("boot: previous boot ended in fault pc=0x%08X lr=0x%08X xpsr=0x%08X",
+                        (unsigned)info->fault_pc,
+                        (unsigned)info->fault_lr,
+                        (unsigned)info->fault_xpsr);
+    }
+    if (info->last_line_valid && info->last_line[0] != 0) {
+        diag_log_printf("boot: last live line before reset: %s",
+                        info->last_line);
+    }
+}
+
+static void log_board_identity(void) {
+    char id[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1];
+    pico_get_unique_board_id_string(id, sizeof(id));
+    diag_log_printf("boot: couchlink-pico fw=%d.%d.%d board=0x%02X unique-id=%s",
+                    PICO_BRIDGE_FW_MAJOR, PICO_BRIDGE_FW_MINOR,
+                    PICO_BRIDGE_FW_PATCH, PICO_BRIDGE_BOARD_TYPE, id);
+}
 
 static void run_mode_main_loop(void) {
     // Load creds (already verified by boot_mode_decide), bring up Wi-Fi,
@@ -55,6 +79,7 @@ static void run_mode_main_loop(void) {
     xinput_init();
     watchdog_init();
     diag_log_msg("run: main loop");
+    reset_reason_mark_main_loop_entered();
 
     for (;;) {
         tud_task();
@@ -81,6 +106,7 @@ static void run_mode_main_loop(void) {
 static void setup_mode_main_loop(void) {
     cdc_handlers_init();
     diag_log_msg("setup: CDC ready, awaiting host");
+    reset_reason_mark_main_loop_entered();
     for (;;) {
         tud_task();
         cdc_handlers_poll();
@@ -97,9 +123,14 @@ static void setup_mode_main_loop(void) {
 int main(void) {
     stdio_init_all();
     diag_log_init();
-    diag_log_printf("boot: couchlink-pico fw=%d.%d.%d board=0x%02X",
-                    PICO_BRIDGE_FW_MAJOR, PICO_BRIDGE_FW_MINOR,
-                    PICO_BRIDGE_FW_PATCH, PICO_BRIDGE_BOARD_TYPE);
+
+    // Classify the reset cause before anything else touches scratch
+    // or runs code that might fault. The output goes into diag_log
+    // first so the log buffer's very first line names the prior boot
+    // outcome -- bundles after a hang will self-narrate.
+    reset_reason_info_t rr = reset_reason_classify();
+    log_reset_reason(&rr);
+    log_board_identity();
 
     // tusb_init() must run before any blocking wait so the host's USB
     // enumeration handshake can complete during boot. On RP2040 the D+

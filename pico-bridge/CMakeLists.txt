@@ -20,12 +20,24 @@ add_executable(pico_bridge
     src/cdc_handlers.c
     src/cdc_proto.c
     src/diag_log.c
+    src/fault_handler.c
     src/flash_creds.c
     src/net_udp.c
+    src/reset_reason.c
     src/usb_descriptors.c
     src/watchdog.c
     src/wifi.c
     src/xinput.c
+)
+
+# Wi-Fi country code. WORLDWIDE is the safest pre-built default; EU/UK
+# builders who need channels 12 / 13 can override at configure time:
+#   cmake -S pico-bridge -B build -DPICO_BRIDGE_WIFI_COUNTRY=CYW43_COUNTRY_UK
+# Use any of the CYW43_COUNTRY_* macros from pico-sdk's cyw43_arch.h.
+set(PICO_BRIDGE_WIFI_COUNTRY "CYW43_COUNTRY_WORLDWIDE"
+    CACHE STRING "CYW43 country code (cyw43_arch_init_with_country)")
+target_compile_definitions(pico_bridge PRIVATE
+    PICO_BRIDGE_WIFI_COUNTRY=${PICO_BRIDGE_WIFI_COUNTRY}
 )
 
 target_include_directories(pico_bridge PRIVATE

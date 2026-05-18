@@ -220,6 +220,29 @@ jobs:
           $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding UTF8
 
-          $extra = @()
-          if ('${{ steps.version.outputs.is_beta }}' -eq 'true') { $extra = @('--prerelease','--latest=false') }
+          # Draft-first: create as draft, upload all assets, only then
+          # promote to a published release. If any step between create
+          # and promote fails, the release stays as a draft and the
+          # workflow's failure is visible -- preferable to publishing a
+          # release that's missing assets.
+          $extra = @('--draft')
+          if ('${{ steps.version.outputs.is_beta }}' -eq 'true') { $extra += @('--prerelease','--latest=false') }
           gh release create $env:TAG_NAME $env:ZIP_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath @extra
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }
+
+          # Verify the assets actually attached (gh release create
+          # can succeed with the metadata but fail mid-upload on the
+          # asset stage; the release is then live as a draft with
+          # missing files). View the release as JSON and check.
+          $json = gh release view $env:TAG_NAME --json assets,isDraft
+          if ($LASTEXITCODE -ne 0) { throw "gh release view failed (exit $LASTEXITCODE)" }
+          $info = $json | ConvertFrom-Json
+          $expected = @($env:ZIP_NAME, [System.IO.Path]::GetFileName($env:MANIFEST_PATH))
+          foreach ($e in $expected) {
+              if (-not ($info.assets.name -contains $e)) {
+                  throw "Asset '$e' did not attach to draft release $env:TAG_NAME -- leaving as draft for manual inspection."
+              }
+          }
+          Write-Host "Draft release $env:TAG_NAME has all expected assets, promoting to published."
+          gh release edit $env:TAG_NAME --draft=false
+          if ($LASTEXITCODE -ne 0) { throw "gh release edit --draft=false failed (exit $LASTEXITCODE)" }

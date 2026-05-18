@@ -63,6 +63,28 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: setup_stage
+    attributes:
+      label: How far did setup get?
+      description: |
+        If you ran `.\setup.ps1`, which numbered stage was last shown
+        before things stopped working? "Did not start" means the
+        script itself never ran (couchlink.exe missing, PowerShell
+        execution policy, etc.).
+      options:
+        - "1 -- intro / press-Enter"
+        - "2 -- waiting for BOOTSEL drive"
+        - "3 -- flashing UF2"
+        - "4 -- Wi-Fi provisioning over USB-CDC"
+        - "5 -- Pico joining Wi-Fi"
+        - "6 -- LAN discovery from this PC"
+        - "7 -- Windows Startup shortcut"
+        - "did not start"
+        - "unknown / not applicable"
+    validations:
+      required: false
+
   - type: textarea
     id: expected
     attributes:

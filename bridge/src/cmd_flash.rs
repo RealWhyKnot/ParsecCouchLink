@@ -57,6 +57,18 @@ impl BootselBoard {
         }
     }
 
+    /// Map an INFO_UF2.TXT `Board-ID:` value (case sensitive, as
+    /// written by the bootrom) to a `BootselBoard`. Returns `None`
+    /// for unrecognized board IDs -- which can happen on OTP
+    /// white-labelled RP2350 devices that override the field.
+    pub fn from_info_uf2_board_id(s: &str) -> Option<Self> {
+        match s.trim() {
+            "RPI-RP2" => Some(BootselBoard::Rp2040),
+            "RP2350" => Some(BootselBoard::Rp2350),
+            _ => None,
+        }
+    }
+
     /// UF2 file family ID that this board's bootloader accepts.
     /// RP2350 has three variants (secure / non-secure / RISC-V); all
     /// are acceptable for our needs since we ship the secure ARM build.
@@ -365,17 +377,31 @@ fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{GetLastError, ERROR_ACCESS_DENIED, ERROR_NOT_READY};
     use windows::Win32::Storage::FileSystem::{
         GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
     };
+    use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, SEM_FAILCRITICALERRORS};
     // GetDriveTypeW returns one of these as a u32. windows-rs 0.58 doesn't
     // re-export the named constants under FileSystem, so we use the
     // literal from the Win32 docs.
     const DRIVE_REMOVABLE: u32 = 2;
 
+    // Suppress "There is no disk in the drive" pop-ups when a legacy
+    // USB card reader is connected without media -- GetVolumeInformationW
+    // can otherwise raise a hardware-error dialog. Saved + restored so
+    // the rest of the process sees the original mode.
+    let prev_mode = unsafe { SetErrorMode(SEM_FAILCRITICALERRORS) };
+
     let mut buf = vec![0u16; 4096];
     let n = unsafe { GetLogicalDriveStringsW(Some(&mut buf)) } as usize;
     if n == 0 {
+        let err = unsafe { GetLastError() };
+        tracing::warn!(
+            "flash: GetLogicalDriveStringsW returned 0 (GetLastError={:?})",
+            err
+        );
+        unsafe { SetErrorMode(prev_mode) };
         return None;
     }
 
@@ -393,6 +419,8 @@ fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
         roots.push(String::from_utf16_lossy(&buf[start..end]));
         start = end + 1;
     }
+
+    let mut hits: Vec<(String, BootselBoard, &'static str)> = Vec::new();
 
     for root in roots {
         let wide: Vec<u16> = OsStr::new(&root)
@@ -415,7 +443,20 @@ fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
                 Some(&mut fs_name),
             )
         };
-        if r.is_err() {
+        if let Err(e) = r {
+            // ERROR_NOT_READY (21) is the "card reader with no media"
+            // case -- expected and very noisy if logged at warn. Anything
+            // else on a removable drive is unusual enough to debug-log.
+            let code = (e.code().0 & 0xFFFF) as u32;
+            if code == ERROR_NOT_READY.0 {
+                tracing::trace!("flash: GetVolumeInformationW({root}) = NOT_READY (no media)");
+            } else if code == ERROR_ACCESS_DENIED.0 {
+                tracing::warn!(
+                    "flash: GetVolumeInformationW({root}) = ACCESS_DENIED (possibly BitLocker / AppLocker)"
+                );
+            } else {
+                tracing::debug!("flash: GetVolumeInformationW({root}) failed: {e:?}");
+            }
             continue;
         }
         let label_end = volume_name
@@ -423,12 +464,79 @@ fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
             .position(|&c| c == 0)
             .unwrap_or(volume_name.len());
         let label = String::from_utf16_lossy(&volume_name[..label_end]);
-        let board = match label.as_str() {
-            "RPI-RP2" => BootselBoard::Rp2040,
-            "RP2350" => BootselBoard::Rp2350,
-            _ => continue,
+
+        // Defense-in-depth: read INFO_UF2.TXT and use its Board-ID as
+        // the primary signal. OTP-whitelabelled RP2350 devices can
+        // change the volume label, the SCSI vendor/product, and the
+        // INFO_UF2 "Model:" / "Board-ID:" fields -- but the "UF2
+        // Bootloader " prefix on line 1 is bootrom-baked and the most
+        // reliable invariant. If INFO_UF2.TXT is unreadable (mount
+        // race -- Windows announces the drive before the FAT mount
+        // settles), fall back to the volume label.
+        let info_path = format!("{root}INFO_UF2.TXT");
+        let (board, detect) = match parse_info_uf2(&info_path) {
+            Some(b) => (b, "INFO_UF2.TXT"),
+            None => {
+                let b = match label.as_str() {
+                    "RPI-RP2" => BootselBoard::Rp2040,
+                    "RP2350" => BootselBoard::Rp2350,
+                    _ => continue,
+                };
+                tracing::debug!(
+                    "flash: INFO_UF2.TXT not readable on {root}, falling back to volume label '{label}'"
+                );
+                (b, "volume-label")
+            }
         };
-        return Some((PathBuf::from(root), board));
+        tracing::info!(
+            "flash: BOOTSEL candidate root={root} board={} detect={detect}",
+            board.label()
+        );
+        hits.push((root, board, detect));
+    }
+
+    unsafe { SetErrorMode(prev_mode) };
+
+    if hits.is_empty() {
+        return None;
+    }
+    if hits.len() > 1 {
+        // Deterministic pick: sorted ascending by drive letter so the
+        // operator can predict which one will be flashed. Logging the
+        // alternatives gives them a chance to unplug the wrong board.
+        hits.sort_by(|a, b| a.0.cmp(&b.0));
+        let names: Vec<&str> = hits.iter().map(|(r, _, _)| r.as_str()).collect();
+        tracing::warn!(
+            "flash: multiple BOOTSEL drives present {names:?} -- picking the first one alphabetically. \
+             Unplug the others if this is the wrong one."
+        );
+    }
+    let (root, board, _) = hits.into_iter().next().unwrap();
+    Some((PathBuf::from(root), board))
+}
+
+#[cfg(windows)]
+fn parse_info_uf2(path: &str) -> Option<BootselBoard> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut s = String::with_capacity(256);
+    // The file is 3 short lines; cap reads conservatively.
+    let mut buf = [0u8; 256];
+    let n = f.read(&mut buf).ok()?;
+    s.push_str(&String::from_utf8_lossy(&buf[..n]));
+    // First line must start with "UF2 Bootloader " (bootrom invariant
+    // across both RP2040 and RP2350; immune to OTP whitelabel which
+    // only overrides Board-ID and Model).
+    let first_line = s.lines().next()?;
+    if !first_line.starts_with("UF2 Bootloader ") {
+        return None;
+    }
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("Board-ID:") {
+            if let Some(b) = BootselBoard::from_info_uf2_board_id(rest) {
+                return Some(b);
+            }
+        }
     }
     None
 }
@@ -475,5 +583,28 @@ mod tests {
         assert_eq!(family_name(FAMILY_RP2350_ARM_NS), "rp2350-arm-ns");
         assert_eq!(family_name(FAMILY_RP2350_RISCV), "rp2350-riscv");
         assert_eq!(family_name(0xDEADBEEF), "unknown");
+    }
+
+    #[test]
+    fn info_uf2_board_id_matches_known_boards() {
+        assert_eq!(
+            BootselBoard::from_info_uf2_board_id("RPI-RP2"),
+            Some(BootselBoard::Rp2040)
+        );
+        assert_eq!(
+            BootselBoard::from_info_uf2_board_id("RP2350"),
+            Some(BootselBoard::Rp2350)
+        );
+        // Trailing whitespace from "Board-ID: <id>\r\n" is normalized.
+        assert_eq!(
+            BootselBoard::from_info_uf2_board_id(" RPI-RP2 \r\n"),
+            Some(BootselBoard::Rp2040)
+        );
+        // OTP whitelabel string is rejected -- forces a label fallback.
+        assert_eq!(
+            BootselBoard::from_info_uf2_board_id("CUSTOMVENDOR-WIDGET"),
+            None
+        );
+        assert_eq!(BootselBoard::from_info_uf2_board_id(""), None);
     }
 }

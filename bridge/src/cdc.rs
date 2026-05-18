@@ -185,7 +185,9 @@ impl PicoSetup {
         self.seq = self.seq.wrapping_add(1);
         let frame = encode(command, seq, payload);
         self.port.write_all(&frame).context("writing CDC frame")?;
-        self.port.flush().ok();
+        if let Err(e) = self.port.flush() {
+            tracing::debug!("cdc: flush after write returned {e:?}");
+        }
         let resp = self.read_one_frame()?;
         if resp.command == RSP_NACK {
             let code = resp.payload.first().copied().unwrap_or(ERR_INTERNAL);
@@ -206,7 +208,9 @@ impl PicoSetup {
         self.seq = self.seq.wrapping_add(1);
         let frame = encode(command, seq, payload);
         self.port.write_all(&frame).context("writing CDC frame")?;
-        self.port.flush().ok();
+        if let Err(e) = self.port.flush() {
+            tracing::debug!("cdc: flush after write returned {e:?}");
+        }
         let resp = self.read_one_frame()?;
         if resp.command == RSP_NACK {
             let code = resp.payload.first().copied().unwrap_or(ERR_INTERNAL);
@@ -235,11 +239,33 @@ impl PicoSetup {
                         bail!("timed out waiting for Pico response");
                     }
                 }
-                Err(e) => return Err(e).context("reading CDC frame"),
+                Err(e) => {
+                    if let Some(why) = classify_ghost_com(&e) {
+                        tracing::error!(
+                            "cdc: read failed with {why}. The Pico likely just rebooted \
+                             -- unplug and re-plug it (no need to hold BOOTSEL), then \
+                             re-run the failing command."
+                        );
+                    }
+                    return Err(e).context("reading CDC frame");
+                }
             }
             // Resync: find magic in buf and try to decode from there.
             if let Some(start) = find_magic(&buf) {
                 if start > 0 {
+                    // Visible breadcrumb when the firmware (or a noisy
+                    // host bridge) puts something on the wire before
+                    // the frame magic. Without this the only signal
+                    // was an eventual "buffer overflow" timeout much
+                    // later -- there was no way to tell whether the
+                    // firmware was spewing text or whether nothing
+                    // was happening at all.
+                    let head: Vec<u8> = buf.iter().take(16).copied().collect();
+                    tracing::debug!(
+                        "cdc: drained {} pre-magic bytes (first 16 = {})",
+                        start,
+                        format_hex(&head),
+                    );
                     buf.drain(..start);
                 }
                 match try_decode(&buf) {
@@ -253,6 +279,12 @@ impl PicoSetup {
                 }
             }
             if buf.len() > MAX_FRAME * 4 {
+                let head: Vec<u8> = buf.iter().take(16).copied().collect();
+                tracing::warn!(
+                    "cdc: receive buffer overflow with no valid frame ({} bytes, first 16 = {})",
+                    buf.len(),
+                    format_hex(&head),
+                );
                 bail!(
                     "CDC receive buffer overflow ({} bytes of garbage)",
                     buf.len()
@@ -299,7 +331,9 @@ impl PicoSetup {
         let frame = encode(CMD_SET_WIFI, seq, &buf);
         buf.zeroize();
         let write_result = self.port.write_all(&frame).context("writing CDC frame");
-        self.port.flush().ok();
+        if let Err(e) = self.port.flush() {
+            tracing::debug!("cdc: flush after write returned {e:?}");
+        }
         password.zeroize();
         write_result?;
         let resp = self.read_one_frame()?;
@@ -342,7 +376,9 @@ impl PicoSetup {
             }
             return Err(e).context("writing REBOOT_TO_RUN frame");
         }
-        self.port.flush().ok();
+        if let Err(e) = self.port.flush() {
+            tracing::debug!("cdc: flush after write returned {e:?}");
+        }
 
         let deadline = Instant::now() + Duration::from_millis(750);
         let mut buf = Vec::with_capacity(MAX_FRAME);
@@ -397,10 +433,16 @@ impl PicoSetup {
     }
 
     /// Fetch the firmware's in-RAM diagnostic ring buffer. Returns the
-    /// captured bytes as UTF-8 (lossy on invalid sequences). Empty string
-    /// means the buffer was empty; an Err means a transport or protocol
-    /// failure.
-    pub fn get_log_buffer(&mut self) -> Result<String> {
+    /// captured bytes as UTF-8 (lossy on invalid sequences) plus a count
+    /// of how many older bytes were dropped from the ring due to overflow.
+    /// Empty string + 0 means the buffer was empty; an Err means a
+    /// transport or protocol failure.
+    ///
+    /// Wire format on firmware >= v2026.5.16.5: the response payload is
+    /// 4 bytes little-endian `lost` followed by the log text. Older
+    /// firmware sends the log text only; this method degrades to
+    /// `lost = 0` when the payload is short.
+    pub fn get_log_buffer(&mut self) -> Result<(String, u32)> {
         let resp = self.exchange_named("GET_LOG_BUFFER", CMD_GET_LOG_BUFFER, &[])?;
         if resp.command != RSP_LOG_BUFFER {
             bail!(
@@ -408,7 +450,19 @@ impl PicoSetup {
                 resp.command
             );
         }
-        Ok(String::from_utf8_lossy(&resp.payload).into_owned())
+        if resp.payload.len() >= 4 {
+            let lost = u32::from_le_bytes([
+                resp.payload[0],
+                resp.payload[1],
+                resp.payload[2],
+                resp.payload[3],
+            ]);
+            let text = String::from_utf8_lossy(&resp.payload[4..]).into_owned();
+            Ok((text, lost))
+        } else {
+            // Pre-v2026.5.16.5 firmware: no prefix, just the log text.
+            Ok((String::from_utf8_lossy(&resp.payload).into_owned(), 0))
+        }
     }
 }
 
@@ -430,6 +484,38 @@ impl HelloAck {
 
 fn find_magic(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == FRAME_MAGIC)
+}
+
+fn format_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 3);
+    for (i, b) in bytes.iter().enumerate() {
+        if i > 0 {
+            s.push(' ');
+        }
+        s.push_str(&format!("{b:02X}"));
+    }
+    s
+}
+
+/// Returns Some(human-readable cause) when the underlying serial I/O
+/// failure looks like a "ghost COM" -- the Pico re-enumerated under
+/// the bridge's open handle and Windows returned the handle as
+/// invalid. The caller is expected to log + recommend a re-plug; a
+/// full reconnect-by-unique-id is deferred to a future pass.
+#[cfg(windows)]
+pub fn classify_ghost_com(e: &std::io::Error) -> Option<&'static str> {
+    match e.raw_os_error() {
+        Some(995)  => Some("ERROR_OPERATION_ABORTED (995): the COM handle was cancelled, usually because the Pico re-enumerated"),
+        Some(1167) => Some("ERROR_DEVICE_NOT_CONNECTED (1167): the Pico's USB endpoint went away (re-enumerated or unplugged)"),
+        Some(22)   => Some("ERROR_BAD_COMMAND (22): the driver lost the device, usually a stale handle after a Pico reset"),
+        Some(31)   => Some("ERROR_GEN_FAILURE (31): the USB stack returned a generic device failure, usually a stale handle after a Pico reset"),
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn classify_ghost_com(_e: &std::io::Error) -> Option<&'static str> {
+    None
 }
 
 // Open the named serial port and explicitly assert DTR + RTS. The

@@ -90,8 +90,7 @@ $ScriptFiles = @(
     "bundle.ps1",
     "flash.ps1",
     "configure-wifi.ps1",
-    "logs.ps1",
-    "test.ps1"
+    "logs.ps1"
 )
 foreach ($script in $ScriptFiles) {
     $src = Join-Path $RepoRoot $script
@@ -127,7 +126,6 @@ Each subcommand also has a one-shot wrapper script. Right-click and
   logs.ps1               print log path (use --tail to follow live)
   flash.ps1              re-flash without re-running setup
   configure-wifi.ps1     re-send Wi-Fi credentials (Pico must be in setup mode)
-  test.ps1 <name>        run one diagnostic check by name
 
 The wrappers record a transcript under
   %LOCALAPPDATA%\ParsecCouchLink\data\logs

@@ -140,9 +140,21 @@ static size_t handle_device_name_set(const cdc_frame_view_t *req,
 }
 
 static size_t handle_log_buffer(uint8_t seq, uint8_t *reply, size_t cap) {
+    // Wire format: 4-byte little-endian `lost_bytes` count, followed
+    // by the most-recent log bytes. The host gates parsing of the
+    // prefix on `payload_len >= 4`, so older firmware (no prefix) and
+    // older hosts (no understanding of the prefix) interoperate as
+    // long as one or the other is patched.
     uint8_t buf[CDC_MAX_PAYLOAD];
-    size_t n = diag_log_snapshot(buf, sizeof(buf));
-    return cdc_encode(CDC_RSP_LOG_BUFFER, seq, buf, n, reply, cap);
+    if (sizeof(buf) < 4) return 0;
+    uint32_t lost = 0;
+    size_t   tail_cap = sizeof(buf) - 4;
+    size_t   n = diag_log_snapshot(buf + 4, tail_cap, &lost);
+    buf[0] = (uint8_t)(lost & 0xFFu);
+    buf[1] = (uint8_t)((lost >> 8) & 0xFFu);
+    buf[2] = (uint8_t)((lost >> 16) & 0xFFu);
+    buf[3] = (uint8_t)((lost >> 24) & 0xFFu);
+    return cdc_encode(CDC_RSP_LOG_BUFFER, seq, buf, 4 + n, reply, cap);
 }
 
 static size_t handle_self_test(uint8_t seq, uint8_t *reply, size_t cap) {

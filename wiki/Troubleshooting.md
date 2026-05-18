@@ -77,10 +77,41 @@ Run:
 
 Common causes:
 
-- Windows Firewall blocks UDP broadcast.
-- The Pico joined a different Wi-Fi network.
-- Router guest isolation blocks device-to-device traffic.
+- Windows Firewall blocks UDP broadcast. The bridge will print a
+  `New-NetFirewallRule` command the first time it sees a bind / self-ping
+  failure -- copy that into an elevated PowerShell prompt to allow inbound
+  UDP for the bridge.
+- The Pico joined a different Wi-Fi network. Verify with
+  `.\couchlink.exe doctor`.
+- Router AP isolation blocks device-to-device traffic. Many consumer
+  routers and APs ship with a feature called "AP isolation" or "Client
+  isolation" (the exact name varies -- UniFi, Eero, and a number of ISP
+  gateways have it). When enabled, two clients on the same Wi-Fi cannot
+  see each other, so UDP discovery never reaches the Pico. Disable it in
+  your router's admin UI, or move the Pico and PC onto a network without
+  it.
+- Multi-homed Windows PC -- if your PC has both Ethernet and Wi-Fi
+  connected at the same time, broadcast traffic can go out the wrong
+  adapter and never reach the Pico on the Wi-Fi side. The bridge tries
+  to broadcast on every active interface; if it still misses, temporarily
+  disable the adapter that does not lead to the Pico.
 - The Pico is powered from the console side but too far from Wi-Fi.
+
+## Wi-Fi Country Code (EU / UK channels 12 and 13)
+
+The shipped firmware uses the `CYW43_COUNTRY_WORLDWIDE` country code by
+default. That is safe to ship anywhere but excludes channels 12 and 13
+on 2.4 GHz, which some EU / UK routers use. If your AP is on channel
+12 or 13 and the Pico can't see it, rebuild the firmware with a country
+code matching your locale:
+
+```powershell
+cmake -S pico-bridge -B build -DPICO_BRIDGE_WIFI_COUNTRY=CYW43_COUNTRY_UK
+cmake --build build
+```
+
+Use one of the `CYW43_COUNTRY_*` macros documented in
+`pico-sdk/src/rp2_common/pico_cyw43_arch/include/pico/cyw43_arch.h`.
 
 ## Controller Input Is Missing
 

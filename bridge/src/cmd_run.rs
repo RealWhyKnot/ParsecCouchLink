@@ -88,7 +88,12 @@ async fn supervisor_loop(
             last_ip: Some(peer.ip().to_string()),
             device_name: cfg.last_pico.as_ref().and_then(|p| p.device_name.clone()),
         });
-        let _ = config::save(&cfg);
+        if let Err(e) = config::save(&cfg) {
+            tracing::warn!(
+                "run: could not persist Pico identity after discovery: {e:#}. \
+                 Next launch will re-run discovery."
+            );
+        }
 
         match network::run(&socket, peer, xinput_rx.clone(), stats_tx.clone()).await {
             network::Exit::PeerLost => {

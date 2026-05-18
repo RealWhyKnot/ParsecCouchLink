@@ -17,7 +17,11 @@ $LogDir = Join-Path $env:LOCALAPPDATA "ParsecCouchLink\data\logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $TranscriptPath = Join-Path $LogDir "flash-$Stamp.log"
-try { Start-Transcript -Path $TranscriptPath -IncludeInvocationHeader | Out-Null } catch {}
+try {
+    Start-Transcript -Path $TranscriptPath -IncludeInvocationHeader | Out-Null
+} catch {
+    Write-Host "(transcript could not start: $($_.Exception.Message))" -ForegroundColor DarkYellow
+}
 
 if (-not (Test-Path -LiteralPath $BridgeExe)) {
     Write-Host "couchlink.exe was not found next to this script." -ForegroundColor Red

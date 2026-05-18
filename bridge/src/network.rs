@@ -40,6 +40,7 @@ pub async fn run(
     let mut staleness = interval(STALENESS_CHECK_INTERVAL);
     let mut last_state = GamepadState::default();
     let mut parsec_connected = false;
+    let mut last_slot: Option<u32> = None;
     let mut last_peer_recv = Instant::now();
     let mut buf = [0u8; 64];
 
@@ -48,9 +49,25 @@ pub async fn run(
             change = xinput_rx.changed() => {
                 if change.is_err() {
                     // XInput task gone (host shutting down).
+                    tracing::info!("network: xinput task exited, returning to discovery");
                     return Exit::PeerLost;
                 }
                 let snap = *xinput_rx.borrow_and_update();
+                if last_slot != snap.slot {
+                    match (last_slot, snap.slot) {
+                        (None, Some(s)) => tracing::info!(
+                            "network: parsec controller bound on XInput slot {s}"
+                        ),
+                        (Some(s), None) => tracing::info!(
+                            "network: parsec controller unbound (was on XInput slot {s})"
+                        ),
+                        (Some(a), Some(b)) => tracing::info!(
+                            "network: parsec controller moved XInput slot {a} -> {b}"
+                        ),
+                        (None, None) => {}
+                    }
+                    last_slot = snap.slot;
+                }
                 last_state = snap.state;
                 parsec_connected = snap.slot.is_some();
                 let flags = if parsec_connected { FLAG_PARSEC_CONNECTED } else { 0 };
@@ -76,7 +93,12 @@ pub async fn run(
             r = socket.recv_from(&mut buf) => {
                 match r {
                     Ok((n, from)) => {
-                        if from != peer { continue; }
+                        if from != peer {
+                            tracing::debug!(
+                                "network: dropping {n}-byte pkt from non-peer {from} (latched peer is {peer})"
+                            );
+                            continue;
+                        }
                         match Packet::decode(&buf[..n]) {
                             Ok(_) => {
                                 last_peer_recv = Instant::now();

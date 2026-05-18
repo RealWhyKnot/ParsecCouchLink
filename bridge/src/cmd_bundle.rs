@@ -18,12 +18,33 @@ use crate::{cdc, config};
 
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
     let pico_diag = try_capture_pico_diag().await;
-    let pico_diag_captured = pico_diag.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+    let pico_diag_captured = pico_diag
+        .as_ref()
+        .map(|(s, _)| !s.is_empty())
+        .unwrap_or(false);
+    let pico_diag_lost_bytes = pico_diag.as_ref().map(|(_, n)| *n).unwrap_or(0);
 
     let crash_files = collect_crash_file_names();
     let setup_transcripts = collect_setup_transcript_names();
 
-    let manifest = build_manifest(pico_diag_captured, &crash_files, &setup_transcripts).await?;
+    let usb_devices = capture_usb_devices().await;
+    let usb_devices_captured = usb_devices.is_some();
+    let usb_capture_method = usb_devices
+        .as_ref()
+        .map(|(_, m)| (*m).to_string())
+        .unwrap_or_else(|| "none".to_string());
+
+    let system_info = build_system_info().await;
+
+    let manifest = build_manifest(
+        pico_diag_captured,
+        pico_diag_lost_bytes,
+        usb_devices_captured,
+        &usb_capture_method,
+        &crash_files,
+        &setup_transcripts,
+    )
+    .await?;
     let manifest_json = serde_json::to_string_pretty(&manifest)?;
 
     let doctor_text = run_doctor_silently().await;
@@ -50,8 +71,16 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     // the file contains a diagnostic stub explaining which branch took
     // that path. An absent file would be ambiguous; an explicit stub is
     // self-narrating.
-    let pico_diag_body = match pico_diag.as_deref() {
-        Some(text) if !text.is_empty() => text.to_string(),
+    let pico_diag_body = match pico_diag.as_ref() {
+        Some((text, lost)) if !text.is_empty() => {
+            if *lost > 0 {
+                format!(
+                    "--- diag_log overflow: {lost} earlier byte(s) dropped from the ring before this snapshot ---\n{text}",
+                )
+            } else {
+                text.clone()
+            }
+        }
         Some(_) => "(firmware diagnostic ring buffer was empty when bundle ran -- \
                     this means the Pico was reachable over CDC but had no log entries. \
                     Usually the Pico rebooted between the failure and bundle. If the \
@@ -63,30 +92,79 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
                  respond to GET_LOG_BUFFER, or rebooted before bundle could reach \
                  it. Re-plug the Pico, hold it in BOOTSEL, flash with `flash.ps1`, \
                  wait for it to come back as a setup-mode serial device, then run \
-                 bundle. See the bridge log (logs/couchlink-*.log) for the specific \
+                 bundle. See the bridge log (logs/couchlink.*.log) for the specific \
                  CDC failure.)"
             .to_string(),
     };
     zip.start_file("pico-diag.txt", opts)?;
     zip.write_all(pico_diag_body.as_bytes())?;
 
-    // Crash files from crash_dir().
+    // system-info.txt: always present. Captures the Windows build,
+    // couchlink version, last-known Pico identity, short hostname.
+    zip.start_file("system-info.txt", opts)?;
+    zip.write_all(system_info.as_bytes())?;
+
+    // usb-devices.txt: pnputil dump if available (Windows 10 1903+),
+    // otherwise a SetupAPI-via-serialport fallback so the bundle always
+    // has *something* describing the USB topology at bundle time.
+    if let Some((text, method)) = usb_devices.as_ref() {
+        zip.start_file("usb-devices.txt", opts)?;
+        zip.write_all(format!("# capture method: {method}\n\n").as_bytes())?;
+        zip.write_all(text.as_bytes())?;
+    } else {
+        zip.start_file("usb-devices.txt", opts)?;
+        zip.write_all(
+            b"(USB device enumeration unavailable: pnputil is missing AND the serialport \
+              fallback returned an error. Run `pnputil /enum-devices /class USB /connected` \
+              manually and attach the output.)",
+        )?;
+    }
+
+    // Crash files from crash_dir(). Errors at each step are logged at
+    // debug -- a locked-by-antivirus crash dir, a permissions change,
+    // or a vanished file used to be invisible.
     if let Ok(crash_dir) = config::crash_dir() {
         if crash_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&crash_dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    let p = entry.path();
-                    if p.is_file() {
-                        if let Some(name) = p.file_name() {
-                            if let Ok(bytes) = std::fs::read(&p) {
+            match std::fs::read_dir(&crash_dir) {
+                Ok(entries) => {
+                    for entry in entries {
+                        let entry = match entry {
+                            Ok(e) => e,
+                            Err(e) => {
+                                tracing::debug!(
+                                    "bundle: could not read entry in {}: {e}",
+                                    crash_dir.display()
+                                );
+                                continue;
+                            }
+                        };
+                        let p = entry.path();
+                        if !p.is_file() {
+                            continue;
+                        }
+                        let Some(name) = p.file_name() else { continue };
+                        match std::fs::read(&p) {
+                            Ok(bytes) => {
                                 zip.start_file(
                                     format!("crashes/{}", name.to_string_lossy()),
                                     opts,
                                 )?;
                                 zip.write_all(&bytes)?;
                             }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "bundle: could not read crash file {}: {e}",
+                                    p.display(),
+                                );
+                            }
                         }
                     }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "bundle: could not enumerate crash dir {}: {e}",
+                        crash_dir.display()
+                    );
                 }
             }
         }
@@ -164,27 +242,47 @@ fn bundle_log_prefix(
     zip: &mut ZipWriter<std::fs::File>,
     opts: SimpleFileOptions,
 ) -> Result<()> {
-    if let Ok(entries) = std::fs::read_dir(log_dir) {
-        let mut paths: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.is_file()
+    let entries = match std::fs::read_dir(log_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!(
+                "bundle: could not enumerate log dir {}: {e}",
+                log_dir.display()
+            );
+            return Ok(());
+        }
+    };
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(e) => {
+                let p = e.path();
+                let ok = p.is_file()
                     && p.file_name()
                         .and_then(|n| n.to_str())
                         .map(|n| n.starts_with(prefix) && n.ends_with(".log"))
-                        .unwrap_or(false)
-            })
-            .collect();
-        paths.sort();
-        let take = 3.min(paths.len());
-        let recent = &paths[paths.len() - take..];
-        for p in recent {
-            if let Some(name) = p.file_name() {
-                if let Ok(bytes) = std::fs::read(p) {
-                    zip.start_file(format!("logs/{}", name.to_string_lossy()), opts)?;
-                    zip.write_all(&bytes)?;
+                        .unwrap_or(false);
+                if ok {
+                    paths.push(p);
                 }
+            }
+            Err(e) => {
+                tracing::debug!("bundle: could not read entry in {}: {e}", log_dir.display());
+            }
+        }
+    }
+    paths.sort();
+    let take = 3.min(paths.len());
+    let recent = &paths[paths.len() - take..];
+    for p in recent {
+        let Some(name) = p.file_name() else { continue };
+        match std::fs::read(p) {
+            Ok(bytes) => {
+                zip.start_file(format!("logs/{}", name.to_string_lossy()), opts)?;
+                zip.write_all(&bytes)?;
+            }
+            Err(e) => {
+                tracing::debug!("bundle: could not read log file {}: {e}", p.display());
             }
         }
     }
@@ -198,29 +296,61 @@ fn collect_crash_file_names() -> Vec<String> {
     if !crash_dir.is_dir() {
         return vec![];
     }
-    let Ok(entries) = std::fs::read_dir(&crash_dir) else {
-        return vec![];
+    let entries = match std::fs::read_dir(&crash_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!(
+                "bundle: could not enumerate crash dir {}: {e}",
+                crash_dir.display()
+            );
+            return vec![];
+        }
     };
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect()
+    let mut out = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(e) => {
+                if e.path().is_file() {
+                    if let Ok(name) = e.file_name().into_string() {
+                        out.push(name);
+                    }
+                }
+            }
+            Err(e) => tracing::debug!("bundle: skip crash entry: {e}"),
+        }
+    }
+    out
 }
 
 fn collect_setup_transcript_names() -> Vec<String> {
     let Ok(log_dir) = config::log_dir() else {
         return vec![];
     };
-    let Ok(entries) = std::fs::read_dir(&log_dir) else {
-        return vec![];
+    let entries = match std::fs::read_dir(&log_dir) {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::debug!(
+                "bundle: could not enumerate log dir {}: {e}",
+                log_dir.display()
+            );
+            return vec![];
+        }
     };
-    let mut names: Vec<String> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_file())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with("setup-") && n.ends_with(".log"))
-        .collect();
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(e) => {
+                if e.path().is_file() {
+                    if let Ok(name) = e.file_name().into_string() {
+                        if name.starts_with("setup-") && name.ends_with(".log") {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+            Err(e) => tracing::debug!("bundle: skip log entry: {e}"),
+        }
+    }
     names.sort();
     let take = 3.min(names.len());
     names[names.len() - take..].to_vec()
@@ -240,6 +370,9 @@ struct Manifest {
     log_dir: String,
     report_url: String,
     pico_diag_captured: bool,
+    pico_diag_lost_bytes: u32,
+    usb_devices_captured: bool,
+    usb_capture_method: String,
     crash_files: Vec<String>,
     setup_transcripts: Vec<String>,
     notes: Vec<&'static str>,
@@ -247,6 +380,9 @@ struct Manifest {
 
 async fn build_manifest(
     pico_diag_captured: bool,
+    pico_diag_lost_bytes: u32,
+    usb_devices_captured: bool,
+    usb_capture_method: &str,
     crash_files: &[String],
     setup_transcripts: &[String],
 ) -> Result<Manifest> {
@@ -268,6 +404,9 @@ async fn build_manifest(
             .unwrap_or_default(),
         report_url: crate::support::issue_url(),
         pico_diag_captured,
+        pico_diag_lost_bytes,
+        usb_devices_captured,
+        usb_capture_method: usb_capture_method.to_string(),
         crash_files: crash_files.to_vec(),
         setup_transcripts: setup_transcripts.to_vec(),
         notes: vec![
@@ -293,8 +432,11 @@ async fn windows_version() -> Option<String> {
     None
 }
 
-// CDC access blocks; run it off the async runtime.
-async fn try_capture_pico_diag() -> Option<String> {
+// CDC access blocks; run it off the async runtime. Returns the captured
+// log text plus the firmware-reported number of bytes that were
+// dropped from the ring before the snapshot started (0 on older
+// firmware that doesn't send the prefix).
+async fn try_capture_pico_diag() -> Option<(String, u32)> {
     tokio::task::spawn_blocking(|| {
         let port = cdc::find_setup_port().ok()?;
         let mut p = cdc::PicoSetup::open_named(&port).ok()?;
@@ -303,6 +445,137 @@ async fn try_capture_pico_diag() -> Option<String> {
     .await
     .ok()
     .flatten()
+}
+
+/// Capture a USB device enumeration. On Windows we first try
+/// `pnputil /enum-devices /class USB /connected` (Win10 1903+); on
+/// older Windows or non-Windows hosts we fall back to a serialport
+/// list dump that at least names every USB serial device with VID,
+/// PID, manufacturer, and serial number. Returns `(text, method)`
+/// or `None` if both paths failed.
+async fn capture_usb_devices() -> Option<(String, &'static str)> {
+    #[cfg(windows)]
+    {
+        if let Some(text) = pnputil_enum_usb().await {
+            return Some((text, "pnputil"));
+        }
+        tracing::debug!("bundle: pnputil enum failed, falling back to serialport list");
+    }
+    let text = tokio::task::spawn_blocking(serialport_list_dump)
+        .await
+        .ok()??;
+    Some((text, "serialport-fallback"))
+}
+
+#[cfg(windows)]
+async fn pnputil_enum_usb() -> Option<String> {
+    let out = tokio::process::Command::new("pnputil.exe")
+        .args(["/enum-devices", "/class", "USB", "/connected"])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        // Some Win10 1903-1909 builds reject /connected unelevated.
+        // Try the looser /enum-devices /class USB (no /connected) as a
+        // last resort before declaring the path unusable.
+        let fallback = tokio::process::Command::new("pnputil.exe")
+            .args(["/enum-devices", "/class", "USB"])
+            .output()
+            .await
+            .ok()?;
+        if !fallback.status.success() {
+            tracing::debug!(
+                "bundle: pnputil returned non-zero (status={:?})",
+                fallback.status.code()
+            );
+            return None;
+        }
+        return Some(String::from_utf8_lossy(&fallback.stdout).into_owned());
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn serialport_list_dump() -> Option<String> {
+    let ports = serialport::available_ports().ok()?;
+    let mut out = String::new();
+    out.push_str("# serialport::available_ports() fallback dump\n\n");
+    if ports.is_empty() {
+        out.push_str("(no serial ports found)\n");
+    }
+    for p in &ports {
+        out.push_str(&format!("- {}\n", p.port_name));
+        if let serialport::SerialPortType::UsbPort(info) = &p.port_type {
+            out.push_str(&format!(
+                "    VID=0x{:04X} PID=0x{:04X}\n",
+                info.vid, info.pid,
+            ));
+            if let Some(s) = info.serial_number.as_deref() {
+                out.push_str(&format!("    serial={s}\n"));
+            }
+            if let Some(s) = info.manufacturer.as_deref() {
+                out.push_str(&format!("    manufacturer={s}\n"));
+            }
+            if let Some(s) = info.product.as_deref() {
+                out.push_str(&format!("    product={s}\n"));
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Always-present body for `bundle/system-info.txt`. Captures things
+/// that can be checked without opening the Pico, so an issue reporter
+/// has provenance even when the Pico is gone (lost cable, dead
+/// firmware, hardware swap).
+async fn build_system_info() -> String {
+    let cfg = config::load().unwrap_or_default();
+    let mut out = String::new();
+    out.push_str(&format!("couchlink {}\n", env!("CARGO_PKG_VERSION"),));
+    out.push_str(&format!("generated  {}\n", Local::now().to_rfc3339()));
+    out.push_str(&format!("os         {}\n", std::env::consts::OS));
+    if let Some(v) = windows_version().await {
+        out.push_str(&format!("windows    {v}\n"));
+    }
+    out.push_str(&format!(
+        "hostname   {}\n",
+        hostname_short().unwrap_or_else(|| "(unknown)".into())
+    ));
+    out.push_str(&format!("setup-done {}\n", cfg.setup_complete));
+    match &cfg.last_pico {
+        Some(p) => {
+            out.push_str(&format!(
+                "last-pico  fw={}.{}.{} board=0x{:02X} unique-id-short=0x{:08X}\n",
+                p.fw_major, p.fw_minor, p.fw_patch, p.board_type, p.unique_id_short,
+            ));
+            if let Some(ip) = p.last_ip.as_deref() {
+                out.push_str(&format!("           last-ip={ip}\n"));
+            }
+            if let Some(n) = p.device_name.as_deref() {
+                out.push_str(&format!("           device-name={n}\n"));
+            }
+        }
+        None => out.push_str("last-pico  (none)\n"),
+    }
+    out.push_str(&format!(
+        "config     {}\n",
+        config::config_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "(unknown)".into())
+    ));
+    out.push_str(&format!(
+        "logs       {}\n",
+        config::log_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "(unknown)".into())
+    ));
+    out
+}
+
+fn hostname_short() -> Option<String> {
+    let raw = std::env::var("COMPUTERNAME")
+        .ok()
+        .or_else(|| std::env::var("HOSTNAME").ok())?;
+    Some(raw.split('.').next().unwrap_or(&raw).to_string())
 }
 
 async fn run_doctor_silently() -> String {

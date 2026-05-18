@@ -216,10 +216,49 @@ pub async fn check_24ghz_warning() -> CheckResult {
 }
 
 pub async fn check_cdc() -> CheckResult {
-    match cdc::find_setup_port() {
-        Ok(name) => CheckResult::Pass(format!("Pico in setup mode on {name}")),
-        Err(_) => CheckResult::Skip(
-            "no Pico in setup mode plugged in (this is normal once setup is finished)".into(),
+    // Three-way classify so a stuck-at-stage-4 bundle says exactly
+    // which branch fired:
+    //   - no port  -> Skip (this is normal post-setup)
+    //   - port found but HELLO bombs -> Fail with the specific reason
+    //   - port found and HELLO succeeds -> Pass with firmware details
+    let port = match cdc::find_setup_port() {
+        Ok(p) => p,
+        Err(_) => {
+            return CheckResult::Skip(
+                "no Pico in setup mode plugged in (this is normal once setup is finished)".into(),
+            );
+        }
+    };
+    let probe = tokio::task::spawn_blocking(move || -> Result<cdc::HelloAck> {
+        let mut p = cdc::PicoSetup::open_named(&port)?;
+        p.hello()
+    })
+    .await;
+    match probe {
+        Ok(Ok(ack)) => CheckResult::Pass(format!(
+            "HELLO ok proto v{} fw v{}.{}.{} board=0x{:02X} creds={}",
+            ack.proto_version,
+            ack.fw_major,
+            ack.fw_minor,
+            ack.fw_patch,
+            ack.board_type,
+            if ack.creds_present() {
+                "present"
+            } else {
+                "absent"
+            },
+        )),
+        Ok(Err(e)) => CheckResult::Fail(
+            format!("setup-mode CDC port opened but HELLO failed: {e:#}"),
+            "If a COM port is visible in Device Manager but HELLO times out, \
+             unplug + replug the Pico (hold BOOTSEL during plug-in if you also \
+             want to re-flash). If it still fails, run `couchlink bundle` -- \
+             pico-diag.txt will show whether the firmware saw the request."
+                .into(),
+        ),
+        Err(e) => CheckResult::Fail(
+            format!("CDC probe task failed: {e}"),
+            "Internal scheduling error -- run again. If it recurs, attach a bundle.".into(),
         ),
     }
 }
@@ -230,23 +269,30 @@ pub async fn check_discover() -> CheckResult {
         Err(e) => {
             return CheckResult::Fail(
                 format!("UDP bind failed: {e}"),
-                "Another process owns the port, or firewall blocks all UDP \
-                 outbound. Run `couchlink test firewall`."
+                "Another process owns the ephemeral port, or Windows Firewall \
+                 is blocking the bind. Re-run, or open an inbound rule with \
+                 `New-NetFirewallRule -DisplayName couchlink -Direction Inbound \
+                 -Protocol UDP -LocalPort 4242 -Action Allow` (admin)."
                     .into(),
             );
         }
     };
-    if socket.set_broadcast(true).is_err() {
+    if let Err(e) = socket.set_broadcast(true) {
         return CheckResult::Fail(
-            "set_broadcast failed on UDP socket".into(),
-            "Network adapter may not support broadcast; unusual.".into(),
+            format!("set_broadcast failed on UDP socket: {e}"),
+            "Network adapter may not support broadcast (unusual). Try a \
+             different NIC, or disable the wrong-side adapter on a multi-homed PC."
+                .into(),
         );
     }
     let discover = protocol::Packet::discover(0).encode();
     if let Err(e) = socket.send_to(&discover, "255.255.255.255:4242").await {
         return CheckResult::Fail(
             format!("UDP broadcast send failed: {e}"),
-            "Likely a firewall rule blocking outbound UDP. Run `couchlink test firewall`.".into(),
+            "Likely a firewall rule blocking outbound UDP, or `255.255.255.255` \
+             is routed to the wrong NIC on this multi-homed PC. Run \
+             `couchlink test firewall`."
+                .into(),
         );
     }
 
@@ -254,26 +300,54 @@ pub async fn check_discover() -> CheckResult {
     let recv = tokio::time::timeout(Duration::from_secs(3), socket.recv_from(&mut buf)).await;
     match recv {
         Ok(Ok((n, from))) => match protocol::Packet::decode(&buf[..n]) {
-            Ok(pkt) => match pkt.kind {
-                protocol::PacketKind::Ack(info) => {
-                    CheckResult::Pass(format!(
+            Ok(pkt) => {
+                match pkt.kind {
+                    protocol::PacketKind::Ack(info) => CheckResult::Pass(format!(
                     "ack from {from} proto v{} fw v{}.{}.{} board=0x{:02X} uid=0x{:08X} uptime={}s",
                     info.proto_version,
                     info.fw_major, info.fw_minor, info.fw_patch,
                     info.board_type, info.unique_id_short, info.uptime_seconds,
-                ))
+                )),
+                    other => {
+                        let head: Vec<u8> = buf[..n.min(16)].to_vec();
+                        tracing::debug!(
+                        "doctor: discovery got non-ack packet from {from}: kind={:?} first {} bytes = {:02X?}",
+                        other,
+                        head.len(),
+                        head,
+                    );
+                        CheckResult::Warn(format!("got non-ack packet from {from}: {other:?}"))
+                    }
                 }
-                other => CheckResult::Warn(format!("got non-ack packet from {from}: {:?}", other,)),
-            },
-            Err(e) => CheckResult::Fail(
-                format!("malformed reply from {from}: {e}"),
-                "Run `couchlink bundle` and send the result to the maintainer.".into(),
-            ),
+            }
+            Err(e) => {
+                let head: Vec<u8> = buf[..n.min(32)].to_vec();
+                tracing::debug!(
+                    "doctor: discovery got {} bytes from {from} that did not parse: {e}; first {} = {:02X?}",
+                    n,
+                    head.len(),
+                    head,
+                );
+                CheckResult::Fail(
+                    format!("got {n} bytes from {from} but it did not parse as a Pico ack: {e}"),
+                    "Another device on the LAN is replying on UDP/4242, or the \
+                     Pico is running mismatched firmware. Re-flash via \
+                     `flash.ps1` and try again."
+                        .into(),
+                )
+            }
         },
-        _ => CheckResult::Fail(
-            "no Pico replied within 3 s".into(),
-            "Confirm Pico is powered, joined your Wi-Fi, and on the same LAN as this PC. \
-             If unsure, run `couchlink configure-wifi` to re-provision."
+        Ok(Err(e)) => CheckResult::Fail(
+            format!("UDP recv error: {e}"),
+            "Network adapter dropped mid-test; rare. Re-run.".into(),
+        ),
+        Err(_) => CheckResult::Fail(
+            "no Pico replied within 3 s on UDP/4242".into(),
+            "Confirm the Pico is powered, joined your Wi-Fi, and on the same \
+             LAN as this PC. Common causes: AP isolation enabled on the router \
+             (see wiki/Troubleshooting.md), Pico on a different SSID, or this \
+             PC is multi-homed and the broadcast went out the wrong NIC. If \
+             unsure, run `couchlink configure-wifi` to re-provision."
                 .into(),
         ),
     }
