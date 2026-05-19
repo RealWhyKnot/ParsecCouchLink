@@ -17,12 +17,43 @@ pub const TYPE_STATE: u8 = 0x01;
 pub const TYPE_HEARTBEAT: u8 = 0x02;
 pub const TYPE_DISCOVER: u8 = 0x03;
 pub const TYPE_ACK: u8 = 0x04;
+/// Request for the firmware's diag-log ring buffer over UDP. Carried in
+/// the same 17-byte fixed-shape datagram as the streaming types so the
+/// firmware's existing on_recv() RX path accepts it. The reply is a
+/// sequence of variable-length `TYPE_LOG_CHUNK` datagrams.
+pub const TYPE_GET_LOG: u8 = 0x05;
+/// Chunk of diag-log payload sent by the firmware in reply to
+/// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
+/// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
+/// for response opcodes.
+pub const TYPE_LOG_CHUNK: u8 = 0x85;
 
 pub const FLAG_PARSEC_CONNECTED: u8 = 1 << 0;
 pub const FLAG_NEUTRALIZE: u8 = 1 << 1;
 
-/// Current wire-protocol version. Bumped whenever the on-wire layout for
-/// any packet type changes.
+/// Set in the ACK packet's `flags` byte (which was always zero before)
+/// when the firmware supports the `TYPE_GET_LOG` / `TYPE_LOG_CHUNK`
+/// exchange. The wire-protocol version stays at 1 so old bridges
+/// continue to interoperate; new bridges gate the diag pull on this
+/// bit.
+pub const ACK_FLAG_LOG_CHUNK_SUPPORTED: u8 = 1 << 0;
+
+/// Set in a `TYPE_LOG_CHUNK` datagram's `flags` byte to mark the final
+/// chunk in the reply sequence.
+pub const LOG_CHUNK_FLAG_LAST: u8 = 1 << 0;
+
+/// Maximum log-chunk payload size in bytes. With a 4 KiB diag ring on
+/// the firmware, a complete snapshot fits in 16 chunks. Comfortably
+/// below the Wi-Fi MTU after IP+UDP headers.
+pub const LOG_CHUNK_MAX_PAYLOAD: usize = 256;
+
+/// Header length for a `TYPE_LOG_CHUNK` datagram, excluding the 2-byte
+/// CRC-16 trailer. Total on-wire size is `LOG_CHUNK_HEADER_LEN + payload_len + 2`.
+pub const LOG_CHUNK_HEADER_LEN: usize = 12;
+
+/// Current wire-protocol version for the streaming/discovery path. Stays
+/// at 1 across the LogChunk addition -- new behaviour is gated on the
+/// `ACK_FLAG_LOG_CHUNK_SUPPORTED` capability bit instead.
 pub const PROTO_VERSION: u8 = 1;
 
 pub const BOARD_PICO_2_W: u8 = 0x01;
@@ -234,6 +265,172 @@ pub fn seq_is_newer(new: u8, old: u8) -> bool {
     new.wrapping_sub(old) != 0 && new.wrapping_sub(old) < 128
 }
 
+/// Build a `TYPE_GET_LOG` request datagram. Same shape as STATE/HEARTBEAT
+/// (17 bytes, magic + type + seq + flags + 12-byte body + CRC-8) so the
+/// firmware's existing fixed-shape RX path accepts it; the body is
+/// reserved for future parameters and is sent as zeros today.
+pub fn encode_get_log(seq: u8) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_GET_LOG;
+    buf[2] = seq;
+    buf[3] = 0;
+    // body[0..12] stays zero
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+/// One chunk of the firmware's diag-log ring, sent in reply to a
+/// `TYPE_GET_LOG` request. The bridge reassembles a multi-chunk reply
+/// by ordering on `chunk_index`. `lost_bytes` and `total_chunks` are
+/// populated only in chunk 0; readers must ignore those fields in
+/// later chunks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogChunk {
+    pub chunk_index: u8,
+    pub flags: u8,
+    pub total_chunks: u8,
+    pub lost_bytes: u32,
+    pub payload: Vec<u8>,
+}
+
+impl LogChunk {
+    pub fn is_last(&self) -> bool {
+        self.flags & LOG_CHUNK_FLAG_LAST != 0
+    }
+
+    /// Serialize the chunk to its on-wire form. Used by the firmware (and
+    /// by tests that want to drive `decode` against round-trip data).
+    pub fn encode(&self) -> Vec<u8> {
+        assert!(
+            self.payload.len() <= LOG_CHUNK_MAX_PAYLOAD,
+            "LogChunk payload over LOG_CHUNK_MAX_PAYLOAD"
+        );
+        let mut buf = Vec::with_capacity(LOG_CHUNK_HEADER_LEN + self.payload.len() + 2);
+        buf.push(MAGIC);
+        buf.push(TYPE_LOG_CHUNK);
+        buf.push(self.chunk_index);
+        buf.push(self.flags);
+        buf.push(self.total_chunks);
+        let len = self.payload.len() as u16;
+        buf.push((len & 0xFF) as u8);
+        buf.push((len >> 8) as u8);
+        buf.push(0); // reserved
+        buf.extend_from_slice(&self.lost_bytes.to_le_bytes());
+        buf.extend_from_slice(&self.payload);
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf);
+        buf.push((crc & 0xFF) as u8);
+        buf.push((crc >> 8) as u8);
+        buf
+    }
+
+    /// Parse a LogChunk from a UDP datagram. Returns `Err` for any of:
+    /// wrong size, wrong magic, wrong type, payload-length disagrees with
+    /// total length, or CRC-16 mismatch.
+    pub fn decode(buf: &[u8]) -> Result<Self, LogChunkDecodeError> {
+        if buf.len() < LOG_CHUNK_HEADER_LEN + 2 {
+            return Err(LogChunkDecodeError::TooShort {
+                got: buf.len(),
+                min: LOG_CHUNK_HEADER_LEN + 2,
+            });
+        }
+        if buf[0] != MAGIC {
+            return Err(LogChunkDecodeError::WrongMagic);
+        }
+        if buf[1] != TYPE_LOG_CHUNK {
+            return Err(LogChunkDecodeError::WrongType(buf[1]));
+        }
+        let payload_len = u16::from_le_bytes([buf[5], buf[6]]) as usize;
+        if payload_len > LOG_CHUNK_MAX_PAYLOAD {
+            return Err(LogChunkDecodeError::PayloadTooLarge(payload_len));
+        }
+        let expected_total = LOG_CHUNK_HEADER_LEN + payload_len + 2;
+        if buf.len() != expected_total {
+            return Err(LogChunkDecodeError::LengthMismatch {
+                claimed_payload: payload_len,
+                got_total: buf.len(),
+                want_total: expected_total,
+            });
+        }
+        let crc_lo = buf[expected_total - 2] as u16;
+        let crc_hi = buf[expected_total - 1] as u16;
+        let crc_got = crc_lo | (crc_hi << 8);
+        let crc_want =
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..expected_total - 2]);
+        if crc_got != crc_want {
+            return Err(LogChunkDecodeError::BadCrc {
+                got: crc_got,
+                want: crc_want,
+            });
+        }
+        Ok(LogChunk {
+            chunk_index: buf[2],
+            flags: buf[3],
+            total_chunks: buf[4],
+            lost_bytes: u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
+            payload: buf[LOG_CHUNK_HEADER_LEN..LOG_CHUNK_HEADER_LEN + payload_len].to_vec(),
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum LogChunkDecodeError {
+    TooShort {
+        got: usize,
+        min: usize,
+    },
+    WrongMagic,
+    WrongType(u8),
+    PayloadTooLarge(usize),
+    LengthMismatch {
+        claimed_payload: usize,
+        got_total: usize,
+        want_total: usize,
+    },
+    BadCrc {
+        got: u16,
+        want: u16,
+    },
+}
+
+impl std::fmt::Display for LogChunkDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooShort { got, min } => {
+                write!(
+                    f,
+                    "log chunk too short: got {got} bytes, need at least {min}"
+                )
+            }
+            Self::WrongMagic => write!(f, "log chunk wrong magic"),
+            Self::WrongType(t) => write!(f, "log chunk wrong type 0x{t:02X}"),
+            Self::PayloadTooLarge(n) => {
+                write!(
+                    f,
+                    "log chunk payload_len {n} exceeds {LOG_CHUNK_MAX_PAYLOAD}"
+                )
+            }
+            Self::LengthMismatch {
+                claimed_payload,
+                got_total,
+                want_total,
+            } => write!(
+                f,
+                "log chunk length mismatch: payload_len={claimed_payload} \
+                 total_size={got_total} want_total={want_total}"
+            ),
+            Self::BadCrc { got, want } => {
+                write!(
+                    f,
+                    "log chunk CRC-16 mismatch: got 0x{got:04X}, want 0x{want:04X}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for LogChunkDecodeError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +568,146 @@ mod tests {
         // half-window boundary
         assert!(seq_is_newer(127, 0));
         assert!(!seq_is_newer(128, 0));
+    }
+
+    #[test]
+    fn get_log_encode_shape() {
+        let buf = encode_get_log(42);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_GET_LOG);
+        assert_eq!(buf[2], 42);
+        assert_eq!(buf[3], 0);
+        // body[0..12] reserved -> zeros
+        for b in &buf[4..16] {
+            assert_eq!(*b, 0);
+        }
+        // CRC-8 is good
+        assert_eq!(buf[16], crc8(&buf[..16]));
+        // And it still decodes via the existing Packet path so old code
+        // paths see a known shape (even though they ignore the new type).
+        // Decode is lenient on unknown types: TYPE_GET_LOG is not in
+        // PacketKind, so this should error with UnknownType(0x05).
+        assert_eq!(
+            Packet::decode(&buf),
+            Err(DecodeError::UnknownType(TYPE_GET_LOG))
+        );
+    }
+
+    fn make_chunk(idx: u8, flags: u8, total: u8, lost: u32, payload: &[u8]) -> LogChunk {
+        LogChunk {
+            chunk_index: idx,
+            flags,
+            total_chunks: total,
+            lost_bytes: lost,
+            payload: payload.to_vec(),
+        }
+    }
+
+    #[test]
+    fn log_chunk_roundtrip_empty_payload() {
+        let c = make_chunk(0, LOG_CHUNK_FLAG_LAST, 1, 0, &[]);
+        let buf = c.encode();
+        assert_eq!(buf.len(), LOG_CHUNK_HEADER_LEN + 2);
+        let back = LogChunk::decode(&buf).unwrap();
+        assert_eq!(back, c);
+        assert!(back.is_last());
+    }
+
+    #[test]
+    fn log_chunk_roundtrip_max_payload() {
+        let payload: Vec<u8> = (0..LOG_CHUNK_MAX_PAYLOAD)
+            .map(|i| (i & 0xFF) as u8)
+            .collect();
+        assert_eq!(payload.len(), LOG_CHUNK_MAX_PAYLOAD);
+        let c = make_chunk(5, 0, 16, 1234, &payload);
+        let buf = c.encode();
+        assert_eq!(buf.len(), LOG_CHUNK_HEADER_LEN + LOG_CHUNK_MAX_PAYLOAD + 2);
+        let back = LogChunk::decode(&buf).unwrap();
+        assert_eq!(back, c);
+        assert!(!back.is_last());
+        assert_eq!(back.lost_bytes, 1234);
+    }
+
+    #[test]
+    fn log_chunk_last_flag_decoded() {
+        let c = make_chunk(15, LOG_CHUNK_FLAG_LAST, 16, 0, b"final-chunk");
+        let buf = c.encode();
+        let back = LogChunk::decode(&buf).unwrap();
+        assert!(back.is_last());
+    }
+
+    #[test]
+    fn log_chunk_bad_crc_rejected() {
+        let c = make_chunk(0, 0, 1, 0, b"hello");
+        let mut buf = c.encode();
+        let last = buf.len() - 1;
+        buf[last] ^= 0xFF;
+        match LogChunk::decode(&buf) {
+            Err(LogChunkDecodeError::BadCrc { .. }) => (),
+            other => panic!("expected BadCrc, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_chunk_wrong_magic_rejected() {
+        let c = make_chunk(0, 0, 1, 0, b"hi");
+        let mut buf = c.encode();
+        buf[0] = 0x00;
+        match LogChunk::decode(&buf) {
+            Err(LogChunkDecodeError::WrongMagic) => (),
+            other => panic!("expected WrongMagic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_chunk_wrong_type_rejected() {
+        let c = make_chunk(0, 0, 1, 0, b"hi");
+        let mut buf = c.encode();
+        buf[1] = TYPE_ACK;
+        match LogChunk::decode(&buf) {
+            Err(LogChunkDecodeError::WrongType(t)) if t == TYPE_ACK => (),
+            other => panic!("expected WrongType(TYPE_ACK), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_chunk_length_mismatch_rejected() {
+        let c = make_chunk(0, 0, 1, 0, b"hi");
+        let mut buf = c.encode();
+        // Claim a longer payload than the buffer actually contains.
+        buf[5] = 99; // payload_len LE lo
+        match LogChunk::decode(&buf) {
+            Err(LogChunkDecodeError::LengthMismatch { .. }) => (),
+            other => panic!("expected LengthMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ack_capability_flag_decoded() {
+        // Hand-roll an ACK datagram with the capability bit set in the
+        // flags byte so the bridge sees what new firmware will send.
+        let info = AckInfo {
+            proto_version: PROTO_VERSION,
+            fw_major: 1,
+            fw_minor: 2,
+            fw_patch: 3,
+            board_type: BOARD_PICO_W_RP2040,
+            uptime_seconds: 60,
+            unique_id_short: 0xABCD1234,
+        };
+        let mut buf = Packet::ack(7, info).encode();
+        // Stomp the flags byte with the capability bit and re-CRC.
+        buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED;
+        buf[16] = crc8(&buf[..16]);
+        let back = Packet::decode(&buf).unwrap();
+        assert_eq!(
+            back.flags & ACK_FLAG_LOG_CHUNK_SUPPORTED,
+            ACK_FLAG_LOG_CHUNK_SUPPORTED
+        );
+        match back.kind {
+            PacketKind::Ack(got) => assert_eq!(got, info),
+            other => panic!("expected Ack, got {other:?}"),
+        }
     }
 }

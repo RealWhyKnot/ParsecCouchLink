@@ -14,6 +14,13 @@ use tracing_subscriber::Layer;
 use crate::config;
 
 pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
+    // The directive must match the binary's crate identifier, which is the
+    // `[[bin]] name` in Cargo.toml -- currently `couchlink`. A previous rename
+    // left the directive pointed at a crate name (`parsec_couchlink`) that no
+    // event target ever matched, so EnvFilter silently dropped every trace
+    // and the rolling files stayed at 0 bytes. The regression test below
+    // exists to catch the next time someone renames the binary without
+    // touching this string.
     let (stderr_filter_str, file_filter_str) = if std::env::var("RUST_LOG").is_ok() {
         let v = std::env::var("RUST_LOG").unwrap();
         (v.clone(), v)
@@ -28,8 +35,8 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
             _ => "trace",
         };
         (
-            format!("parsec_couchlink={stderr_lvl}"),
-            format!("parsec_couchlink={file_lvl}"),
+            format!("couchlink={stderr_lvl}"),
+            format!("couchlink={file_lvl}"),
         )
     };
 
@@ -64,6 +71,86 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
         .with(file_layer)
         .init();
 
-    tracing::info!("log dir: {}", log_dir.display());
+    // Emit a known first line so an empty log file (= filter mismatch, file
+    // permission issue, or worker drop) is unambiguous. If this line is
+    // missing from a log file on disk, the file layer never accepted a
+    // single event and something is wrong with the wiring; if it is
+    // present, every subsequent absence is a real signal.
+    tracing::info!(
+        "logger ready: file_filter={file_filter} dir={dir} crate_version={ver}",
+        file_filter = format!(
+            "couchlink={}",
+            match verbose {
+                0 => "debug",
+                _ => "trace",
+            }
+        ),
+        dir = log_dir.display(),
+        ver = env!("CARGO_PKG_VERSION"),
+    );
     Ok(Some(guard))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    /// Catches the failure mode that motivated this whole pass: the EnvFilter
+    /// directive uses a crate-name prefix that no event target matches, so
+    /// every `tracing::*` call is silently dropped. We build a subscriber
+    /// the same way `init()` does, emit a known event, and assert the
+    /// captured output contains it. If someone renames the bin target
+    /// without touching the directive, this test fails.
+    #[test]
+    fn filter_directive_matches_this_crate() {
+        let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let writer = SharedBufWriter(buf.clone());
+
+        let stderr_lvl = "info";
+        let filter = tracing_subscriber::EnvFilter::new(format!("couchlink={stderr_lvl}"));
+        let layer = tracing_subscriber::fmt::layer()
+            .with_target(true)
+            .with_writer(writer)
+            .with_filter(filter);
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!("filter_regression_canary");
+        });
+
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(
+            captured.contains("filter_regression_canary"),
+            "EnvFilter directive `couchlink=info` did not match this crate's event \
+             target. If the binary was renamed in Cargo.toml, update the directive \
+             in logfile.rs to match. Captured output: {captured:?}",
+        );
+    }
+
+    #[derive(Clone)]
+    struct SharedBufWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for SharedBufWriter {
+        type Writer = SharedBufWriterGuard;
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedBufWriterGuard(self.0.clone())
+        }
+    }
+
+    struct SharedBufWriterGuard(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for SharedBufWriterGuard {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // Bring `Layer::with_filter` into scope for the test.
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::Layer;
 }

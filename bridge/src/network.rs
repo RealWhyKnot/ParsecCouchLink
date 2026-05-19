@@ -34,6 +34,9 @@ pub async fn run(
     mut xinput_rx: watch::Receiver<xinput::Snapshot>,
     stats_tx: watch::Sender<Stats>,
 ) -> Exit {
+    tracing::info!(
+        "network: streaming to {peer}; throughput summary every 5 s. Press Ctrl-C to stop."
+    );
     let mut seq: u8 = 0;
     let mut packets_sent: u64 = 0;
     let mut heartbeat = interval(HEARTBEAT_INTERVAL);

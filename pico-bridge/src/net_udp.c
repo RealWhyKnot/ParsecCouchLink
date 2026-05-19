@@ -49,8 +49,25 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_HEARTBEAT    0x02
 #define TYPE_DISCOVER     0x03
 #define TYPE_ACK          0x04
+#define TYPE_GET_LOG      0x05
+#define TYPE_LOG_CHUNK    0x85
 
-#define FLAG_PARSEC_CONNECTED 0x01
+#define FLAG_PARSEC_CONNECTED        0x01
+// Capability bit set in ACK[3] (the flags byte, formerly always zero)
+// so the bridge can detect that this firmware understands TYPE_GET_LOG
+// without the protocol version bumping. Keeps old bridges compatible:
+// they decode the flags byte but ignore unrecognised bits.
+#define ACK_FLAG_LOG_CHUNK_SUPPORTED 0x01
+
+// LogChunk layout (matches bridge protocol.rs):
+//   header (12 bytes) + payload (<= 256 bytes) + crc16 (2 bytes)
+#define LOG_CHUNK_HEADER_LEN   12
+#define LOG_CHUNK_MAX_PAYLOAD  256
+#define LOG_CHUNK_FLAG_LAST    0x01
+
+// Diag log snapshot capacity. The ring buffer is 4 KiB; sized to match
+// so we always pull the full ring in one snapshot call.
+#define DIAG_SNAPSHOT_CAP      4096
 
 static struct udp_pcb *pcb;
 static bool have_peer;
@@ -66,6 +83,20 @@ static uint8_t crc8(const uint8_t *data, size_t n) {
         c ^= data[i];
         for (int b = 0; b < 8; b++) {
             c = (c & 0x80) ? ((c << 1) ^ 0x07) : (c << 1);
+        }
+    }
+    return c;
+}
+
+// CRC-16/CCITT-FALSE (alias CRC-16/IBM-3740): poly 0x1021, init 0xFFFF,
+// no reflect, no XOR-out. Used for the variable-length LogChunk frames;
+// 17-byte fixed packets keep the lighter CRC-8.
+static uint16_t crc16_ccitt_false(const uint8_t *data, size_t n) {
+    uint16_t c = 0xFFFF;
+    for (size_t i = 0; i < n; i++) {
+        c ^= ((uint16_t)data[i]) << 8;
+        for (int b = 0; b < 8; b++) {
+            c = (c & 0x8000) ? ((c << 1) ^ 0x1021) : (c << 1);
         }
     }
     return c;
@@ -87,7 +118,10 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     buf[0] = MAGIC;
     buf[1] = TYPE_ACK;
     buf[2] = out_seq++;
-    buf[3] = 0;
+    // Advertise the LogChunk capability in the flags byte. Old bridges
+    // decode the flags field but ignore unknown bits; new bridges gate
+    // their CMD_GET_LOG attempt on this bit being set.
+    buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED;
     // body[0..11]
     buf[4]  = PICO_BRIDGE_UDP_PROTO_VERSION;
     buf[5]  = PICO_BRIDGE_FW_MAJOR;
@@ -122,6 +156,78 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
                         ip4_addr3(ip_2_ip4(to_addr)),
                         ip4_addr4(ip_2_ip4(to_addr)),
                         (unsigned)to_port, (unsigned)in_seq);
+    }
+}
+
+// Push the diag-log ring out as one or more LogChunk datagrams. Bounded
+// by DIAG_SNAPSHOT_CAP / LOG_CHUNK_MAX_PAYLOAD = 16 chunks; each chunk
+// is its own pbuf_alloc/udp_sendto/pbuf_free so memory pressure shows
+// up as a per-chunk ERR_MEM rather than a single all-or-nothing alloc.
+static void send_log_chunks(const ip_addr_t *to_addr, u16_t to_port,
+                            uint8_t in_seq) {
+    static uint8_t snapshot[DIAG_SNAPSHOT_CAP];
+    uint32_t lost = 0;
+    size_t got = diag_log_snapshot(snapshot, sizeof(snapshot), &lost);
+    // Always send at least one chunk so the bridge sees a definitive
+    // "Pico answered, log was empty" reply instead of timing out.
+    size_t total_chunks = (got == 0) ? 1
+                                     : ((got + LOG_CHUNK_MAX_PAYLOAD - 1)
+                                        / LOG_CHUNK_MAX_PAYLOAD);
+    if (total_chunks > 255) total_chunks = 255;
+
+    diag_log_printf("net_udp: log_chunks -> %u.%u.%u.%u:%u %u chunks lost=%u in_seq=%u",
+                    ip4_addr1(ip_2_ip4(to_addr)),
+                    ip4_addr2(ip_2_ip4(to_addr)),
+                    ip4_addr3(ip_2_ip4(to_addr)),
+                    ip4_addr4(ip_2_ip4(to_addr)),
+                    (unsigned)to_port,
+                    (unsigned)total_chunks, (unsigned)lost,
+                    (unsigned)in_seq);
+
+    for (size_t i = 0; i < total_chunks; i++) {
+        size_t offset = i * LOG_CHUNK_MAX_PAYLOAD;
+        size_t remain = (offset < got) ? (got - offset) : 0;
+        size_t payload_len = remain < LOG_CHUNK_MAX_PAYLOAD
+                           ? remain
+                           : LOG_CHUNK_MAX_PAYLOAD;
+        bool is_last = (i == total_chunks - 1);
+
+        size_t total_len = LOG_CHUNK_HEADER_LEN + payload_len + 2;
+        struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, total_len, PBUF_RAM);
+        if (!p) {
+            diag_log_printf("net_udp: log_chunk %u pbuf_alloc failed (ERR_MEM)",
+                            (unsigned)i);
+            return;
+        }
+        uint8_t *buf = (uint8_t *)p->payload;
+        buf[0] = MAGIC;
+        buf[1] = TYPE_LOG_CHUNK;
+        buf[2] = (uint8_t)i;
+        buf[3] = is_last ? LOG_CHUNK_FLAG_LAST : 0;
+        buf[4] = (uint8_t)total_chunks;
+        buf[5] = (uint8_t)(payload_len & 0xFF);
+        buf[6] = (uint8_t)((payload_len >> 8) & 0xFF);
+        buf[7] = 0;  // reserved
+        // lost_bytes is meaningful only in chunk 0; zero elsewhere.
+        uint32_t lost_field = (i == 0) ? lost : 0;
+        buf[8]  = (uint8_t)(lost_field & 0xFF);
+        buf[9]  = (uint8_t)((lost_field >> 8) & 0xFF);
+        buf[10] = (uint8_t)((lost_field >> 16) & 0xFF);
+        buf[11] = (uint8_t)((lost_field >> 24) & 0xFF);
+        if (payload_len) {
+            memcpy(&buf[LOG_CHUNK_HEADER_LEN], &snapshot[offset], payload_len);
+        }
+        uint16_t crc = crc16_ccitt_false(buf, LOG_CHUNK_HEADER_LEN + payload_len);
+        buf[LOG_CHUNK_HEADER_LEN + payload_len + 0] = (uint8_t)(crc & 0xFF);
+        buf[LOG_CHUNK_HEADER_LEN + payload_len + 1] = (uint8_t)((crc >> 8) & 0xFF);
+
+        err_t e = udp_sendto(pcb, p, to_addr, to_port);
+        pbuf_free(p);
+        if (e != ERR_OK) {
+            diag_log_printf("net_udp: log_chunk %u sendto err=%d (%s)",
+                            (unsigned)i, (int)e, lwip_err_name(e));
+            return;
+        }
     }
 }
 
@@ -161,6 +267,13 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p,
         send_ack(addr, port, seq);
         // Don't latch the peer yet -- wait for the first STATE or
         // HEARTBEAT, which proves end-to-end works.
+    } else if (type == TYPE_GET_LOG) {
+        // The bridge's bundle command sends this when capturing diag
+        // from a running Pico. We don't require the caller to be the
+        // latched peer -- the host firewall already gates 4242 inbound,
+        // and this lets `couchlink bundle` work even when discovery is
+        // racing the latch.
+        send_log_chunks(addr, port, seq);
     } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT) {
         if (!have_peer
             || !ip_addr_cmp(&peer_addr, addr)

@@ -22,10 +22,12 @@ Packet types:
 | `0x02` | Heartbeat. |
 | `0x03` | Discovery broadcast from the bridge. |
 | `0x04` | Pico ack with firmware and board identity. |
+| `0x05` | `GET_LOG` -- bridge requests the firmware diagnostic ring. Same 17-byte shape as the others; body is reserved. |
+| `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
 
 The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body.
 
-Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version.
+Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump -- bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to a `GET_LOG` request. Older firmware leaves the flag clear, and the bridge gates its diag pull accordingly.
 
 ## USB-CDC Setup
 

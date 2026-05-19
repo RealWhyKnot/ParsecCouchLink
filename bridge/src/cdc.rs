@@ -166,6 +166,7 @@ pub fn try_decode(buf: &[u8]) -> Result<(Frame, usize)> {
 /// and the no-pipelining rule.
 pub struct PicoSetup {
     port: Box<dyn SerialPort>,
+    port_name: String,
     seq: u8,
 }
 
@@ -178,6 +179,12 @@ impl PicoSetup {
 
     pub fn open_named(port_name: &str) -> Result<Self> {
         open_and_assert(port_name)
+    }
+
+    /// Name of the underlying serial port, e.g. `"COM3"`. Carried so the
+    /// HELLO timeout trace can name the port that went silent.
+    pub fn port_name(&self) -> &str {
+        &self.port_name
     }
 
     pub fn exchange(&mut self, command: u8, payload: &[u8]) -> Result<Frame> {
@@ -228,7 +235,8 @@ impl PicoSetup {
 
     fn read_one_frame(&mut self) -> Result<Frame> {
         let mut buf = Vec::with_capacity(MAX_FRAME);
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(3);
         loop {
             let mut tmp = [0u8; 256];
             match self.port.read(&mut tmp) {
@@ -236,6 +244,24 @@ impl PicoSetup {
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     if Instant::now() >= deadline {
+                        // Surface what the wire actually carried in the
+                        // 3-second window. Without this the bundle can
+                        // tell "the bridge gave up" but not "the bridge
+                        // gave up after 0 bytes" vs "the bridge gave
+                        // up after 12 bytes of UART noise".
+                        let head: Vec<u8> = buf.iter().take(32).copied().collect();
+                        tracing::error!(
+                            "cdc: read timeout on {port} after {elapsed} ms with \
+                             {n} bytes received (first 32 = {hex})",
+                            port = self.port_name,
+                            elapsed = started.elapsed().as_millis(),
+                            n = buf.len(),
+                            hex = if head.is_empty() {
+                                "none".to_string()
+                            } else {
+                                format_hex(&head)
+                            },
+                        );
                         bail!("timed out waiting for Pico response");
                     }
                 }
@@ -253,17 +279,16 @@ impl PicoSetup {
             // Resync: find magic in buf and try to decode from there.
             if let Some(start) = find_magic(&buf) {
                 if start > 0 {
-                    // Visible breadcrumb when the firmware (or a noisy
-                    // host bridge) puts something on the wire before
-                    // the frame magic. Without this the only signal
-                    // was an eventual "buffer overflow" timeout much
-                    // later -- there was no way to tell whether the
-                    // firmware was spewing text or whether nothing
-                    // was happening at all.
+                    // A firmware that's alive but mis-framing leaves bytes
+                    // here, and we want that to be visible at default
+                    // verbosity, not buried at debug. The "buffer overflow"
+                    // path below catches the much-later case where the
+                    // garbage never resyncs.
                     let head: Vec<u8> = buf.iter().take(16).copied().collect();
-                    tracing::debug!(
-                        "cdc: drained {} pre-magic bytes (first 16 = {})",
+                    tracing::info!(
+                        "cdc: drained {} pre-magic bytes from {} (first 16 = {})",
                         start,
+                        self.port_name,
                         format_hex(&head),
                     );
                     buf.drain(..start);
@@ -281,7 +306,8 @@ impl PicoSetup {
             if buf.len() > MAX_FRAME * 4 {
                 let head: Vec<u8> = buf.iter().take(16).copied().collect();
                 tracing::warn!(
-                    "cdc: receive buffer overflow with no valid frame ({} bytes, first 16 = {})",
+                    "cdc: receive buffer overflow on {} with no valid frame ({} bytes, first 16 = {})",
+                    self.port_name,
                     buf.len(),
                     format_hex(&head),
                 );
@@ -309,6 +335,102 @@ impl PicoSetup {
             board_type: resp.payload[4],
             flags: resp.payload[5],
         })
+    }
+
+    /// Variant of `hello()` that captures per-step state for the bundle's
+    /// pico-diag.txt stub. Returns enough detail that an operator can
+    /// distinguish "firmware silent" from "firmware mis-framing" from
+    /// "firmware responded but we mis-decoded" without reading the bridge
+    /// log. Used by `cmd_bundle::capture_pico_diag()`.
+    pub fn hello_probe(&mut self) -> HelloProbe {
+        let started = Instant::now();
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1);
+        let frame = encode(CMD_HELLO, seq, &[]);
+        let frame_hex = format_hex(&frame);
+        let write_start = Instant::now();
+        if let Err(e) = self.port.write_all(&frame) {
+            return HelloProbe {
+                port: self.port_name.clone(),
+                step_reached: HelloProbeStep::Write,
+                frame_written_hex: frame_hex,
+                bytes_received: 0,
+                rx_first_32_hex: "none".to_string(),
+                elapsed_ms: started.elapsed().as_millis(),
+                result: Err(format!("write_all: {e:#}")),
+            };
+        }
+        if let Err(e) = self.port.flush() {
+            tracing::debug!("cdc: probe flush returned {e:?}");
+        }
+        let write_elapsed = write_start.elapsed();
+        tracing::info!(
+            "cdc: probe wrote HELLO frame on {} ({} bytes in {} ms)",
+            self.port_name,
+            frame.len(),
+            write_elapsed.as_millis(),
+        );
+
+        // Reuse the same read loop so we capture exactly what the bridge
+        // would see during a real HELLO. read_one_frame already emits the
+        // timeout / drained-bytes traces, which is what we want.
+        match self.read_one_frame() {
+            Ok(resp) => {
+                if resp.command != RSP_HELLO {
+                    return HelloProbe {
+                        port: self.port_name.clone(),
+                        step_reached: HelloProbeStep::Decode,
+                        frame_written_hex: frame_hex,
+                        bytes_received: resp.payload.len(),
+                        rx_first_32_hex: format_hex(
+                            &resp.payload.iter().take(32).copied().collect::<Vec<u8>>(),
+                        ),
+                        elapsed_ms: started.elapsed().as_millis(),
+                        result: Err(format!("unexpected response 0x{:02X}", resp.command)),
+                    };
+                }
+                if resp.payload.len() < 6 {
+                    return HelloProbe {
+                        port: self.port_name.clone(),
+                        step_reached: HelloProbeStep::Decode,
+                        frame_written_hex: frame_hex,
+                        bytes_received: resp.payload.len(),
+                        rx_first_32_hex: format_hex(&resp.payload),
+                        elapsed_ms: started.elapsed().as_millis(),
+                        result: Err(format!(
+                            "HELLO_ACK truncated ({} bytes)",
+                            resp.payload.len()
+                        )),
+                    };
+                }
+                let ack = HelloAck {
+                    proto_version: resp.payload[0],
+                    fw_major: resp.payload[1],
+                    fw_minor: resp.payload[2],
+                    fw_patch: resp.payload[3],
+                    board_type: resp.payload[4],
+                    flags: resp.payload[5],
+                };
+                HelloProbe {
+                    port: self.port_name.clone(),
+                    step_reached: HelloProbeStep::Done,
+                    frame_written_hex: frame_hex,
+                    bytes_received: resp.payload.len(),
+                    rx_first_32_hex: format_hex(&resp.payload),
+                    elapsed_ms: started.elapsed().as_millis(),
+                    result: Ok(ack),
+                }
+            }
+            Err(e) => HelloProbe {
+                port: self.port_name.clone(),
+                step_reached: HelloProbeStep::Read,
+                frame_written_hex: frame_hex,
+                bytes_received: 0,
+                rx_first_32_hex: "none".to_string(),
+                elapsed_ms: started.elapsed().as_millis(),
+                result: Err(format!("{e:#}")),
+            },
+        }
     }
 
     /// Push Wi-Fi credentials. The buffer is zeroed before returning.
@@ -482,6 +604,45 @@ impl HelloAck {
     }
 }
 
+/// Outcome of a single HELLO wire exchange, with enough detail for the
+/// bundle's pico-diag.txt stub to name the failure step. The probe runs
+/// the same write + read loop as `PicoSetup::hello()` -- this is meant
+/// to mirror reality, not a separate code path.
+#[derive(Clone, Debug)]
+pub struct HelloProbe {
+    pub port: String,
+    pub step_reached: HelloProbeStep,
+    pub frame_written_hex: String,
+    pub bytes_received: usize,
+    pub rx_first_32_hex: String,
+    pub elapsed_ms: u128,
+    pub result: Result<HelloAck, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelloProbeStep {
+    /// The HELLO frame did not even leave the bridge.
+    Write,
+    /// Frame sent; no valid response decoded within the deadline.
+    Read,
+    /// Bytes received and decoded; the response was the wrong shape
+    /// (wrong opcode or truncated HELLO_ACK).
+    Decode,
+    /// Full HELLO_ACK parsed.
+    Done,
+}
+
+impl HelloProbeStep {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HelloProbeStep::Write => "write",
+            HelloProbeStep::Read => "read",
+            HelloProbeStep::Decode => "decode",
+            HelloProbeStep::Done => "done",
+        }
+    }
+}
+
 fn find_magic(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == FRAME_MAGIC)
 }
@@ -546,7 +707,11 @@ fn open_and_assert(port_name: &str) -> Result<PicoSetup> {
         }
     }
 
-    Ok(PicoSetup { port, seq: 0 })
+    Ok(PicoSetup {
+        port,
+        port_name: port_name.to_string(),
+        seq: 0,
+    })
 }
 
 pub fn find_setup_port() -> Result<String> {
