@@ -9,10 +9,11 @@ use anyhow::Result;
 use tokio::net::UdpSocket;
 use tokio::sync::watch;
 
-use crate::{config, discovery, network, protocol, xinput};
+use crate::{config, discovery, journal, network, protocol, xinput};
 
 pub async fn run() -> Result<()> {
     tracing::info!("run: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
+    journal!("run", "started bridge v{}", env!("CARGO_PKG_VERSION"));
 
     let cfg = config::load().unwrap_or_default();
     if !cfg.setup_complete {
@@ -66,6 +67,15 @@ async fn supervisor_loop(
             info.unique_id_short,
             disc_start.elapsed().as_secs(),
         );
+        journal!(
+            "run",
+            "discovered Pico {peer} fw v{}.{}.{} uid 0x{:08X} after {}s",
+            info.fw_major,
+            info.fw_minor,
+            info.fw_patch,
+            info.unique_id_short,
+            disc_start.elapsed().as_secs()
+        );
 
         if info.proto_version != protocol::PROTO_VERSION {
             anyhow::bail!(
@@ -98,10 +108,12 @@ async fn supervisor_loop(
         match network::run(&socket, peer, xinput_rx.clone(), stats_tx.clone()).await {
             network::Exit::PeerLost => {
                 tracing::warn!("peer lost, returning to discovery");
+                journal!("run", "peer {peer} lost; returning to discovery");
                 continue;
             }
             network::Exit::Io(e) => {
                 tracing::error!("network error: {e}");
+                journal!("run", "network error against {peer}: {e}");
                 return Err(e.into());
             }
         }

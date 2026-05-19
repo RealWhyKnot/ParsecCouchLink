@@ -35,10 +35,11 @@
 //   [7] xPSR
 __attribute__((used))
 static void fault_handler_c(uint32_t *frame) {
-    uint32_t pc   = frame[6];
-    uint32_t lr   = frame[5];
-    uint32_t xpsr = frame[7];
-    reset_reason_record_fault(pc, lr, xpsr);
+    // Record the entire stacked basic frame plus the stack pointer
+    // value at the time of the fault. reset_reason_record_fault peeks
+    // at the Cortex-M33 SCB->CFSR/HFSR/MMFAR/BFAR internally when the
+    // build targets RP2350.
+    reset_reason_record_fault(frame, (uint32_t)frame);
     // Trigger SCB system-reset. The compiler may not have a barrier
     // around the volatile write, so an explicit dsb is added.
     volatile uint32_t *aircr = (volatile uint32_t *)SCB_AIRCR_ADDR;

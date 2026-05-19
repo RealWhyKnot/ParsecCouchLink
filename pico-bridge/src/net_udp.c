@@ -75,6 +75,8 @@ static ip_addr_t peer_addr;
 static u16_t     peer_port;
 static absolute_time_t next_keepalive;
 static uint32_t  uid_short;
+static uint32_t  tx_count;   // ack + keepalive + log-chunk datagrams sent
+static uint32_t  rx_count;   // received datagrams (including malformed)
 
 // CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
 static uint8_t crc8(const uint8_t *data, size_t n) {
@@ -150,6 +152,7 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     if (e != ERR_OK) {
         diag_log_printf("net_udp: ack send err=%d (%s)", (int)e, lwip_err_name(e));
     } else {
+        tx_count++;
         diag_log_printf("net_udp: ack -> %u.%u.%u.%u:%u (in_seq=%u)",
                         ip4_addr1(ip_2_ip4(to_addr)),
                         ip4_addr2(ip_2_ip4(to_addr)),
@@ -228,6 +231,7 @@ static void send_log_chunks(const ip_addr_t *to_addr, u16_t to_port,
                             (unsigned)i, (int)e, lwip_err_name(e));
             return;
         }
+        tx_count++;
     }
 }
 
@@ -247,6 +251,7 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p,
                     const ip_addr_t *addr, u16_t port) {
     (void)arg; (void)pcb_in;
     if (!p) return;
+    rx_count++;
     // Use tot_len, not len: a chained pbuf has len < tot_len. Copy into a
     // contiguous local buffer rather than reading p->payload directly so we
     // never read past the first segment of a chain.
@@ -311,8 +316,14 @@ static void send_keepalive(void) {
     if (e != ERR_OK) {
         diag_log_printf("net_udp: keepalive send err=%d (%s)",
                         (int)e, lwip_err_name(e));
+    } else {
+        tx_count++;
     }
 }
+
+bool     net_udp_has_peer(void) { return have_peer; }
+uint32_t net_udp_tx_count(void) { return tx_count; }
+uint32_t net_udp_rx_count(void) { return rx_count; }
 
 bool net_udp_init(void) {
     pcb = udp_new();

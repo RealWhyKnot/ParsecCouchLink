@@ -19,10 +19,16 @@ use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
 use crate::protocol::{self, LogChunk, Packet, PacketKind, ACK_FLAG_LOG_CHUNK_SUPPORTED};
-use crate::{cdc, config};
+use crate::{cdc, config, journal};
 
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
+    journal!("bundle", "run started");
     let diag = capture_pico_diag().await;
+    journal!(
+        "bundle",
+        "diag capture outcome: {}",
+        diag.discriminant_str()
+    );
     let pico_diag_captured = matches!(diag, DiagOutcome::Captured { .. });
     let pico_diag_lost_bytes = diag.lost_bytes();
     let pico_diag_outcome = diag.discriminant_str().to_string();
@@ -38,6 +44,9 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
         .map(|(_, m)| (*m).to_string())
         .unwrap_or_else(|| "none".to_string());
 
+    let usb_events = capture_windows_usb_events().await;
+    let usb_events_captured = usb_events.is_some();
+
     let system_info = build_system_info().await;
 
     let manifest = build_manifest(
@@ -47,6 +56,7 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
         pico_diag_source.as_deref(),
         usb_devices_captured,
         &usb_capture_method,
+        usb_events_captured,
         &crash_files,
         &setup_transcripts,
     )
@@ -97,6 +107,26 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
             b"(USB device enumeration unavailable: pnputil is missing AND the serialport \
               fallback returned an error. Run `pnputil /enum-devices /class USB /connected` \
               manually and attach the output.)",
+        )?;
+    }
+
+    // usb-events.txt: recent OS-level USB events from the Windows event
+    // log. Catches the class of failure that pnputil can't show -- driver
+    // bind failures, descriptor request timeouts, surprise removals --
+    // because those events surface in the System log via the usbhub /
+    // usbser / Kernel-PnP providers rather than in the pnputil snapshot.
+    if let Some(text) = usb_events.as_ref() {
+        zip.start_file("usb-events.txt", opts)?;
+        zip.write_all(b"# Windows event log entries from the last 15 minutes\n")?;
+        zip.write_all(b"# filtered to USB / usbhub / usbser / Kernel-PnP providers\n\n")?;
+        zip.write_all(text.as_bytes())?;
+    } else {
+        zip.start_file("usb-events.txt", opts)?;
+        zip.write_all(
+            b"(Get-WinEvent returned no output -- either no recent USB events were \
+              recorded, the Windows PowerShell event log cmdlet timed out, or the \
+              capture script returned an error. This is not necessarily a problem; \
+              uneventful enumeration leaves no trace.)",
         )?;
     }
 
@@ -159,6 +189,22 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     if let Ok(log_dir) = config::log_dir() {
         bundle_log_prefix(&log_dir, "couchlink.", &mut zip, opts)?;
         bundle_log_prefix(&log_dir, "setup-", &mut zip, opts)?;
+    }
+
+    // State journal: short append-only timeline of bridge events. The
+    // rotating log has full detail; the journal has the headlines.
+    if let Some(jp) = journal::path() {
+        if jp.is_file() {
+            match std::fs::read(&jp) {
+                Ok(bytes) => {
+                    zip.start_file("state-journal.log", opts)?;
+                    zip.write_all(&bytes)?;
+                }
+                Err(e) => {
+                    tracing::debug!("bundle: could not read state journal: {e}");
+                }
+            }
+        }
     }
 
     zip.finish()?;
@@ -359,6 +405,7 @@ struct Manifest {
     pico_diag_source: Option<String>,
     usb_devices_captured: bool,
     usb_capture_method: String,
+    usb_events_captured: bool,
     crash_files: Vec<String>,
     setup_transcripts: Vec<String>,
     notes: Vec<&'static str>,
@@ -372,6 +419,7 @@ async fn build_manifest(
     pico_diag_source: Option<&str>,
     usb_devices_captured: bool,
     usb_capture_method: &str,
+    usb_events_captured: bool,
     crash_files: &[String],
     setup_transcripts: &[String],
 ) -> Result<Manifest> {
@@ -398,6 +446,7 @@ async fn build_manifest(
         pico_diag_source: pico_diag_source.map(|s| s.to_string()),
         usb_devices_captured,
         usb_capture_method: usb_capture_method.to_string(),
+        usb_events_captured,
         crash_files: crash_files.to_vec(),
         setup_transcripts: setup_transcripts.to_vec(),
         notes: vec![
@@ -527,11 +576,15 @@ impl DiagOutcome {
         }
     }
 
-    /// Body of pico-diag.txt for this outcome. The Captured/Empty paths
-    /// produce the operator-facing log text; every failure variant
-    /// names the specific step that broke so an operator can tell a
-    /// "no Pico found" from a "port opened, HELLO timed out" from a
-    /// "running Pico answered but doesn't speak the new protocol".
+    /// Body of pico-diag.txt for this outcome.
+    ///
+    /// On the Captured path the body is the firmware diag log itself.
+    /// On every failure path the body has a two-section layout: a
+    /// `Suggested next step` block leading with the most likely cause
+    /// and an ordered list of things to try, followed by a `Diagnostic
+    /// details` block with the raw captured fields. The order is
+    /// intentional -- an operator reading the file top-down hits an
+    /// action before they hit jargon.
     fn stub_text(&self) -> String {
         match self {
             DiagOutcome::Captured { text, lost, source } => {
@@ -545,27 +598,47 @@ impl DiagOutcome {
                 };
                 format!("{prefix}{text}")
             }
-            DiagOutcome::Empty { source } => format!(
-                "(firmware diag ring was empty when bundle ran -- the Pico was \
-                 reachable via {} but had no log entries. Usually the Pico \
-                 rebooted between the failure and bundle. If the failure was \
-                 at boot, re-run the failing command and immediately run bundle \
-                 while the Pico is still in the same state.)",
-                source.describe(),
+            DiagOutcome::Empty { source } => stub_failure(
+                "Pico answered, but its diag ring was empty.",
+                &[
+                    "Re-run the failing command and immediately run bundle while \
+                     the Pico is still in the same state. If the failure was at \
+                     boot, the reboot between the failure and bundle wiped the \
+                     in-RAM ring.",
+                    "If this is reproducible, attach a bug report -- an \
+                     answering-but-empty Pico is unusual.",
+                ],
+                &[("source", &source.describe())],
             ),
-            DiagOutcome::NoSetupPort => "(no setup-mode Pico found over USB-CDC \
-                 -- nothing enumerated with VID 0x2E8A PID 0xCAF0. \
-                 Bundle also has no last-known run-mode address in config to \
-                 fall back to, OR the run-mode Pico did not answer. Re-plug \
-                 the Pico while holding BOOTSEL, flash with `flash.ps1`, \
-                 wait for it to come back as a setup-mode serial device, then \
-                 run bundle. See logs/couchlink.*.log for what the bridge tried.)"
-                .to_string(),
-            DiagOutcome::SetupOpenFailed { error } => format!(
-                "(setup-mode Pico was visible but the bridge could not open \
-                 the serial port: {error}. Another app may be holding the COM \
-                 port -- close any open serial terminals and re-run bundle. \
-                 See logs/couchlink.*.log for the open call details.)",
+            DiagOutcome::NoSetupPort => stub_failure(
+                "No setup-mode Pico found, and no last-known run-mode Pico to \
+                 fall back to.",
+                &[
+                    "Unplug the Pico. Hold BOOTSEL while plugging it back in. \
+                     Wait until Windows shows a RPI-RP2 or RP2350 drive in File \
+                     Explorer.",
+                    "Run `flash.ps1` (or `couchlink.exe flash`) to copy the \
+                     matching UF2 onto the drive.",
+                    "Once the Pico reboots into setup mode (it should appear as \
+                     a new COM port within ~5 seconds), re-run this bundle.",
+                    "If no COM port shows up at all, try a different micro-USB \
+                     DATA cable (charge-only cables fail) or a different USB \
+                     port on the PC.",
+                ],
+                &[("looking_for_vid_pid", "0x2E8A:0xCAF0")],
+            ),
+            DiagOutcome::SetupOpenFailed { error } => stub_failure(
+                "Pico is enumerated, but the bridge could not open its COM port.",
+                &[
+                    "Another application is probably holding the port. Close any \
+                     open serial terminals (PuTTY, Tera Term, Arduino Serial \
+                     Monitor, screen, minicom) and re-run.",
+                    "If no app is open, unplug + replug the Pico and re-run.",
+                    "If the error mentions ACCESS_DENIED specifically, a Windows \
+                     driver may have failed to bind; check Device Manager for a \
+                     yellow exclamation mark on the Pico's entry.",
+                ],
+                &[("error", error)],
             ),
             DiagOutcome::SetupProbeFailed {
                 port,
@@ -574,31 +647,47 @@ impl DiagOutcome {
                 bytes_received,
                 rx_first_32_hex,
                 error,
-            } => format!(
-                "(setup-mode CDC port {port} opened but the HELLO probe failed \
-                 at step `{step}` after {elapsed_ms} ms with {bytes_received} \
-                 bytes received (first 32 = {rx_first_32_hex}). Error: {error}. \
-                 Interpretation: `write` failure = the bridge could not send the \
-                 HELLO frame to the firmware. `read` failure with 0 received \
-                 bytes = the firmware enumerated USB but is not running its \
-                 CDC poll loop (likely an early-boot fault or stuck init). \
-                 `read` failure with non-zero received bytes = the firmware is \
-                 mis-framing -- the hex above is what it actually put on the \
-                 wire. `decode` failure = the frame arrived but was the wrong \
-                 shape, indicating a protocol version mismatch.)"
+            } => {
+                let (root, steps) = setup_probe_failed_diagnosis(step, *bytes_received);
+                stub_failure(
+                    root,
+                    steps,
+                    &[
+                        ("port", port),
+                        ("step", step),
+                        ("elapsed_ms", &elapsed_ms.to_string()),
+                        ("bytes_received", &bytes_received.to_string()),
+                        ("rx_first_32_hex", rx_first_32_hex),
+                        ("error", error),
+                    ],
+                )
+            }
+            DiagOutcome::NoLastPicoInConfig => stub_failure(
+                "No setup-mode Pico found, and no run-mode Pico has ever been \
+                 seen by this bridge installation.",
+                &[
+                    "Run `couchlink setup` to provision a Pico (flash + Wi-Fi).",
+                    "Or, if a Pico is already running on your LAN, run \
+                     `couchlink doctor` -- if discovery succeeds it will be \
+                     recorded in config and the next bundle can probe it.",
+                ],
+                &[],
             ),
-            DiagOutcome::NoLastPicoInConfig => "(no setup-mode Pico found AND \
-                 no last-known Pico recorded in config -- the bridge has \
-                 nowhere to look on the LAN. Run `couchlink setup` to provision \
-                 a Pico, or `couchlink doctor` to do a fresh discovery, then \
-                 re-run bundle.)"
-                .to_string(),
-            DiagOutcome::UdpDiscoveryFailed { reason } => format!(
-                "(no setup-mode Pico found; bundle attempted a run-mode UDP \
-                 probe against the last known address but it did not answer: \
-                 {reason}. The Pico may be off, on a different network, or \
-                 the host firewall may be blocking UDP/4242. Run \
-                 `couchlink doctor` to diagnose discovery, then re-run bundle.)"
+            DiagOutcome::UdpDiscoveryFailed { reason } => stub_failure(
+                "Bundle tried a run-mode UDP probe but the Pico did not answer.",
+                &[
+                    "Confirm the Pico is powered on, plugged into the USB4MAPLE \
+                     (or equivalent), and within Wi-Fi range of the AP it was \
+                     provisioned against.",
+                    "If you have changed Wi-Fi networks since setup, the saved \
+                     credentials are now stale. Hold BOOTSEL for 3+ seconds \
+                     during plug-in to wipe the saved creds, then re-run \
+                     `couchlink setup`.",
+                    "If you have multiple network adapters, make sure the bridge \
+                     is allowed through Windows Firewall on the active profile. \
+                     `couchlink doctor` will surface a firewall mismatch.",
+                ],
+                &[("error", reason)],
             ),
             DiagOutcome::UdpProbeFailed {
                 peer,
@@ -606,25 +695,190 @@ impl DiagOutcome {
                 elapsed_ms,
                 chunks_received,
                 error,
-            } => format!(
-                "(run-mode UDP probe against {peer} failed at step `{step}` \
-                 after {elapsed_ms} ms with {chunks_received} chunk(s) received. \
-                 Error: {error}. The Pico answered the initial discovery so \
-                 it is alive on the LAN, but the CMD_GET_LOG path did not \
-                 complete. See logs/couchlink.*.log for per-step details.)"
+            } => stub_failure(
+                "Pico answered initial discovery but the CMD_GET_LOG exchange \
+                 did not complete.",
+                &[
+                    "The Pico is alive on the LAN -- it answered discovery -- \
+                     but either the request did not reach it or its reply did \
+                     not reach us. Run `couchlink bundle` again; transient \
+                     packet loss is the most likely cause.",
+                    "If it persists across multiple bundle attempts, check \
+                     whether anything on the network is doing aggressive packet \
+                     inspection (some corporate firewalls drop unknown UDP \
+                     types).",
+                ],
+                &[
+                    ("peer", &peer.to_string()),
+                    ("step", step),
+                    ("elapsed_ms", &elapsed_ms.to_string()),
+                    ("chunks_received", &chunks_received.to_string()),
+                    ("error", error),
+                ],
             ),
-            DiagOutcome::UdpUnsupported { peer } => format!(
-                "(run-mode Pico at {peer} answered discovery but does NOT \
-                 advertise the LogChunk capability (ACK flags bit 0 clear). \
-                 This firmware is older than v2026.5.16.6 and only exposes \
-                 its diag ring through setup-mode USB-CDC. To capture diag \
-                 from this Pico, hold BOOTSEL, plug it into this PC, flash \
-                 `couchlink-picow.uf2` or `couchlink-pico2w.uf2`, wait for \
-                 setup-mode serial enumeration, then re-run bundle. To get \
-                 UDP-side diag in future, flash this Pico with a newer \
-                 firmware.)"
+            DiagOutcome::UdpUnsupported { peer } => stub_failure(
+                "Pico is reachable on the LAN but is running pre-LogChunk \
+                 firmware.",
+                &[
+                    "The Pico answered discovery, but its ACK does not advertise \
+                     the LogChunk capability bit. The firmware predates the \
+                     run-mode diag pull.",
+                    "Hold BOOTSEL while plugging the Pico into this PC, then \
+                     flash with `flash.ps1`. The new firmware advertises the \
+                     bit and the next bundle will UDP-pull diag automatically.",
+                    "If you cannot reflash right now, the bridge log at \
+                     %LOCALAPPDATA%\\ParsecCouchLink\\data\\logs has \
+                     bridge-side telemetry that does not depend on the firmware.",
+                ],
+                &[("peer", &peer.to_string())],
             ),
         }
+    }
+}
+
+/// Format a self-diagnosing stub body. Leads with a one-sentence root
+/// cause, then a numbered "Try this" list, then a `Diagnostic details`
+/// block with the captured fields verbatim.
+fn stub_failure(root_cause: &str, steps: &[&str], fields: &[(&str, &str)]) -> String {
+    let mut out = String::new();
+    out.push_str("=== Suggested next step ===\n");
+    out.push_str(root_cause);
+    out.push('\n');
+    out.push('\n');
+    out.push_str("Try this (in order):\n");
+    for (i, s) in steps.iter().enumerate() {
+        out.push_str(&format!("  {}. {}\n", i + 1, soft_wrap(s, 78, "     ")));
+    }
+    if !fields.is_empty() {
+        out.push('\n');
+        out.push_str("=== Diagnostic details ===\n");
+        for (k, v) in fields {
+            out.push_str(&format!("  {k}: {v}\n"));
+        }
+    }
+    out
+}
+
+/// Wraps `text` so each line stays under `width` columns; continuation
+/// lines are indented by `indent`. Whitespace-only sequences in the
+/// input become single spaces.
+fn soft_wrap(text: &str, width: usize, indent: &str) -> String {
+    let mut out = String::new();
+    let mut line_len = 0;
+    for word in text.split_whitespace() {
+        if line_len == 0 {
+            out.push_str(word);
+            line_len = word.len();
+            continue;
+        }
+        if line_len + 1 + word.len() > width {
+            out.push('\n');
+            out.push_str(indent);
+            out.push_str(word);
+            line_len = indent.len() + word.len();
+        } else {
+            out.push(' ');
+            out.push_str(word);
+            line_len += 1 + word.len();
+        }
+    }
+    out
+}
+
+/// Map a HELLO-probe failure shape to root cause + remediation list.
+/// Most of the diagnostic value of the new bundle is concentrated
+/// here: when the operator opens pico-diag.txt this is what they read
+/// first.
+fn setup_probe_failed_diagnosis(
+    step: &str,
+    bytes_received: usize,
+) -> (&'static str, &'static [&'static str]) {
+    static WRITE: &[&str] = &[
+        "Unplug the Pico and plug it back in (no BOOTSEL).",
+        "If the COM port re-appears but the bridge still fails, the USB \
+         serial driver (usbser.sys) may be in a bad state. Reboot Windows.",
+        "If it still fails, try a different USB port -- preferably one on \
+         the motherboard rather than through a hub.",
+    ];
+    static READ_NO_BYTES: &[&str] = &[
+        "The firmware enumerated USB (Windows sees the COM port) but is not \
+         responding to commands. The most common cause is a fault during \
+         firmware init -- the CDC stack is up enough to enumerate, but the \
+         main poll loop never started.",
+        "Hold BOOTSEL while plugging the Pico in. Run `flash.ps1` to write \
+         a fresh UF2. Re-run setup. The new firmware writes a `boot: \
+         reset-reason=fault` line on the next boot if it crashed; the \
+         bundle then captures WHY it crashed via the new fault context \
+         (PC, LR, xPSR, R0-R3, R12, SP, CFSR on RP2350).",
+        "If a fresh flash still fails: try a different micro-USB DATA cable \
+         (charge-only cables enumerate USB but fail data transfers), or a \
+         different USB port.",
+        "If still failing after cable + port + reflash, this is worth a bug \
+         report. Attach this bundle.",
+    ];
+    static READ_SOME_BYTES: &[&str] = &[
+        "The firmware is alive and writing bytes on the wire, but those \
+         bytes are not a valid HELLO_ACK frame. The hex preview above \
+         shows what it actually said. The most common cause is a version \
+         mismatch between the bridge and the firmware UF2.",
+        "Reflash the Pico with the couchlink-*.uf2 from the SAME release \
+         as the couchlink.exe you are running. Mixing v2026.5.16.x \
+         firmware with v2026.5.16.y bridge is the canonical cause of this \
+         exact shape.",
+        "If the hex preview looks like ASCII text (e.g. starts with `54 \
+         75` = \"Tu...\"), the firmware may be writing diag log lines \
+         directly to CDC instead of framed responses. That is a firmware \
+         bug; attach this bundle.",
+    ];
+    static DECODE: &[&str] = &[
+        "Bytes arrived but the frame header is malformed -- wrong magic, \
+         wrong CRC, or wrong opcode. Almost always a protocol-version \
+         mismatch.",
+        "Make sure the bridge .exe and the firmware .uf2 came from the \
+         same release zip. Re-download the release if unsure.",
+    ];
+    static GET_LOG: &[&str] = &[
+        "HELLO succeeded but the follow-up GET_LOG_BUFFER call failed. The \
+         firmware is responding to commands but not to this one \
+         specifically.",
+        "Most likely the Pico rebooted between HELLO and GET_LOG_BUFFER. \
+         Re-run bundle; it should retry against the post-reboot state.",
+        "If it persists, this is worth a bug report.",
+    ];
+    if step == "write" {
+        (
+            "Bridge could not write the HELLO frame to the firmware.",
+            WRITE,
+        )
+    } else if step == "read" && bytes_received == 0 {
+        (
+            "Firmware enumerated USB but did not write a single byte back \
+             during the 10-second probe.",
+            READ_NO_BYTES,
+        )
+    } else if step == "read" {
+        (
+            "Firmware is alive on the wire but its bytes did not parse as a \
+             HELLO_ACK frame.",
+            READ_SOME_BYTES,
+        )
+    } else if step == "decode" {
+        (
+            "Bytes arrived but did not decode as a valid framed response.",
+            DECODE,
+        )
+    } else if step == "get_log_buffer" {
+        (
+            "HELLO succeeded but the diag-log fetch did not complete.",
+            GET_LOG,
+        )
+    } else {
+        (
+            "HELLO probe failed at an unexpected step.",
+            &["This shape was not anticipated by the self-diagnosis. \
+                 Attach this bundle to a bug report; the captured fields \
+                 below carry enough detail to diagnose offline."],
+        )
     }
 }
 
@@ -667,7 +921,13 @@ async fn try_capture_setup_cdc() -> DiagOutcome {
             }
         };
 
-        let probe = pico.hello_probe();
+        // 10-second deadline (vs. the wizard's 3 s): the bundle is the
+        // "something failed; gather everything" path, so we'd rather
+        // wait for late-arriving bytes from a slow-booting firmware
+        // than declare timeout fast. If the wizard already saw a 3 s
+        // timeout, an extra 7 s here often surfaces a delayed RSP that
+        // would otherwise be invisible.
+        let probe = pico.hello_probe_with_timeout(Duration::from_secs(10));
         if let Err(err) = probe.result.clone() {
             tracing::error!(
                 "bundle: HELLO probe failed at step `{}` after {} ms (rx_bytes={}): {}",
@@ -922,6 +1182,77 @@ async fn capture_usb_devices() -> Option<(String, &'static str)> {
     Some((text, "serialport-fallback"))
 }
 
+/// Last 15 minutes of OS-level USB events from the Windows event log.
+/// Catches driver bind failures, surprise removals, and descriptor
+/// request timeouts -- none of which surface in pnputil's snapshot.
+/// Best-effort: a long-running event log query, a missing PowerShell,
+/// or a permissions denial all return `None` and the bundle records
+/// that the capture failed in the manifest.
+#[cfg(windows)]
+async fn capture_windows_usb_events() -> Option<String> {
+    // Get-WinEvent's `-FilterHashtable` is documented to fail with an
+    // unhelpful "No events were found" message when the filter matches
+    // nothing -- which is normal on a quiet system. Catch that branch
+    // and return an empty string rather than `None` so the bundle
+    // header makes the "uneventful" case obvious to the operator.
+    //
+    // The query is split: System log gets the usbhub / usbser drivers,
+    // and the Kernel-PnP/Configuration log catches the higher-level
+    // bind events. PS 5.1 syntax: no `&&` chaining, no ternary.
+    let ps_cmd = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$start = (Get-Date).AddMinutes(-15)
+$events = @()
+$sys = Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=$start} -MaxEvents 200 2>$null
+if ($sys) {
+    $events += $sys | Where-Object { $_.ProviderName -match '(?i)usb|usbser|usbhub|pnp' }
+}
+$pnp = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Kernel-PnP/Configuration'; StartTime=$start} -MaxEvents 100 2>$null
+if ($pnp) { $events += $pnp }
+if (-not $events -or $events.Count -eq 0) {
+    Write-Output '(no matching events in the last 15 minutes)'
+    exit 0
+}
+$events |
+    Sort-Object TimeCreated |
+    ForEach-Object {
+        $msg = if ($_.Message) { $_.Message.Trim() } else { '' }
+        Write-Output ('[' + $_.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ss.fff') + '] ' + $_.LevelDisplayName + ' ' + $_.ProviderName + '/' + $_.Id)
+        Write-Output ('  ' + ($msg -replace "`r?`n", "`n  "))
+        Write-Output ''
+    }
+"#;
+    // 30-second cap: Get-WinEvent against System on a busy machine can
+    // be slow, and we'd rather skip than hang the bundle indefinitely.
+    let fut = tokio::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
+        .output();
+    let out = match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => {
+            tracing::debug!("bundle: powershell spawn for usb events failed: {e}");
+            return None;
+        }
+        Err(_) => {
+            tracing::debug!("bundle: usb events query timed out after 30 s");
+            return None;
+        }
+    };
+    if !out.status.success() {
+        tracing::debug!(
+            "bundle: powershell exit {} for usb events",
+            out.status.code().unwrap_or(-1)
+        );
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+#[cfg(not(windows))]
+async fn capture_windows_usb_events() -> Option<String> {
+    None
+}
+
 #[cfg(windows)]
 async fn pnputil_enum_usb() -> Option<String> {
     let out = tokio::process::Command::new("pnputil.exe")
@@ -1162,13 +1493,33 @@ mod tests {
             error: "timed out".into(),
         };
         let stub = out.stub_text();
-        assert!(stub.contains("COM3"));
-        assert!(stub.contains("`read`"));
-        assert!(stub.contains("3012 ms"));
-        assert!(stub.contains("0 bytes received"));
-        // Specifically check the operator-facing hint for the read+0 case
-        // is present (this is the most common reproduction shape).
-        assert!(stub.contains("not running its CDC poll loop"));
+        // Lead section is the operator-facing "Suggested next step";
+        // the captured fields appear in the trailing Diagnostic block.
+        assert!(
+            stub.contains("=== Suggested next step ==="),
+            "no header: {stub}"
+        );
+        assert!(stub.contains("Try this (in order):"), "no try list: {stub}");
+        assert!(
+            stub.contains("=== Diagnostic details ==="),
+            "no detail block: {stub}"
+        );
+        assert!(stub.contains("port: COM3"), "missing port field: {stub}");
+        assert!(stub.contains("step: read"), "missing step field: {stub}");
+        assert!(
+            stub.contains("elapsed_ms: 3012"),
+            "missing elapsed field: {stub}"
+        );
+        assert!(
+            stub.contains("bytes_received: 0"),
+            "missing bytes_received field: {stub}"
+        );
+        // The read+0 case is the most common reproduction shape and should
+        // lead with a fault-during-init story.
+        assert!(
+            stub.contains("did not write a single byte"),
+            "missing read+0 lead: {stub}"
+        );
     }
 
     #[test]
@@ -1176,7 +1527,13 @@ mod tests {
         let out = DiagOutcome::UdpUnsupported { peer: make_peer() };
         let stub = out.stub_text();
         assert!(stub.contains("10.0.0.24:4242"));
-        assert!(stub.contains("ACK flags bit 0 clear"));
+        // soft_wrap can break "LogChunk capability bit" across a line,
+        // so check for the unbreakable token only.
+        assert!(
+            stub.contains("LogChunk"),
+            "missing capability mention: {stub}"
+        );
+        assert!(stub.contains("peer: 10.0.0.24:4242"));
     }
 
     #[test]
@@ -1190,8 +1547,8 @@ mod tests {
         };
         let stub = out.stub_text();
         assert!(stub.contains("10.0.0.24:4242"));
-        assert!(stub.contains("`recv_chunk`"));
-        assert!(stub.contains("3 chunk(s)"));
+        assert!(stub.contains("step: recv_chunk"));
+        assert!(stub.contains("chunks_received: 3"));
     }
 
     /// `source_str` returns the manifest-facing source for captured/empty

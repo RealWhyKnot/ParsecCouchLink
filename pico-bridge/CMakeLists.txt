@@ -22,6 +22,7 @@ add_executable(pico_bridge
     src/diag_log.c
     src/fault_handler.c
     src/flash_creds.c
+    src/heartbeat.c
     src/net_udp.c
     src/reset_reason.c
     src/usb_descriptors.c

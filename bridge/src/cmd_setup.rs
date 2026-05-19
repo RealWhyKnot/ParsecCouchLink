@@ -16,9 +16,10 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
 use tokio::net::UdpSocket;
 use zeroize::Zeroize;
 
-use crate::{cdc, config, protocol};
+use crate::{cdc, config, journal, protocol};
 
 pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
+    journal!("setup", "wizard started");
     println!("couchlink setup");
     println!();
     println!(
@@ -59,6 +60,7 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
 async fn stage_preflight() -> Result<()> {
     println!("[1/7] Pre-flight");
     tracing::info!("setup: stage 1/7 -- pre-flight");
+    journal!("setup", "stage 1/7 pre-flight");
     config::ensure_dirs().context("creating config/log dirs")?;
     println!("  config dir: {}", config::config_dir()?.display());
     println!("  log dir:    {}", config::log_dir()?.display());
@@ -70,6 +72,10 @@ async fn stage_preflight() -> Result<()> {
     )
     .await?;
     if !ok {
+        journal!(
+            "setup",
+            "aborted at pre-flight (operator declined readiness check)"
+        );
         bail!("setup aborted at pre-flight");
     }
     Ok(())
@@ -142,6 +148,7 @@ async fn stage_wifi_provisioning() -> Result<()> {
     println!();
     println!("[4/7] Wi-Fi provisioning over USB-CDC");
     tracing::info!("setup: stage 4/7 -- Wi-Fi provisioning");
+    journal!("setup", "stage 4/7 Wi-Fi provisioning over USB-CDC");
     println!(
         "  Wait a few seconds for the Pico to come back as a USB serial device, \
          then continue."
@@ -152,6 +159,7 @@ async fn stage_wifi_provisioning() -> Result<()> {
         .context("Pico did not appear as a USB serial device")?;
     println!("  Pico in setup mode on {port}");
     tracing::info!("setup: setup-mode CDC port found at {port}");
+    journal!("setup", "setup-mode CDC port enumerated at {port}");
 
     let mut pico = cdc::PicoSetup::open_named(&port).context("opening CDC port for setup")?;
     let hello = pico.hello().context("CDC HELLO failed")?;

@@ -9,6 +9,7 @@ mod cmd_setup;
 mod cmd_test;
 mod config;
 mod discovery;
+mod journal;
 mod known_folders;
 mod logfile;
 mod network;
@@ -91,6 +92,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    journal::init();
     install_panic_hook();
 
     let rt = match tokio::runtime::Builder::new_multi_thread()

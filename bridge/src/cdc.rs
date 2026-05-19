@@ -234,9 +234,13 @@ impl PicoSetup {
     }
 
     fn read_one_frame(&mut self) -> Result<Frame> {
+        self.read_one_frame_with_timeout(Duration::from_secs(3))
+    }
+
+    fn read_one_frame_with_timeout(&mut self, timeout: Duration) -> Result<Frame> {
         let mut buf = Vec::with_capacity(MAX_FRAME);
         let started = Instant::now();
-        let deadline = started + Duration::from_secs(3);
+        let deadline = started + timeout;
         loop {
             let mut tmp = [0u8; 256];
             match self.port.read(&mut tmp) {
@@ -250,17 +254,26 @@ impl PicoSetup {
                         // gave up after 0 bytes" vs "the bridge gave
                         // up after 12 bytes of UART noise".
                         let head: Vec<u8> = buf.iter().take(32).copied().collect();
+                        let hex_str = if head.is_empty() {
+                            "none".to_string()
+                        } else {
+                            format_hex(&head)
+                        };
                         tracing::error!(
                             "cdc: read timeout on {port} after {elapsed} ms with \
                              {n} bytes received (first 32 = {hex})",
                             port = self.port_name,
                             elapsed = started.elapsed().as_millis(),
                             n = buf.len(),
-                            hex = if head.is_empty() {
-                                "none".to_string()
-                            } else {
-                                format_hex(&head)
-                            },
+                            hex = hex_str,
+                        );
+                        crate::journal!(
+                            "cdc",
+                            "read timeout on {} after {} ms; rx_bytes={} first32={}",
+                            self.port_name,
+                            started.elapsed().as_millis(),
+                            buf.len(),
+                            hex_str
                         );
                         bail!("timed out waiting for Pico response");
                     }
@@ -343,6 +356,14 @@ impl PicoSetup {
     /// "firmware responded but we mis-decoded" without reading the bridge
     /// log. Used by `cmd_bundle::capture_pico_diag()`.
     pub fn hello_probe(&mut self) -> HelloProbe {
+        self.hello_probe_with_timeout(Duration::from_secs(3))
+    }
+
+    /// Like `hello_probe()` but with a configurable read timeout. The
+    /// bundle uses this with a longer deadline (10 s) so we capture
+    /// late-arriving bytes from a slowly-booting firmware -- not all
+    /// bringup paths complete inside the 3 s wizard budget.
+    pub fn hello_probe_with_timeout(&mut self, read_timeout: Duration) -> HelloProbe {
         let started = Instant::now();
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
@@ -365,16 +386,18 @@ impl PicoSetup {
         }
         let write_elapsed = write_start.elapsed();
         tracing::info!(
-            "cdc: probe wrote HELLO frame on {} ({} bytes in {} ms)",
+            "cdc: probe wrote HELLO frame on {} ({} bytes in {} ms, read deadline {} ms)",
             self.port_name,
             frame.len(),
             write_elapsed.as_millis(),
+            read_timeout.as_millis(),
         );
 
         // Reuse the same read loop so we capture exactly what the bridge
-        // would see during a real HELLO. read_one_frame already emits the
-        // timeout / drained-bytes traces, which is what we want.
-        match self.read_one_frame() {
+        // would see during a real HELLO. read_one_frame_with_timeout
+        // emits the timeout / drained-bytes traces, which is what we
+        // want.
+        match self.read_one_frame_with_timeout(read_timeout) {
             Ok(resp) => {
                 if resp.command != RSP_HELLO {
                     return HelloProbe {
@@ -692,20 +715,38 @@ fn open_and_assert(port_name: &str) -> Result<PicoSetup> {
     let mut port = serialport::new(port_name, 1_000_000)
         .timeout(Duration::from_millis(500))
         .open()
-        .with_context(|| format!("opening serial port {port_name}"))?;
+        .with_context(|| {
+            crate::journal!("cdc", "open {port_name} failed");
+            format!("opening serial port {port_name}")
+        })?;
+    crate::journal!("cdc", "opened {port_name} @ 1Mbaud, 500ms read timeout");
 
-    match port.write_data_terminal_ready(true) {
-        Ok(()) => tracing::info!("cdc: asserted DTR on {port_name}"),
-        Err(e) => {
-            tracing::warn!("cdc: could not assert DTR on {port_name}: {e:?} -- HELLO may time out")
+    let dtr_ok = match port.write_data_terminal_ready(true) {
+        Ok(()) => {
+            tracing::info!("cdc: asserted DTR on {port_name}");
+            true
         }
-    }
-    match port.write_request_to_send(true) {
-        Ok(()) => tracing::info!("cdc: asserted RTS on {port_name}"),
         Err(e) => {
-            tracing::warn!("cdc: could not assert RTS on {port_name}: {e:?} -- usually harmless")
+            tracing::warn!("cdc: could not assert DTR on {port_name}: {e:?} -- HELLO may time out");
+            false
         }
-    }
+    };
+    let rts_ok = match port.write_request_to_send(true) {
+        Ok(()) => {
+            tracing::info!("cdc: asserted RTS on {port_name}");
+            true
+        }
+        Err(e) => {
+            tracing::warn!("cdc: could not assert RTS on {port_name}: {e:?} -- usually harmless");
+            false
+        }
+    };
+    crate::journal!(
+        "cdc",
+        "{port_name} line driven dtr={} rts={}",
+        if dtr_ok { "ok" } else { "FAIL" },
+        if rts_ok { "ok" } else { "FAIL" }
+    );
 
     Ok(PicoSetup {
         port,

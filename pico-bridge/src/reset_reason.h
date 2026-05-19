@@ -47,9 +47,29 @@ typedef enum {
 
 typedef struct {
     reset_reason_t reason;
+    // The three "always-available" registers, persisted via watchdog
+    // scratch so they survive even when the larger breadcrumb does not
+    // (RP2350 RUN-pin reset).
     uint32_t fault_pc;                                  // valid only when reason == RESET_REASON_FAULT
     uint32_t fault_lr;
     uint32_t fault_xpsr;
+    // The rest of the hardware-stacked basic exception frame plus the
+    // pre-fault stack pointer, persisted via the CRC'd breadcrumb in
+    // __uninitialized_ram. Valid when the next boot found the breadcrumb
+    // intact (most watchdog/SCB-reset cases on both chips; not RP2350
+    // RUN-pin reset per pico-sdk #2203).
+    bool     full_frame_valid;
+    uint32_t fault_r0, fault_r1, fault_r2, fault_r3, fault_r12;
+    uint32_t fault_sp;
+    // Cortex-M33 fault status registers (CFSR / HFSR / MMFAR / BFAR).
+    // Only the M33 stacks these; RP2040's Cortex-M0+ has neither the
+    // CFSR nor the granular fault vectors, so these stay false/zero on
+    // RP2040.
+    bool     fault_status_valid;
+    uint32_t fault_cfsr;
+    uint32_t fault_hfsr;
+    uint32_t fault_mmfar;
+    uint32_t fault_bfar;
     bool     last_line_valid;
     char     last_line[RESET_REASON_LAST_LINE_CAP];     // most recent diag_log line before the fault
 } reset_reason_info_t;
@@ -73,4 +93,13 @@ void reset_reason_mark_main_loop_entered(void);
 // disabled). Writes scratch[0..3] + the breadcrumb so the next boot
 // can report what happened. Returns control; the caller is
 // responsible for triggering the reset afterward.
-void reset_reason_record_fault(uint32_t pc, uint32_t lr, uint32_t xpsr);
+//
+// `frame` points at the hardware-stacked basic exception frame:
+//   frame[0..3] = R0..R3
+//   frame[4]    = R12
+//   frame[5]    = LR (the return address into the interrupted function)
+//   frame[6]    = PC (the instruction that faulted)
+//   frame[7]    = xPSR
+// `sp_at_fault` is the stack pointer value at the time the hardware
+// began stacking the frame -- i.e. the address of `frame[0]`.
+void reset_reason_record_fault(const uint32_t *frame, uint32_t sp_at_fault);
