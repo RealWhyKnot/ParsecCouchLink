@@ -8,6 +8,7 @@ mod cmd_run;
 mod cmd_setup;
 mod cmd_test;
 mod config;
+mod diag_usb;
 mod discovery;
 mod journal;
 mod known_folders;

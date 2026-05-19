@@ -1,16 +1,29 @@
 // USB descriptors for both Pico personas:
 //
-//   setup mode: CDC ACM (Raspberry Pi VID 0x2E8A, PID 0xCAF0)
+//   setup mode: CDC ACM + WinUSB diag (Raspberry Pi VID 0x2E8A, PID 0xCAF0)
 //   run mode:   wired Xbox 360 / XUSB (Microsoft VID 0x045E, PID 0x028E)
 //
-// Only one persona is presented at a time. `g_boot_mode` is set BEFORE
-// TinyUSB initialises, so by the time the host enumerates and the
-// callbacks below fire, the choice is already locked.
+// Only one persona is presented at a time. tusb_init() runs first to
+// satisfy the IRQ-vector prerequisite, but main() immediately holds
+// D+ low with tud_disconnect() until boot_mode_decide() returns, then
+// raises D+ with tud_connect(). The host therefore sees a single
+// connect event AFTER boot_mode_current() reports the final mode, so
+// the descriptor callbacks below always return the correct persona on
+// first enumeration -- no re-enumeration race.
+//
+// Setup mode's CDC composite carries a third interface (interface 2,
+// vendor-class, no endpoints) that Windows binds to WinUSB via the MS
+// OS 2.0 descriptor set further down. The host reads the diag log via
+// a vendor control transfer on EP0; this works regardless of the CDC
+// bulk endpoint state, breaking the catch-22 where a wedged CDC FIFO
+// blocked diag retrieval.
 //
 // The XInput descriptor + magic 17-byte unknown descriptor are lifted
 // from Ryzee119/tusb_xinput (MIT). The 17-byte unknown descriptor is
 // required for Windows xusb22.sys to accept the device as a wired Xbox
-// 360 controller.
+// 360 controller. The XInput persona deliberately does NOT carry the
+// vendor diag interface -- xusb22.sys binding is fragile with respect
+// to extra interfaces, and run mode has UDP TYPE_GET_LOG for diag.
 
 #include <stdint.h>
 #include <string.h>
@@ -83,11 +96,12 @@ uint8_t const *tud_descriptor_device_cb(void) {
                              : &desc_device_cdc);
 }
 
-// -------- setup mode: CDC configuration --------------------------------
+// -------- setup mode: CDC + WinUSB diag configuration ------------------
 
-enum { CDC_ITF_NUM_NOTIF = 0, CDC_ITF_NUM_DATA, CDC_ITF_COUNT };
+enum { CDC_ITF_NUM_NOTIF = 0, CDC_ITF_NUM_DATA, DIAG_ITF_NUM, CDC_ITF_COUNT };
 
-#define CDC_CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
+#define DIAG_VENDOR_DESC_LEN  9  // interface descriptor only, no endpoints
+#define CDC_CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + DIAG_VENDOR_DESC_LEN)
 
 #define CDC_NOTIF_EP_ADDR  0x82
 #define CDC_OUT_EP_ADDR    0x03
@@ -98,6 +112,15 @@ static const uint8_t desc_configuration_cdc[] = {
     TUD_CDC_DESCRIPTOR(CDC_ITF_NUM_NOTIF, 4,
                        CDC_NOTIF_EP_ADDR, 8,
                        CDC_OUT_EP_ADDR, CDC_IN_EP_ADDR, 64),
+
+    // Interface 2: diag vendor interface. Class 0xFF, no endpoints --
+    // the diag log is read via a vendor control transfer on EP0 (see
+    // tud_vendor_control_xfer_cb below). Bound to WinUSB on Windows via
+    // the MS OS 2.0 descriptor set (see further down).
+    9, TUSB_DESC_INTERFACE,
+    DIAG_ITF_NUM, 0, 0,
+    0xFF, 0x00, 0x00,
+    5,  // iInterface = STRID_DIAG_INTERFACE (see string enum below)
 };
 
 // -------- run mode: XInput configuration --------------------------------
@@ -157,16 +180,18 @@ enum {
     STRID_PRODUCT,
     STRID_SERIAL,
     STRID_CDC_INTERFACE,
+    STRID_DIAG_INTERFACE,
 };
 
 static char serial_str[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1];
 
 static const char *const string_desc_arr[] = {
-    [STRID_LANGID]        = (const char[]){0x09, 0x04}, // English (US)
-    [STRID_MANUFACTURER]  = "Parsec CouchLink",
-    [STRID_PRODUCT]       = "CouchLink Pico",
-    [STRID_SERIAL]        = serial_str,
-    [STRID_CDC_INTERFACE] = "Parsec CouchLink Setup",
+    [STRID_LANGID]         = (const char[]){0x09, 0x04}, // English (US)
+    [STRID_MANUFACTURER]   = "Parsec CouchLink",
+    [STRID_PRODUCT]        = "CouchLink Pico",
+    [STRID_SERIAL]         = serial_str,
+    [STRID_CDC_INTERFACE]  = "Parsec CouchLink Setup",
+    [STRID_DIAG_INTERFACE] = "Parsec CouchLink Diag",
 };
 
 // XInput wants Microsoft-y strings so xusb22.sys binds without
@@ -231,6 +256,121 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
     // Discarded: rumble (msg 0x00, len 8) and LED (msg 0x01, len 3).
     // Acked via the read.
     tud_vendor_read_flush();
+}
+
+// -------- diag vendor-class glue (setup mode only) ---------------------
+//
+// In setup mode, interface 2 (DIAG_ITF_NUM) is a vendor-class interface
+// with no bulk endpoints. Windows binds WinUSB to it automatically via
+// the MS OS 2.0 descriptor set below. The host reads the firmware diag
+// ring via a vendor IN control transfer on EP0 -- independent of the
+// CDC bulk endpoint state, so it survives any CDC FIFO wedge. Wire
+// format of the diag transfer matches the CDC CMD_GET_LOG_BUFFER
+// response payload: [lost_bytes_le32][raw_log_bytes].
+
+#define MS_OS_20_VENDOR_REQ_CODE  0x20
+#define MS_OS_20_DESCRIPTOR_INDEX 0x0007
+#define DIAG_GET_LOG_REQ          0x01
+
+#define MS_OS_20_DESC_SET_TOTAL_LEN  38
+
+static const uint8_t desc_ms_os_20[MS_OS_20_DESC_SET_TOTAL_LEN] = {
+    // Set header (10 bytes).
+    0x0A, 0x00,                          // wLength = 10
+    0x00, 0x00,                          // wDescriptorType = SET_HEADER
+    0x00, 0x00, 0x03, 0x06,              // dwWindowsVersion = Windows 8.1+
+    MS_OS_20_DESC_SET_TOTAL_LEN, 0x00,   // wTotalLength
+
+    // Function subset header (8 bytes): scopes the rest of the set to
+    // interface DIAG_ITF_NUM only, so usbser.sys's binding to the CDC
+    // interfaces is unaffected.
+    0x08, 0x00,                          // wLength = 8
+    0x02, 0x00,                          // wDescriptorType = SUBSET_HEADER_FUNCTION
+    DIAG_ITF_NUM,                        // bFirstInterface
+    0x00,                                // bReserved
+    0x14, 0x00,                          // wSubsetLength = 8 + 20 = 28
+
+    // Compatible ID feature descriptor (20 bytes): tells Windows to
+    // bind WinUSB.
+    0x14, 0x00,                          // wLength = 20
+    0x03, 0x00,                          // wDescriptorType = FEATURE_COMPATIBLE_ID
+    'W', 'I', 'N', 'U', 'S', 'B', 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+
+#define BOS_DESC_TOTAL_LEN  (5 + 28)
+
+static const uint8_t desc_bos[BOS_DESC_TOTAL_LEN] = {
+    // BOS header (5 bytes).
+    0x05,                                // bLength
+    0x0F,                                // bDescriptorType = BOS
+    BOS_DESC_TOTAL_LEN, 0x00,            // wTotalLength
+    0x01,                                // bNumDeviceCaps
+
+    // Platform device capability (28 bytes) advertising MS OS 2.0.
+    0x1C,                                // bLength
+    0x10,                                // bDescriptorType = DEVICE_CAPABILITY
+    0x05,                                // bDevCapType = PLATFORM
+    0x00,                                // bReserved
+    // MS OS 2.0 platform-capability UUID: {D8DD60DF-4589-4CC7-9CD2-659D9E648A9F}
+    0xDF, 0x60, 0xDD, 0xD8,
+    0x89, 0x45, 0xC7, 0x4C,
+    0x9C, 0xD2,
+    0x65, 0x9D, 0x9E, 0x64, 0x8A, 0x9F,
+    0x00, 0x00, 0x03, 0x06,              // dwWindowsVersion = Windows 8.1+
+    MS_OS_20_DESC_SET_TOTAL_LEN, 0x00,   // wMSOSDescriptorSetTotalLength
+    MS_OS_20_VENDOR_REQ_CODE,            // bMS_VendorCode
+    0x00,                                // bAltEnumCode
+};
+
+uint8_t const *tud_descriptor_bos_cb(void) {
+    // Only setup mode advertises WinUSB binding. XInput's binding to
+    // xusb22.sys is sensitive to extra descriptors and capability
+    // declarations; run mode skips BOS entirely.
+    if (boot_mode_current() == BOOT_MODE_RUN) return NULL;
+    return desc_bos;
+}
+
+// Static response buffer for GET_DIAG_LOG. Filled in the SETUP stage of
+// the control transfer; TinyUSB chunks it into 64-byte EP0 DATA packets
+// automatically up to req->wLength. Sized to hold [lost_le32] plus the
+// full diag ring (4 KiB).
+static uint8_t diag_xfer_buf[4 + 4096];
+
+bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
+                                tusb_control_request_t const *req) {
+    if (stage != CONTROL_STAGE_SETUP) return true;
+
+    // GET_MS_OS_20_DESCRIPTOR: bmRequestType=0xC0 (vendor IN, device),
+    // bRequest=MS_OS_20_VENDOR_REQ_CODE, wIndex=7.
+    if (req->bmRequestType == 0xC0
+        && req->bRequest == MS_OS_20_VENDOR_REQ_CODE
+        && req->wIndex == MS_OS_20_DESCRIPTOR_INDEX) {
+        uint16_t want = req->wLength;
+        if (want > sizeof(desc_ms_os_20)) want = sizeof(desc_ms_os_20);
+        return tud_control_xfer(rhport, req, (void *)desc_ms_os_20, want);
+    }
+
+    // GET_DIAG_LOG: bmRequestType=0xC1 (vendor IN, interface),
+    // bRequest=DIAG_GET_LOG_REQ, wIndex.low == DIAG_ITF_NUM. The host
+    // gets back [lost_le32][snapshot_of_diag_ring_tail].
+    if (req->bmRequestType == 0xC1
+        && req->bRequest == DIAG_GET_LOG_REQ
+        && (req->wIndex & 0xFFu) == DIAG_ITF_NUM) {
+        uint32_t lost = 0;
+        size_t n = diag_log_snapshot(diag_xfer_buf + 4,
+                                     sizeof(diag_xfer_buf) - 4, &lost);
+        diag_xfer_buf[0] = (uint8_t)(lost & 0xFFu);
+        diag_xfer_buf[1] = (uint8_t)((lost >>  8) & 0xFFu);
+        diag_xfer_buf[2] = (uint8_t)((lost >> 16) & 0xFFu);
+        diag_xfer_buf[3] = (uint8_t)((lost >> 24) & 0xFFu);
+        uint16_t avail = (uint16_t)(4 + n);
+        uint16_t want = req->wLength;
+        if (want > avail) want = avail;
+        return tud_control_xfer(rhport, req, diag_xfer_buf, want);
+    }
+
+    return false;
 }
 
 // -------- USB lifecycle diagnostics ------------------------------------

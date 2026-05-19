@@ -479,6 +479,7 @@ async fn windows_version() -> Option<String> {
 #[derive(Clone, Debug)]
 enum DiagSource {
     SetupCdc,
+    VendorControl,
     RunUdp { peer: SocketAddr },
 }
 
@@ -487,6 +488,7 @@ impl DiagSource {
     fn as_str(&self) -> &'static str {
         match self {
             DiagSource::SetupCdc => "setup-cdc",
+            DiagSource::VendorControl => "vendor-control",
             DiagSource::RunUdp { .. } => "run-udp",
         }
     }
@@ -496,6 +498,7 @@ impl DiagSource {
     fn describe(&self) -> String {
         match self {
             DiagSource::SetupCdc => "setup-mode USB-CDC".to_string(),
+            DiagSource::VendorControl => "USB vendor control transfer".to_string(),
             DiagSource::RunUdp { peer } => format!("run-mode UDP from {peer}"),
         }
     }
@@ -530,6 +533,15 @@ enum DiagOutcome {
         error: String,
     },
     NoLastPicoInConfig,
+    VendorNotFound,
+    VendorOpenFailed {
+        error: String,
+    },
+    VendorTransferFailed {
+        step: &'static str,
+        bytes_received: usize,
+        error: String,
+    },
     UdpDiscoveryFailed {
         reason: String,
     },
@@ -554,6 +566,9 @@ impl DiagOutcome {
             DiagOutcome::SetupOpenFailed { .. } => "setup_open_failed",
             DiagOutcome::SetupProbeFailed { .. } => "setup_probe_failed",
             DiagOutcome::NoLastPicoInConfig => "no_last_pico_in_config",
+            DiagOutcome::VendorNotFound => "vendor_not_found",
+            DiagOutcome::VendorOpenFailed { .. } => "vendor_open_failed",
+            DiagOutcome::VendorTransferFailed { .. } => "vendor_transfer_failed",
             DiagOutcome::UdpDiscoveryFailed { .. } => "udp_discovery_failed",
             DiagOutcome::UdpProbeFailed { .. } => "udp_probe_failed",
             DiagOutcome::UdpUnsupported { .. } => "udp_unsupported",
@@ -672,6 +687,54 @@ impl DiagOutcome {
                      recorded in config and the next bundle can probe it.",
                 ],
                 &[],
+            ),
+            DiagOutcome::VendorNotFound => stub_failure(
+                "No Pico with a diag-vendor interface (WinUSB-bound) is \
+                 currently enumerated. Either the Pico is in run mode (no \
+                 diag interface present) or its firmware predates the \
+                 WinUSB diag channel.",
+                &[
+                    "If the Pico is in run mode, retrieval falls through to \
+                     UDP automatically; this stub means UDP also did not \
+                     succeed -- see the UDP entries for diagnostics.",
+                    "If the Pico is in setup mode but no diag interface is \
+                     visible, the firmware predates the diag-vendor \
+                     interface. Reflash with the matching couchlink-*.uf2.",
+                ],
+                &[("looking_for_vid_pid", "0x2E8A:0xCAF0 + vendor interface")],
+            ),
+            DiagOutcome::VendorOpenFailed { error } => stub_failure(
+                "Found a Pico with a diag-vendor interface but could not \
+                 claim it via WinUSB.",
+                &[
+                    "Another process may be holding the diag interface. Close \
+                     any running couchlink instances and re-run bundle.",
+                    "If Windows shows the diag interface as 'driver not \
+                     loaded' in Device Manager, the MS OS 2.0 descriptor \
+                     binding may have failed. Unplug and replug the Pico; \
+                     Windows re-evaluates WinUSB binding on enumeration.",
+                ],
+                &[("error", error)],
+            ),
+            DiagOutcome::VendorTransferFailed {
+                step,
+                bytes_received,
+                error,
+            } => stub_failure(
+                "Vendor control transfer to retrieve the diag log failed.",
+                &[
+                    "Re-run bundle. Control transfers occasionally fail under \
+                     bus glitches; a retry usually succeeds.",
+                    "If the error mentions PIPE or STALL, the firmware did \
+                     not recognise the vendor request -- the bridge and \
+                     firmware may be on mismatched protocol versions. \
+                     Reflash with the matching couchlink-*.uf2.",
+                ],
+                &[
+                    ("step", step),
+                    ("bytes_received", &bytes_received.to_string()),
+                    ("error", error),
+                ],
             ),
             DiagOutcome::UdpDiscoveryFailed { reason } => stub_failure(
                 "Bundle tried a run-mode UDP probe but the Pico did not answer.",
@@ -882,15 +945,93 @@ fn setup_probe_failed_diagnosis(
     }
 }
 
-/// Try setup-mode USB-CDC first, fall back to run-mode UDP probe.
+/// Try setup-mode USB-CDC first, then WinUSB vendor control transfer
+/// (works even when CDC bulk endpoints are wedged), then run-mode UDP.
+/// First successful capture wins; on total failure, return the CDC
+/// outcome because it carries the richest diagnostic detail.
 async fn capture_pico_diag() -> DiagOutcome {
     let cdc_result = try_capture_setup_cdc().await;
-    match cdc_result {
-        DiagOutcome::NoSetupPort => {
-            tracing::info!("bundle: no setup-mode CDC port, attempting run-mode UDP probe");
-            try_capture_run_udp().await
+    if matches!(
+        cdc_result,
+        DiagOutcome::Captured { .. } | DiagOutcome::Empty { .. }
+    ) {
+        return cdc_result;
+    }
+
+    tracing::info!(
+        "bundle: CDC diag path returned {}, trying vendor control transfer",
+        cdc_result.discriminant_str()
+    );
+    let vendor_result = try_capture_vendor_control().await;
+    if matches!(
+        vendor_result,
+        DiagOutcome::Captured { .. } | DiagOutcome::Empty { .. }
+    ) {
+        tracing::info!("bundle: diag captured via USB vendor control transfer");
+        return vendor_result;
+    }
+
+    tracing::info!(
+        "bundle: vendor control path returned {}, trying run-mode UDP",
+        vendor_result.discriminant_str()
+    );
+    let udp_result = try_capture_run_udp().await;
+    if matches!(
+        udp_result,
+        DiagOutcome::Captured { .. } | DiagOutcome::Empty { .. }
+    ) {
+        tracing::info!("bundle: diag captured via UDP TYPE_GET_LOG");
+        return udp_result;
+    }
+
+    // All three paths failed. Prefer the CDC outcome for diagnostic
+    // specificity (it has step / elapsed / rx_bytes detail); the vendor
+    // and UDP outcomes get logged but not surfaced in the manifest.
+    tracing::warn!(
+        "bundle: all three diag paths failed (cdc={}, vendor={}, udp={})",
+        cdc_result.discriminant_str(),
+        vendor_result.discriminant_str(),
+        udp_result.discriminant_str()
+    );
+    cdc_result
+}
+
+/// WinUSB vendor-control diag retrieval. Wraps the blocking nusb
+/// implementation in `spawn_blocking` (matches `try_capture_setup_cdc`'s
+/// shape), translates `VendorDiagOutcome` to `DiagOutcome`.
+async fn try_capture_vendor_control() -> DiagOutcome {
+    use crate::diag_usb::{capture_diag_blocking, VendorDiagOutcome};
+    let outcome = match tokio::task::spawn_blocking(capture_diag_blocking).await {
+        Ok(o) => o,
+        Err(join_err) => {
+            return DiagOutcome::VendorTransferFailed {
+                step: "spawn",
+                bytes_received: 0,
+                error: format!("blocking task panicked: {join_err}"),
+            };
         }
-        other => other,
+    };
+
+    match outcome {
+        VendorDiagOutcome::Captured { text, lost } => DiagOutcome::Captured {
+            source: DiagSource::VendorControl,
+            text,
+            lost,
+        },
+        VendorDiagOutcome::Empty => DiagOutcome::Empty {
+            source: DiagSource::VendorControl,
+        },
+        VendorDiagOutcome::NotFound => DiagOutcome::VendorNotFound,
+        VendorDiagOutcome::OpenFailed { error } => DiagOutcome::VendorOpenFailed { error },
+        VendorDiagOutcome::TransferFailed {
+            step,
+            bytes_received,
+            error,
+        } => DiagOutcome::VendorTransferFailed {
+            step,
+            bytes_received,
+            error,
+        },
     }
 }
 

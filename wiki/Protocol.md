@@ -50,6 +50,25 @@ Commands:
 | `SELF_TEST` | Firmware-side setup checks. |
 | `GET_LOG_BUFFER` | Read the Pico diagnostic ring buffer. |
 
+## USB Vendor Diag (setup mode)
+
+Setup mode's composite also exposes a vendor-class interface (interface 2, class `0xFF`) that Windows binds to WinUSB. MS OS 2.0 descriptors advertise the binding, so no INF file is needed on Windows 8.1+. The host reads the firmware diagnostic ring buffer via a vendor IN control transfer on EP0, which works regardless of CDC bulk endpoint state -- diag retrieval no longer relies on the CDC FIFO being drained.
+
+Control transfer:
+
+| Field | Value |
+|---|---|
+| `bmRequestType` | `0xC1` (vendor IN, interface) |
+| `bRequest` | `0x01` (`GET_DIAG_LOG`) |
+| `wIndex` low byte | `2` (interface number) |
+| `wLength` | up to `4100` (4-byte header + 4 KiB ring) |
+
+Response payload matches the CDC `GET_LOG_BUFFER` body: a 4-byte little-endian lost-bytes counter, followed by the most-recent ring contents.
+
+Run mode does not expose this interface -- the XInput persona is deliberately minimal to keep `xusb22.sys` binding stable. In run mode, diag retrieval uses UDP `GET_LOG` instead.
+
+The bridge's `couchlink bundle` tries CDC, vendor control, and UDP in order; the first to succeed wins, and `manifest.json`'s `pico_diag_source` records which path produced the captured log (`setup-cdc`, `vendor-control`, or `run-udp`).
+
 ## USB Runtime Persona
 
 In run mode, the Pico presents itself as a wired Xbox 360 controller. Setup mode and run mode use different USB IDs so Windows does not reuse the wrong driver binding across modes.

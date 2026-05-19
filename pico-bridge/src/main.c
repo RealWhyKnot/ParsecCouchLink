@@ -144,6 +144,13 @@ static void run_mode_main_loop(void) {
 
     for (;;) {
         tud_task();
+        // Defense-in-depth: drain any CDC bytes the host may have sent
+        // before we re-enumerated as XInput. With the boot-ordering fix
+        // in main(), run mode never exposes CDC endpoints and this is a
+        // no-op (early-exits on tud_cdc_available() == 0). It's here so
+        // a future regression that reintroduces the persona race can't
+        // silently fill the CDC RX FIFO again.
+        cdc_handlers_poll();
         cyw43_arch_poll();
         wifi_task();
 
@@ -196,20 +203,24 @@ int main(void) {
     log_reset_reason(&rr);
     log_board_identity();
 
-    // tusb_init() must run before any blocking wait so the host's USB
-    // enumeration handshake can complete during boot. On RP2040 the D+
-    // pull-up asserts from hardware reset, so the host begins probing
-    // the device the instant VBUS is present; if tusb_init() hasn't run
-    // yet, the host sees an unresponsive device and may abandon the
-    // port before we even get to the main loop. The BOOTSEL recovery
-    // window inside boot_mode_decide() now pumps tud_task() while it
-    // waits, so CDC enumerates in parallel with the hold check instead
-    // of after it.
+    // tusb_init() runs first so TinyUSB's IRQ vectors, FIFOs, and
+    // descriptor callbacks are alive before any blocking work. But we
+    // immediately drop the D+ pull-up with tud_disconnect() so the
+    // host never sees a connect event while boot_mode_decide() is
+    // still running: until the mode flag is final, the descriptor
+    // callbacks would return whichever persona defaults to value 0,
+    // and the host would latch onto that. Holding D+ low across the
+    // BOOTSEL recovery wait costs us nothing (the host has no device
+    // to enumerate yet), and tud_connect() afterwards triggers a
+    // single clean enumeration with the correct persona descriptors.
     tusb_init();
-    diag_log_msg("boot: tusb_init done");
+    tud_disconnect();
+    diag_log_msg("boot: tusb_init done; D+ held low until mode decided");
 
     boot_mode_t mode = boot_mode_decide();
-    diag_log_printf("boot: entering %s main loop",
+    tud_connect();
+    diag_log_printf("boot: D+ raised for %s persona; entering %s main loop",
+                    mode == BOOT_MODE_RUN ? "XInput" : "CDC+diag",
                     mode == BOOT_MODE_RUN ? "run" : "setup");
 
     if (mode == BOOT_MODE_RUN) {

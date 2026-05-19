@@ -2,9 +2,12 @@
 
 // Firmware semver. Bump fw_major when the wire or CDC protocol breaks
 // compatibility. The bridge refuses to talk to a Pico whose proto_version
-// differs.
+// differs. fw_minor bumps land in bcdDevice via usb_descriptors.c, so
+// Windows re-binds usbser.sys after a re-flash and does not reuse cached
+// descriptors from a different interface layout -- bump it on USB
+// composite-layout changes too.
 #define PICO_BRIDGE_FW_MAJOR 0
-#define PICO_BRIDGE_FW_MINOR 1
+#define PICO_BRIDGE_FW_MINOR 2
 #define PICO_BRIDGE_FW_PATCH 0
 
 // On-wire protocol versions, must match wiki/Protocol.md.
