@@ -23,10 +23,15 @@ const TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
 /// `DiagOutcome` by the caller in `cmd_bundle.rs`.
 #[derive(Debug)]
 pub enum VendorDiagOutcome {
-    Captured { text: String, lost: u32 },
+    Captured {
+        text: String,
+        lost: u32,
+    },
     Empty,
     NotFound,
-    OpenFailed { error: String },
+    OpenFailed {
+        error: String,
+    },
     TransferFailed {
         step: &'static str,
         bytes_received: usize,
