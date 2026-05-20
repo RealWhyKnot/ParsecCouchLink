@@ -47,6 +47,21 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     let usb_events = capture_windows_usb_events().await;
     let usb_events_captured = usb_events.is_some();
 
+    // Classify current Pico USB enumeration state from the pnputil output.
+    // Used both in manifest.json and in the VendorNotFound stub text.
+    let pico_enum_state = usb_devices
+        .as_ref()
+        .filter(|(_, m)| *m == "pnputil")
+        .map(|(text, _)| classify_pico_enum(text))
+        .unwrap_or(PicoEnumState::NotEnumerated);
+    let pico_usb_enumerated = !matches!(pico_enum_state, PicoEnumState::NotEnumerated);
+    let pico_usb_mode = match &pico_enum_state {
+        PicoEnumState::NotEnumerated => None,
+        PicoEnumState::EnumeratedSetupMode
+        | PicoEnumState::EnumeratedButInterfaceUnclaimable { .. } => Some("setup".to_string()),
+        PicoEnumState::EnumeratedRunMode => Some("run".to_string()),
+    };
+
     let system_info = build_system_info().await;
 
     let manifest = build_manifest(
@@ -57,6 +72,8 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
         usb_devices_captured,
         &usb_capture_method,
         usb_events_captured,
+        pico_usb_enumerated,
+        pico_usb_mode.as_deref(),
         &crash_files,
         &setup_transcripts,
     )
@@ -85,7 +102,12 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     // Always write pico-diag.txt. The body is a self-narrating stub
     // when capture failed; the per-variant message names the failing
     // step so the bundle is actionable without reading the bridge log.
-    let pico_diag_body = diag.stub_text();
+    // VendorNotFound is special: its stub text depends on pico_enum_state.
+    let pico_diag_body = if matches!(diag, DiagOutcome::VendorNotFound) {
+        vendor_not_found_stub_text(&pico_enum_state)
+    } else {
+        diag.stub_text()
+    };
     zip.start_file("pico-diag.txt", opts)?;
     zip.write_all(pico_diag_body.as_bytes())?;
 
@@ -406,6 +428,9 @@ struct Manifest {
     usb_devices_captured: bool,
     usb_capture_method: String,
     usb_events_captured: bool,
+    pico_usb_enumerated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pico_usb_mode: Option<String>,
     crash_files: Vec<String>,
     setup_transcripts: Vec<String>,
     notes: Vec<&'static str>,
@@ -420,6 +445,8 @@ async fn build_manifest(
     usb_devices_captured: bool,
     usb_capture_method: &str,
     usb_events_captured: bool,
+    pico_usb_enumerated: bool,
+    pico_usb_mode: Option<&str>,
     crash_files: &[String],
     setup_transcripts: &[String],
 ) -> Result<Manifest> {
@@ -447,6 +474,8 @@ async fn build_manifest(
         usb_devices_captured,
         usb_capture_method: usb_capture_method.to_string(),
         usb_events_captured,
+        pico_usb_enumerated,
+        pico_usb_mode: pico_usb_mode.map(|s| s.to_string()),
         crash_files: crash_files.to_vec(),
         setup_transcripts: setup_transcripts.to_vec(),
         notes: vec![
@@ -799,6 +828,57 @@ impl DiagOutcome {
     }
 }
 
+/// Generate the pico-diag.txt body for `DiagOutcome::VendorNotFound`,
+/// gated on what the pnputil snapshot shows for 0x2E8A:0xCAF0. The three
+/// branches match `PicoEnumState` (NotEnumerated, EnumeratedRunMode, and
+/// the setup-mode-shaped but unclaimable case). The generic static text
+/// in the `VendorNotFound` match arm is replaced at write time by this
+/// function so the instructions match what Windows actually sees.
+fn vendor_not_found_stub_text(state: &PicoEnumState) -> String {
+    match state {
+        PicoEnumState::NotEnumerated => stub_failure(
+            "No Pico (VID_2E8A:PID_CAF0) is currently enumerated on USB.",
+            &[
+                "Try a different micro-USB DATA cable -- charge-only cables enumerate \
+                 USB power but carry no data.",
+                "Try a different USB port on the PC (prefer a port on the motherboard, \
+                 not a hub).",
+                "Hold BOOTSEL for 5+ seconds while replugging to wipe creds and force \
+                 setup mode.",
+            ],
+            &[("looking_for_vid_pid", "0x2E8A:0xCAF0")],
+        ),
+        PicoEnumState::EnumeratedRunMode => stub_failure(
+            "The Pico is in run mode. Run-mode firmware does not expose a USB diag \
+             interface -- the vendor interface exists only in setup mode.",
+            &[
+                "Wait ~30 s for the Wi-Fi association watchdog to auto-bounce the Pico \
+                 back to setup mode if Wi-Fi association is failing, then run \
+                 `couchlink bundle` again.",
+                "Hold BOOTSEL briefly (under 2 s) while replugging to force setup mode \
+                 without wiping creds.",
+                "Hold BOOTSEL for 3+ s to force setup mode AND wipe creds.",
+            ],
+            &[(
+                "looking_for_vid_pid",
+                "0x2E8A:0xCAF0 (run mode, no vendor interface)",
+            )],
+        ),
+        PicoEnumState::EnumeratedSetupMode
+        | PicoEnumState::EnumeratedButInterfaceUnclaimable { .. } => stub_failure(
+            "Found a Pico with a diag-vendor interface but could not claim it via WinUSB.",
+            &[
+                "Another process may be holding the diag interface. Close any running \
+                 couchlink instances and re-run bundle.",
+                "If Windows shows the diag interface as 'driver not loaded' in Device \
+                 Manager, the MS OS 2.0 descriptor binding may have failed. Unplug and \
+                 replug the Pico; Windows re-evaluates WinUSB binding on enumeration.",
+            ],
+            &[("looking_for_vid_pid", "0x2E8A:0xCAF0 + vendor interface")],
+        ),
+    }
+}
+
 /// Format a self-diagnosing stub body. Leads with a one-sentence root
 /// cause, then a numbered "Try this" list, then a `Diagnostic details`
 /// block with the captured fields verbatim.
@@ -1121,29 +1201,17 @@ async fn try_capture_setup_cdc() -> DiagOutcome {
     })
 }
 
-/// Run-mode UDP path. Uses the config's last-known Pico address as the
-/// probe target. A fresh broadcast discovery is intentionally NOT used
-/// here: the bundle is for a "something's wrong" context, the user
-/// already has a `doctor` command for re-discovery, and unicast against
-/// a known address is fast (no 1-second tick).
+/// Run-mode UDP path. Tries broadcast first so a stale last_ip does not
+/// prevent diag capture; falls back to unicast against last_ip only when
+/// broadcast finds nothing. Two-second timeout on each leg keeps the
+/// bundle fast in the common failure case.
 async fn try_capture_run_udp() -> DiagOutcome {
     let cfg = config::load().unwrap_or_default();
-    let last_ip = match cfg.last_pico.as_ref().and_then(|p| p.last_ip.clone()) {
-        Some(ip) => ip,
-        None => {
-            tracing::info!("bundle: no last_pico.last_ip in config; UDP probe not attempted");
-            return DiagOutcome::NoLastPicoInConfig;
-        }
-    };
-    let peer_addr: SocketAddr = match format!("{last_ip}:{}", protocol::PORT).parse() {
-        Ok(a) => a,
-        Err(e) => {
-            return DiagOutcome::UdpDiscoveryFailed {
-                reason: format!("config last_ip `{last_ip}` did not parse: {e}"),
-            };
-        }
-    };
-    tracing::info!("bundle: UDP probe target {peer_addr}");
+    let last_ip = cfg.last_pico.as_ref().and_then(|p| p.last_ip.clone());
+    if last_ip.is_none() && cfg.last_pico.is_none() {
+        tracing::info!("bundle: no last_pico in config; UDP probe not attempted");
+        return DiagOutcome::NoLastPicoInConfig;
+    }
 
     let socket = match UdpSocket::bind("0.0.0.0:0").await {
         Ok(s) => s,
@@ -1153,8 +1221,53 @@ async fn try_capture_run_udp() -> DiagOutcome {
             };
         }
     };
+    if let Err(e) = socket.set_broadcast(true) {
+        tracing::warn!("bundle: set_broadcast failed: {e} -- broadcast leg skipped");
+    }
 
-    // Step 1: unicast Discover, wait for an Ack, read the capability flag.
+    // Step 1: short broadcast discovery (2 s).
+    let peer_addr = match broadcast_for_ack(&socket, Duration::from_secs(2)).await {
+        Ok(addr) => {
+            tracing::info!("bundle: broadcast discovery found Pico at {addr}");
+            addr
+        }
+        Err(broadcast_err) => {
+            // Broadcast found nothing. Try unicast against last_ip if we have one.
+            let Some(last_ip) = last_ip else {
+                tracing::info!("bundle: broadcast found nothing and no last_ip; UDP probe done");
+                return DiagOutcome::NoLastPicoInConfig;
+            };
+            let peer: SocketAddr = match format!("{last_ip}:{}", protocol::PORT).parse() {
+                Ok(a) => a,
+                Err(e) => {
+                    return DiagOutcome::UdpDiscoveryFailed {
+                        reason: format!("config last_ip `{last_ip}` did not parse: {e}"),
+                    };
+                }
+            };
+            tracing::info!(
+                "bundle: broadcast found nothing ({broadcast_err}); \
+                 trying unicast to last known IP {peer}"
+            );
+            match unicast_for_ack(&socket, peer, Duration::from_secs(2)).await {
+                Ok(pkt) => {
+                    tracing::info!(
+                        "bundle: broadcast found nothing; reaching last known IP {peer} \
+                         flags=0x{:02X}",
+                        pkt.flags,
+                    );
+                    peer
+                }
+                Err(e) => {
+                    return DiagOutcome::UdpDiscoveryFailed {
+                        reason: format!("broadcast: {broadcast_err}; unicast to {peer}: {e}"),
+                    };
+                }
+            }
+        }
+    };
+
+    // Step 2: read the capability flag from the peer we found.
     let ack_started = Instant::now();
     let ack_packet = match unicast_for_ack(&socket, peer_addr, Duration::from_secs(2)).await {
         Ok(p) => p,
@@ -1300,6 +1413,89 @@ async fn unicast_for_ack(
                 return Err(format!("no ack within {} ms", timeout.as_millis()));
             }
         }
+    }
+}
+
+/// Broadcast a Discover and return the address of the first Pico that answers.
+/// Returns `Err(reason)` if no ack arrives within `timeout`.
+async fn broadcast_for_ack(socket: &UdpSocket, timeout: Duration) -> Result<SocketAddr, String> {
+    let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", protocol::PORT)
+        .parse()
+        .expect("broadcast addr is constant");
+    let req = Packet::discover(0).encode();
+    socket
+        .send_to(&req, broadcast_addr)
+        .await
+        .map_err(|e| format!("send: {e}"))?;
+    let mut buf = [0u8; 64];
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| format!("no ack within {} ms", timeout.as_millis()))?;
+        match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+            Ok(Ok((n, from))) => match Packet::decode(&buf[..n]) {
+                Ok(pkt) if matches!(pkt.kind, PacketKind::Ack(_)) => return Ok(from),
+                Ok(_) => continue,
+                Err(e) => {
+                    tracing::debug!("bundle: discarded non-ack from {from}: {e}");
+                }
+            },
+            Ok(Err(e)) => return Err(format!("recv: {e}")),
+            Err(_) => return Err(format!("no ack within {} ms", timeout.as_millis())),
+        }
+    }
+}
+
+/// Classification of the Pico's current USB enumeration state, derived
+/// from pnputil output. Used to gate `VendorNotFound` stub text on what
+/// Windows actually sees on the bus.
+#[derive(Debug, PartialEq, Eq)]
+enum PicoEnumState {
+    /// No entry with VID_2E8A&PID_CAF0 in pnputil output.
+    NotEnumerated,
+    /// VID_2E8A&PID_CAF0 present with both MI_00 (CDC) and MI_02 (vendor).
+    /// The vendor interface should be WinUSB-bound in setup mode.
+    EnumeratedSetupMode,
+    /// VID_2E8A&PID_CAF0 present but no MI_02 / vendor interface found.
+    /// Run-mode firmware presents only the XInput composite without a
+    /// vendor interface; xusb22.sys being bound is a secondary indicator.
+    EnumeratedRunMode,
+    /// Setup-mode-shaped device found but the diag_usb open call failed.
+    #[allow(dead_code)]
+    EnumeratedButInterfaceUnclaimable { reason: String },
+}
+
+/// Parse pnputil /enum-devices text to determine how the Pico is
+/// currently enumerated. The function does not require all blocks to be
+/// present; it looks for specific Instance ID patterns.
+///
+/// Setup mode: the composite parent VID_2E8A&PID_CAF0\... plus a child
+/// with &MI_02 (the WinUSB vendor interface). Run mode: the composite
+/// parent is present but no MI_02 child exists (the firmware presents
+/// XInput only). The absence of both parent and children means
+/// NotEnumerated.
+fn classify_pico_enum(pnputil_text: &str) -> PicoEnumState {
+    // Check for the parent device.
+    let has_parent = pnputil_text
+        .lines()
+        .any(|l| l.contains("VID_2E8A") && l.contains("PID_CAF0") && !l.contains("&MI_"));
+
+    if !has_parent {
+        return PicoEnumState::NotEnumerated;
+    }
+
+    // Check for the MI_02 vendor interface (setup mode only).
+    let has_vendor_itf = pnputil_text
+        .lines()
+        .any(|l| l.contains("VID_2E8A") && l.contains("PID_CAF0") && l.contains("&MI_02"));
+
+    if has_vendor_itf {
+        PicoEnumState::EnumeratedSetupMode
+    } else {
+        // Parent present but no vendor interface -- run mode firmware shape.
+        PicoEnumState::EnumeratedRunMode
     }
 }
 
@@ -1716,5 +1912,102 @@ mod tests {
         assert!(DiagOutcome::UdpUnsupported { peer: make_peer() }
             .source_str()
             .is_none());
+    }
+
+    // Canonical pnputil snippet for a Pico in setup mode (VID_2E8A:PID_CAF0
+    // composite parent + MI_00 CDC child + MI_02 vendor child). Derived from
+    // a real bundle capture where the Pico was in setup mode and WinUSB was
+    // bound to the vendor interface.
+    const PNPUTIL_SETUP_MODE: &str = "\
+Instance ID:                USB\\VID_2E8A&PID_CAF0\\E0C9125B0D9B
+Device Description:         USB Composite Device
+Class Name:                 USB
+Status:                     Started
+Driver Name:                usb.inf
+
+Instance ID:                USB\\VID_2E8A&PID_CAF0&MI_00\\8&22cf742d&0&0000
+Device Description:         USB Serial Device
+Class Name:                 Ports
+Status:                     Started
+Driver Name:                usbser.inf
+
+Instance ID:                USB\\VID_2E8A&PID_CAF0&MI_02\\8&22cf742d&0&0002
+Device Description:         Pico Diag
+Class Name:                 USBDevice
+Status:                     Started
+Driver Name:                winusb.inf
+";
+
+    // Canonical pnputil snippet for a Pico in run mode (VID_2E8A:PID_CAF0
+    // composite parent + XInput child only, no MI_02). The run-mode firmware
+    // presents only the XInput HID interface.
+    const PNPUTIL_RUN_MODE: &str = "\
+Instance ID:                USB\\VID_2E8A&PID_CAF0\\E0C9125B0D9B
+Device Description:         USB Composite Device
+Class Name:                 USB
+Status:                     Started
+Driver Name:                usb.inf
+
+Instance ID:                USB\\VID_2E8A&PID_CAF0&MI_00\\8&33aa123&0&0000
+Device Description:         Xbox 360 Controller
+Class Name:                 XboxController
+Status:                     Started
+Driver Name:                xusb22.inf
+";
+
+    #[test]
+    fn classify_pico_enum_not_enumerated() {
+        // Bundle from the first customer (Pico 2 W in run mode with Wi-Fi
+        // failed): no 2E8A:CAF0 entries at all.
+        let text = "Instance ID: USB\\VID_28DE&PID_2102\\07F8359478\nStatus: Started\n";
+        assert_eq!(classify_pico_enum(text), PicoEnumState::NotEnumerated);
+    }
+
+    #[test]
+    fn classify_pico_enum_setup_mode() {
+        assert_eq!(
+            classify_pico_enum(PNPUTIL_SETUP_MODE),
+            PicoEnumState::EnumeratedSetupMode,
+        );
+    }
+
+    #[test]
+    fn classify_pico_enum_run_mode() {
+        assert_eq!(
+            classify_pico_enum(PNPUTIL_RUN_MODE),
+            PicoEnumState::EnumeratedRunMode,
+        );
+    }
+
+    #[test]
+    fn classify_pico_enum_parent_only_is_run_mode() {
+        // Parent with no children at all (e.g. driver not yet bound) should
+        // classify as run mode (no vendor interface visible) rather than
+        // NotEnumerated.
+        let text = "Instance ID: USB\\VID_2E8A&PID_CAF0\\E0C9125B0D9B\nStatus: Started\n";
+        assert_eq!(classify_pico_enum(text), PicoEnumState::EnumeratedRunMode);
+    }
+
+    #[test]
+    fn vendor_not_found_stub_not_enumerated_names_cable() {
+        let stub = vendor_not_found_stub_text(&PicoEnumState::NotEnumerated);
+        assert!(stub.contains("0x2E8A:0xCAF0"), "missing VID/PID: {stub}");
+        assert!(stub.contains("DATA cable"), "missing cable tip: {stub}");
+    }
+
+    #[test]
+    fn vendor_not_found_stub_run_mode_names_watchdog() {
+        let stub = vendor_not_found_stub_text(&PicoEnumState::EnumeratedRunMode);
+        assert!(
+            stub.contains("association watchdog"),
+            "missing watchdog tip: {stub}"
+        );
+        assert!(stub.contains("BOOTSEL"), "missing BOOTSEL tip: {stub}");
+    }
+
+    #[test]
+    fn vendor_not_found_stub_setup_mode_names_winusb() {
+        let stub = vendor_not_found_stub_text(&PicoEnumState::EnumeratedSetupMode);
+        assert!(stub.contains("WinUSB"), "missing WinUSB tip: {stub}");
     }
 }

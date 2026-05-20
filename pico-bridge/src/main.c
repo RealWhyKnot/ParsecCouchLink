@@ -15,6 +15,7 @@
 
 #include "boot_mode.h"
 #include "cdc_handlers.h"
+#include "cdc_proto.h"
 #include "diag_log.h"
 #include "flash_creds.h"
 #include "gamepad_state.h"
@@ -111,6 +112,20 @@ static void log_board_identity(void) {
                     PICO_BRIDGE_FW_PATCH, PICO_BRIDGE_BOARD_TYPE, id);
 }
 
+// Inline state-name helper for the assoc watchdog log line. The
+// canonical wifi_state_name() is static in heartbeat.c; duplicating
+// the four-case switch here avoids an API surface change for a single
+// call site.
+static const char *wifi_state_str(wifi_state_t s) {
+    switch (s) {
+        case WIFI_STATE_IDLE:    return "idle";
+        case WIFI_STATE_JOINING: return "joining";
+        case WIFI_STATE_JOINED:  return "joined";
+        case WIFI_STATE_FAILED:  return "failed";
+        default:                 return "?";
+    }
+}
+
 static void run_mode_main_loop(void) {
     // Load creds (already verified by boot_mode_decide), bring up Wi-Fi,
     // bring up UDP, then poll forever.
@@ -136,6 +151,10 @@ static void run_mode_main_loop(void) {
 
     bool udp_inited = false;
 
+    // Capture entry time for the association watchdog.
+    absolute_time_t run_entry = get_absolute_time();
+    bool assoc_watchdog_armed = true;
+
     xinput_init();
     watchdog_init();
     heartbeat_init();
@@ -144,6 +163,7 @@ static void run_mode_main_loop(void) {
 
     for (;;) {
         tud_task();
+        boot_mode_post_enum_bootsel_poll();
         // Defense-in-depth: drain any CDC bytes the host may have sent
         // before we re-enumerated as XInput. With the boot-ordering fix
         // in main(), run mode never exposes CDC endpoints and this is a
@@ -165,6 +185,44 @@ static void run_mode_main_loop(void) {
         watchdog_tick();
         heartbeat_run_mode_task();
 
+        // Wi-Fi association watchdog. Fires once and triggers a bounce
+        // to setup mode so the user can re-provision if the credentials
+        // are wrong or the AP is unreachable at this location.
+        if (assoc_watchdog_armed && wifi_state() != WIFI_STATE_JOINED) {
+            wifi_state_t ws = wifi_state();
+            uint8_t err = wifi_last_error_code();
+
+            // Immediate bounce on definitive auth / SSID failures --
+            // no point waiting 30 s when the answer is already known.
+            if (ws == WIFI_STATE_FAILED
+                && (err == CDC_ERR_AUTH_FAIL || err == CDC_ERR_NO_2G_NETWORK)) {
+                const char *ename = (err == CDC_ERR_AUTH_FAIL) ? "BADAUTH" : "NONET";
+                diag_log_printf("wifi: assoc_result=%s -- bouncing immediately to setup mode",
+                                ename);
+                assoc_watchdog_armed = false;
+                reset_reason_request_setup_after_reboot();
+                watchdog_reboot(0, 0, 100);
+                for (;;) tight_loop_contents();
+            }
+
+            // 30-second timeout watchdog for all other failure modes
+            // (JOINING timeout, generic FAILED, idle).
+            int64_t elapsed_us = absolute_time_diff_us(run_entry,
+                                                       get_absolute_time());
+            if (elapsed_us >= 30000000) {
+                uint32_t uptime_s = (uint32_t)(
+                    to_ms_since_boot(get_absolute_time()) / 1000);
+                diag_log_printf(
+                    "wifi: assoc watchdog firing -- mode=run uptime=%us "
+                    "state=%s last_error=%u -- bouncing to setup mode, creds retained",
+                    (unsigned)uptime_s, wifi_state_str(ws), (unsigned)err);
+                assoc_watchdog_armed = false;
+                reset_reason_request_setup_after_reboot();
+                watchdog_reboot(0, 0, 100);
+                for (;;) tight_loop_contents();
+            }
+        }
+
         // Briefly yield so cyw43_arch_poll doesn't get starved on a
         // tight loop. ~250 Hz is plenty for the application logic;
         // XInput's 1 ms USB cadence is driven by TinyUSB.
@@ -179,6 +237,7 @@ static void setup_mode_main_loop(void) {
     reset_reason_mark_main_loop_entered();
     for (;;) {
         tud_task();
+        boot_mode_post_enum_bootsel_poll();
         cdc_handlers_poll();
         heartbeat_setup_mode_task();
         if (cdc_handlers_reboot_pending()) {
@@ -203,25 +262,19 @@ int main(void) {
     log_reset_reason(&rr);
     log_board_identity();
 
-    // tusb_init() runs first so TinyUSB's IRQ vectors, FIFOs, and
-    // descriptor callbacks are alive before any blocking work. But we
-    // immediately drop the D+ pull-up with tud_disconnect() so the
-    // host never sees a connect event while boot_mode_decide() is
-    // still running: until the mode flag is final, the descriptor
-    // callbacks would return whichever persona defaults to value 0,
-    // and the host would latch onto that. Holding D+ low across the
-    // BOOTSEL recovery wait costs us nothing (the host has no device
-    // to enumerate yet), and tud_connect() afterwards triggers a
-    // single clean enumeration with the correct persona descriptors.
-    tusb_init();
-    tud_disconnect();
-    diag_log_msg("boot: tusb_init done; D+ held low until mode decided");
+    // Decide mode BEFORE tusb_init() so D+ is never asserted while the
+    // mode is still undecided. boot_mode_decide() is non-blocking: it
+    // samples BOOTSEL once at t=0 and reads flash credentials. The
+    // post-enum poll (called from each main loop) handles the 3-second
+    // wipe escalation after USB is up.
+    boot_mode_t mode = boot_mode_decide(&rr);
+    diag_log_printf("boot: mode decided: %s persona will be advertised",
+                    mode == BOOT_MODE_RUN ? "XInput" : "CDC+diag");
 
-    boot_mode_t mode = boot_mode_decide();
-    tud_connect();
-    diag_log_printf("boot: D+ raised for %s persona; entering %s main loop",
-                    mode == BOOT_MODE_RUN ? "XInput" : "CDC+diag",
-                    mode == BOOT_MODE_RUN ? "run" : "setup");
+    // Now that the correct persona is fixed, raise D+ once and keep it
+    // there. The host sees a single clean connect event.
+    tusb_init();
+    diag_log_msg("usb_init: tusb_init complete");
 
     if (mode == BOOT_MODE_RUN) {
         run_mode_main_loop();

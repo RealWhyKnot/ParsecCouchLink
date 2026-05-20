@@ -13,11 +13,10 @@
 #include "pico/bootrom.h"
 #endif
 
-// Bumped from 0xC0DEBE11 -> 0xC0DEBE12 because the breadcrumb struct
-// layout grew. An old (pre-expansion) breadcrumb in __uninitialized_ram
-// from before a reflash will fail the magic check and be ignored, which
-// is the desired behaviour.
-#define BREADCRUMB_MAGIC 0xC0DEBE12u
+// Bumped from 0xC0DEBE12 -> 0xC0DEBE13 because the breadcrumb struct
+// layout grew (force_setup_after_reboot field added). An old breadcrumb
+// from a prior build will fail the magic check and be ignored.
+#define BREADCRUMB_MAGIC 0xC0DEBE13u
 
 // CRC-protected fault context persisted across resets via
 // `__uninitialized_ram`. Survives watchdog reset on both chips, and
@@ -39,11 +38,15 @@ typedef struct {
     uint32_t mmfar;
     uint32_t bfar;
     uint8_t  fault_status_valid;  // 1 = the four regs above are RP2350-valid
-    uint8_t  reserved[3];
+    uint8_t  force_setup;         // 1 = boot_mode_decide must force setup mode
+    uint8_t  reserved[2];
     char     last_line[RESET_REASON_LAST_LINE_CAP];
 } crash_breadcrumb_t;
 
 static crash_breadcrumb_t __uninitialized_ram(g_crash_breadcrumb);
+
+// Latched once by reset_reason_classify(); read by boot_mode_decide().
+static bool g_force_setup_requested = false;
 
 static uint32_t crc32_compute(const void *data, size_t n) {
     const uint8_t *p = (const uint8_t *)data;
@@ -97,6 +100,7 @@ static void breadcrumb_fill_info(reset_reason_info_t *out) {
     if (!breadcrumb_valid()) {
         out->full_frame_valid = false;
         out->fault_status_valid = false;
+        out->force_setup_after_reboot = false;
         return;
     }
     out->full_frame_valid = true;
@@ -113,17 +117,22 @@ static void breadcrumb_fill_info(reset_reason_info_t *out) {
         out->fault_mmfar = g_crash_breadcrumb.mmfar;
         out->fault_bfar  = g_crash_breadcrumb.bfar;
     }
+    // Read and clear the one-shot flag so a second call after an
+    // accidental breadcrumb_clear() doesn't re-trigger it.
+    out->force_setup_after_reboot = (g_crash_breadcrumb.force_setup != 0);
+    g_crash_breadcrumb.force_setup = 0;
 }
 
 reset_reason_info_t reset_reason_classify(void) {
     reset_reason_info_t out = (reset_reason_info_t){
-        .reason             = RESET_REASON_UNKNOWN,
-        .fault_pc           = 0,
-        .fault_lr           = 0,
-        .fault_xpsr         = 0,
-        .full_frame_valid   = false,
-        .fault_status_valid = false,
-        .last_line_valid    = false,
+        .reason                 = RESET_REASON_UNKNOWN,
+        .fault_pc               = 0,
+        .fault_lr               = 0,
+        .fault_xpsr             = 0,
+        .full_frame_valid       = false,
+        .fault_status_valid     = false,
+        .last_line_valid        = false,
+        .force_setup_after_reboot = false,
     };
     out.last_line[0] = 0;
 
@@ -159,6 +168,12 @@ reset_reason_info_t reset_reason_classify(void) {
                                                             sizeof(out.last_line));
         } else if (magic == RESET_REASON_MAGIC_NORMAL_EXIT) {
             out.reason = RESET_REASON_DELIBERATE;
+            // A deliberate reboot may carry the force_setup flag set by
+            // reset_reason_request_setup_after_reboot(). Read it now and
+            // clear it (one-shot) before breadcrumb_clear() below.
+            breadcrumb_fill_info(&out);
+            out.last_line_valid = breadcrumb_read_last_line(out.last_line,
+                                                            sizeof(out.last_line));
         } else {
             out.reason = RESET_REASON_WATCHDOG_HANG;
             // Hang during boot may still have a breadcrumb from the
@@ -170,6 +185,9 @@ reset_reason_info_t reset_reason_classify(void) {
     } else {
         out.reason = RESET_REASON_COLD_OR_PIN;
     }
+
+    // Latch before clearing -- breadcrumb_clear() zeros the raw field.
+    g_force_setup_requested = out.force_setup_after_reboot;
 
     breadcrumb_clear();
     return out;
@@ -188,6 +206,26 @@ const char *reset_reason_name(reset_reason_t r) {
 }
 
 void reset_reason_mark_main_loop_entered(void) {
+    watchdog_hw->scratch[0] = RESET_REASON_MAGIC_NORMAL_EXIT;
+}
+
+bool reset_reason_force_setup_requested(void) {
+    return g_force_setup_requested;
+}
+
+void reset_reason_request_setup_after_reboot(void) {
+    // Write a minimal breadcrumb containing only the force_setup flag.
+    // We intentionally do not stomp any existing fault frame here --
+    // this is called from a healthy code path, and the last_line/fault
+    // fields are not meaningful. Write MAGIC_NORMAL_EXIT to scratch[0]
+    // so reset_reason_classify() takes the DELIBERATE branch and reads
+    // the breadcrumb (the force_setup flag lives there, not in scratch).
+    memset(&g_crash_breadcrumb, 0, sizeof(g_crash_breadcrumb));
+    g_crash_breadcrumb.force_setup = 1;
+    g_crash_breadcrumb.crc32 = breadcrumb_crc();
+    g_crash_breadcrumb.magic = BREADCRUMB_MAGIC;
+    // Mark scratch[0] so classify() treats this as a deliberate reboot
+    // and calls breadcrumb_fill_info() to pick up force_setup.
     watchdog_hw->scratch[0] = RESET_REASON_MAGIC_NORMAL_EXIT;
 }
 

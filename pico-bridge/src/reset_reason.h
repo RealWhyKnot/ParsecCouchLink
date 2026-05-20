@@ -72,6 +72,10 @@ typedef struct {
     uint32_t fault_bfar;
     bool     last_line_valid;
     char     last_line[RESET_REASON_LAST_LINE_CAP];     // most recent diag_log line before the fault
+    // Set when the previous boot explicitly requested a setup-mode
+    // bounce (e.g. Wi-Fi association watchdog fired). One-shot: cleared
+    // from the breadcrumb after classify() reads it.
+    bool     force_setup_after_reboot;
 } reset_reason_info_t;
 
 // Read scratch + breadcrumb + SDK state, classify, and clear the
@@ -88,6 +92,18 @@ const char *reset_reason_name(reset_reason_t r);
 // so a subsequent watchdog reset can be distinguished from a hang
 // during boot.
 void reset_reason_mark_main_loop_entered(void);
+
+// Request that the next boot lands in setup mode even if credentials
+// are present. Written into the breadcrumb before a watchdog_reboot()
+// call; the flag is read and cleared by reset_reason_classify() on the
+// next boot. The breadcrumb magic is bumped (0xC0DEBE13) so a stale
+// breadcrumb from an older firmware build is never misread.
+void reset_reason_request_setup_after_reboot(void);
+
+// True if reset_reason_classify() found a force_setup_after_reboot
+// flag in the breadcrumb. Stable after reset_reason_classify() returns;
+// the underlying breadcrumb field is cleared (one-shot) at that point.
+bool reset_reason_force_setup_requested(void);
 
 // Called from the fault handler context (interrupts effectively
 // disabled). Writes scratch[0..3] + the breadcrumb so the next boot

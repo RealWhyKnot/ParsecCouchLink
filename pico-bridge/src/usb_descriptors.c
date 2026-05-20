@@ -3,13 +3,11 @@
 //   setup mode: CDC ACM + WinUSB diag (Raspberry Pi VID 0x2E8A, PID 0xCAF0)
 //   run mode:   wired Xbox 360 / XUSB (Microsoft VID 0x045E, PID 0x028E)
 //
-// Only one persona is presented at a time. tusb_init() runs first to
-// satisfy the IRQ-vector prerequisite, but main() immediately holds
-// D+ low with tud_disconnect() until boot_mode_decide() returns, then
-// raises D+ with tud_connect(). The host therefore sees a single
-// connect event AFTER boot_mode_current() reports the final mode, so
-// the descriptor callbacks below always return the correct persona on
-// first enumeration -- no re-enumeration race.
+// Only one persona is presented at a time. main() calls boot_mode_decide()
+// before tusb_init(), so D+ is raised exactly once with the final mode
+// already committed. The descriptor callbacks below therefore always
+// return the correct persona on first enumeration -- no re-enumeration
+// race.
 //
 // Setup mode's CDC composite carries a third interface (interface 2,
 // vendor-class, no endpoints) that Windows binds to WinUSB via the MS
@@ -86,10 +84,10 @@ static const tusb_desc_device_t desc_device_xinput = {
 };
 
 uint8_t const *tud_descriptor_device_cb(void) {
-    static bool logged = false;
+    static volatile bool logged = false;
     if (!logged) {
-        diag_log_msg("usb: host requested device descriptor (enum step 1)");
         logged = true;
+        diag_log_msg("usb_init: first GET_DESCRIPTOR(DEVICE) reply sent");
     }
     return (uint8_t const *)(boot_mode_current() == BOOT_MODE_RUN
                              ? &desc_device_xinput
@@ -384,7 +382,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 // firmware-didn't-boot).
 
 void tud_mount_cb(void) {
-    diag_log_msg("usb: mounted (enumeration complete)");
+    diag_log_msg("usb_init: tud_mount_cb -- enumeration complete");
 }
 
 void tud_umount_cb(void) {
