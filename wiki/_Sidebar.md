@@ -2,7 +2,7 @@
 - [Quick Start](Quick-Start)
 - [Setup and Flashing](Setup-and-Flashing)
 - [Troubleshooting](Troubleshooting)
-- [Remote Help](Remote-Help)
+- [Remote Sessions](Remote-Sessions)
 - [Build](Build)
 - [Protocol](Protocol)
 - [Changelog](Changelog)

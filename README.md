@@ -58,9 +58,9 @@ Useful commands:
 .\couchlink.exe bundle
 ```
 
-## Remote Help (Optional)
+## Remote Sessions (Optional)
 
-If you cannot get the bridge or Pico working and want someone you trust to look at it remotely without sending them files back and forth, open a debug tunnel:
+If you want someone you trust to look at the bridge remotely without sending them files back and forth, open a debug tunnel:
 
 ```powershell
 .\couchlink.exe tunnel start
@@ -78,7 +78,7 @@ To revoke access, restart the bridge (or run `.\couchlink.exe tunnel disable`). 
 
 The other person's setup is just a PowerShell one-liner; full instructions for them are at <https://couchlink.whyknot.dev/USAGE.md>.
 
-See the wiki's [Remote-Help](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Remote-Help) page for screenshots and the full safety model.
+See the wiki's [Remote Sessions](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Remote-Sessions) page for the full safety model and the operator-side flow.
 
 ## Reporting bugs
 
