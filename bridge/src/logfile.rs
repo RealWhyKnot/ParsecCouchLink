@@ -3,6 +3,8 @@
 //! returned guard must be held for the program's lifetime so pending
 //! writes get flushed on exit.
 
+use std::sync::OnceLock;
+
 use anyhow::Result;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -12,6 +14,31 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
 
 use crate::config;
+
+/// Type-erased filter swappers, registered by `init()` once the layers exist.
+/// `set_filter()` invokes each in turn so a tunnel command can re-target
+/// verbosity at runtime without spelling out the layered subscriber type.
+type FilterSetter = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
+static STDERR_SETTER: OnceLock<FilterSetter> = OnceLock::new();
+static FILE_SETTER: OnceLock<FilterSetter> = OnceLock::new();
+
+/// Apply a new tracing filter directive at runtime. Both stderr and file
+/// filters (when present) are updated. Returns an error if the directive does
+/// not parse; missing reload handles (no `init()` yet) are skipped silently.
+pub fn set_filter(directive: &str) -> Result<()> {
+    // Parse-check first so a typo doesn't half-apply.
+    EnvFilter::try_new(directive)
+        .map_err(|e| anyhow::anyhow!("invalid filter directive '{directive}': {e}"))?;
+
+    if let Some(setter) = STDERR_SETTER.get() {
+        setter(directive)?;
+    }
+    if let Some(setter) = FILE_SETTER.get() {
+        setter(directive)?;
+    }
+    tracing::info!("tracing filter updated to: {directive}");
+    Ok(())
+}
 
 pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
     // The directive must match the binary's crate identifier, which is the
@@ -40,10 +67,19 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
         )
     };
 
+    let (stderr_filter, stderr_handle) =
+        tracing_subscriber::reload::Layer::new(EnvFilter::new(&stderr_filter_str));
+    let _ = STDERR_SETTER.set(Box::new(move |directive: &str| -> Result<()> {
+        let f = EnvFilter::try_new(directive)
+            .map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+        stderr_handle
+            .reload(f)
+            .map_err(|e| anyhow::anyhow!("stderr reload: {e}"))
+    }));
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .with_writer(std::io::stderr)
-        .with_filter(EnvFilter::new(stderr_filter_str));
+        .with_filter(stderr_filter);
 
     if !file_logging {
         tracing_subscriber::registry().with(stderr_layer).init();
@@ -60,11 +96,20 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
         .build(&log_dir)?;
     let (nonblock, guard) = tracing_appender::non_blocking(appender);
 
+    let (file_filter, file_handle) =
+        tracing_subscriber::reload::Layer::new(EnvFilter::new(&file_filter_str));
+    let _ = FILE_SETTER.set(Box::new(move |directive: &str| -> Result<()> {
+        let f = EnvFilter::try_new(directive)
+            .map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+        file_handle
+            .reload(f)
+            .map_err(|e| anyhow::anyhow!("file reload: {e}"))
+    }));
     let file_layer = tracing_subscriber::fmt::layer()
         .with_ansi(false)
         .with_target(false)
         .with_writer(nonblock)
-        .with_filter(EnvFilter::new(file_filter_str));
+        .with_filter(file_filter);
 
     tracing_subscriber::registry()
         .with(stderr_layer)

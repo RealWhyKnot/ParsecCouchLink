@@ -51,6 +51,48 @@ pub struct Config {
     /// Set after setup finishes successfully. Bridge run mode warns if
     /// this is false to nudge the user toward `couchlink setup`.
     pub setup_complete: bool,
+    /// Remote-debug tunnel session, if the user has opted in. Holds an
+    /// upload (write) token used on every WS reconnect and a view token
+    /// used to generate the shareable URL. Tokens rotate on `tunnel reset`.
+    #[serde(default)]
+    pub telemetry: Option<TelemetryConfig>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TelemetryConfig {
+    /// Base URL of the tunnel server, e.g. https://couchlink.whyknot.dev .
+    pub server: String,
+    /// 32-char write token issued by the tunnel server.
+    #[serde(default)]
+    pub write_token: String,
+    /// 32-char view token, used to construct shareable URLs.
+    #[serde(default)]
+    pub view_token: String,
+}
+
+impl TelemetryConfig {
+    pub fn ws_url(&self) -> String {
+        let base = self.server.trim_end_matches('/');
+        let ws = if let Some(rest) = base.strip_prefix("https://") {
+            format!("wss://{rest}")
+        } else if let Some(rest) = base.strip_prefix("http://") {
+            format!("ws://{rest}")
+        } else {
+            base.to_string()
+        };
+        format!("{ws}/ws")
+    }
+
+    pub fn view_url(&self) -> String {
+        let base = self.server.trim_end_matches('/');
+        format!("{base}/v/{}", self.view_token)
+    }
+
+    #[allow(dead_code)] // available for callers that mint without a TelemetryConfig
+    pub fn mint_url(&self) -> String {
+        let base = self.server.trim_end_matches('/');
+        format!("{base}/api/sessions")
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]

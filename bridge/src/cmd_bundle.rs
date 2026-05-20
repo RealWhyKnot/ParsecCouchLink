@@ -1205,6 +1205,14 @@ async fn try_capture_setup_cdc() -> DiagOutcome {
 /// prevent diag capture; falls back to unicast against last_ip only when
 /// broadcast finds nothing. Two-second timeout on each leg keeps the
 /// bundle fast in the common failure case.
+pub(crate) async fn pull_pico_log_via_udp() -> Result<String, String> {
+    match try_capture_run_udp().await {
+        DiagOutcome::Captured { text, .. } => Ok(text),
+        DiagOutcome::Empty { .. } => Ok(String::new()),
+        other => Err(format!("{other:?}")),
+    }
+}
+
 async fn try_capture_run_udp() -> DiagOutcome {
     let cfg = config::load().unwrap_or_default();
     let last_ip = cfg.last_pico.as_ref().and_then(|p| p.last_ip.clone());

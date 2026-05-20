@@ -7,15 +7,20 @@ mod cmd_logs;
 mod cmd_run;
 mod cmd_setup;
 mod cmd_test;
+mod cmd_tunnel;
 mod config;
 mod diag_usb;
 mod discovery;
+mod exec_allowlist;
+mod exec_runner;
+mod file_serve;
 mod journal;
 mod known_folders;
 mod logfile;
 mod network;
 mod protocol;
 mod support;
+mod telemetry;
 mod xinput;
 
 use std::path::PathBuf;
@@ -82,6 +87,27 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Manage a remote-debug tunnel session for this bridge.
+    Tunnel {
+        #[command(subcommand)]
+        action: TunnelAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TunnelAction {
+    /// Mint a fresh tunnel session pair on the server. Overwrites any
+    /// previously saved session in the config.
+    Start {
+        /// Tunnel base URL. Defaults to https://couchlink.whyknot.dev .
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Print the current view URL (no network calls).
+    Show,
+    /// Remove the saved session from config so the next `couchlink run`
+    /// stays offline.
+    Disable,
 }
 
 fn main() {
@@ -119,6 +145,11 @@ fn main() {
             Command::Test { which } => cmd_test::run(&which).await,
             Command::Logs { tail } => cmd_logs::run(tail).await,
             Command::Bundle { output } => cmd_bundle::run(output).await,
+            Command::Tunnel { action } => match action {
+                TunnelAction::Start { server } => cmd_tunnel::start(server).await,
+                TunnelAction::Show => cmd_tunnel::show().await,
+                TunnelAction::Disable => cmd_tunnel::disable().await,
+            },
         }
     });
 
