@@ -1,8 +1,13 @@
 # Troubleshooting
 
-If you've already tried the doctor and still can't get unstuck, jump
-straight to [Reporting bugs](Reporting-Bugs.md) -- it covers what to
-attach to an issue.
+If you've already tried the doctor and still can't get unstuck, two
+options:
+
+- [Reporting bugs](Reporting-Bugs.md) covers what to attach to an issue
+  if you want a maintainer to take a look.
+- [Remote Help](Remote-Help.md) lets someone you trust connect to your
+  running bridge over the network and run a bounded set of debug
+  commands without you having to ship log files back and forth.
 
 Start with:
 

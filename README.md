@@ -58,6 +58,28 @@ Useful commands:
 .\couchlink.exe bundle
 ```
 
+## Remote Help (Optional)
+
+If you cannot get the bridge or Pico working and want someone you trust to look at it remotely without sending them files back and forth, open a debug tunnel:
+
+```powershell
+.\couchlink.exe tunnel start
+```
+
+The bridge mints a session on `couchlink.whyknot.dev` and prints a one-line view URL. Share that URL only with someone you trust -- it lets them run a small allowlisted set of commands against this bridge:
+
+- `couchlink` subcommands (doctor / bundle / configure-wifi / flash / logs / test)
+- `cmake` and `ninja` for firmware rebuilds
+- `dir` / `ls` / `type` / `cat` for log inspection
+
+There is no general shell. File reads are limited to a fixed set of log / config files with passwords and tokens redacted. Every command the other person runs and every line of output is mirrored to your own bridge console, so you can watch what they are doing in real time.
+
+To revoke access, restart the bridge (or run `.\couchlink.exe tunnel disable`). The URL goes dead immediately. Sessions also auto-expire after 24 hours of bridge idle.
+
+The other person's setup is just a PowerShell one-liner; full instructions for them are at <https://couchlink.whyknot.dev/USAGE.md>.
+
+See the wiki's [Remote-Help](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Remote-Help) page for screenshots and the full safety model.
+
 ## Reporting bugs
 
 If something went wrong, the fastest path is:
