@@ -140,10 +140,19 @@ enum LabCmd {
     Bundle {
         id: String,
     },
-    WifiSet {
+    /// Decrypt the host-saved DPAPI vault and push (ssid, password) to
+    /// the Pico over CDC. The cleartext credentials never traverse the
+    /// tunnel; the operator only triggers this command, and the result
+    /// carries the SSID (so the operator can confirm which network was
+    /// applied) but never the password. The host populates the vault
+    /// once by running `couchlink save-wifi` on their own terminal.
+    WifiApplySaved {
         id: String,
-        ssid: String,
-        password: String,
+    },
+    /// Send CDC_CMD_CLEAR_WIFI so the Pico wipes its flash credentials
+    /// and re-enters setup mode on next boot.
+    WifiClear {
+        id: String,
     },
     PullLog {
         id: String,
@@ -405,7 +414,8 @@ async fn dispatch(cmd: LabCmd, upload: &mut UploadState, out: &mpsc::Sender<Stri
         LabCmd::ForceBootsel { id } => handle_force_bootsel(id, out).await,
         LabCmd::Doctor { id } => handle_doctor(id, out).await,
         LabCmd::Bundle { id } => handle_bundle(id, out).await,
-        LabCmd::WifiSet { id, ssid, password } => handle_wifi_set(id, ssid, password, out).await,
+        LabCmd::WifiApplySaved { id } => handle_wifi_apply_saved(id, out).await,
+        LabCmd::WifiClear { id } => handle_wifi_clear(id, out).await,
         LabCmd::PullLog { id } => handle_pull_log(id, out).await,
         LabCmd::State { id } => handle_state(id, upload, out).await,
     }
@@ -818,12 +828,64 @@ async fn stream_file(path: &Path, id: &str, out: &mpsc::Sender<String>) -> Resul
     Ok(())
 }
 
-async fn handle_wifi_set(
-    id: String,
-    ssid: String,
-    password: String,
-    out: &mpsc::Sender<String>,
-) -> Result<()> {
+async fn handle_wifi_apply_saved(id: String, out: &mpsc::Sender<String>) -> Result<()> {
+    // Decrypt strictly in the spawn_blocking closure so the cleartext
+    // bytes live on a synchronous stack we can zeroize deterministically.
+    // The cleartext never crosses an await boundary, never lands in an
+    // Event, never sees the tunnel.
+    let result = tokio::task::spawn_blocking(move || -> Result<String> {
+        let Some(creds) = crate::wifi_vault::load()? else {
+            anyhow::bail!(
+                "no saved Wi-Fi credentials on this host; run \
+                 `couchlink save-wifi` on the host first"
+            );
+        };
+        let port = cdc::find_setup_port()
+            .map_err(|e| anyhow::anyhow!("no setup-mode Pico found: {e:#}"))?;
+        let mut pico = cdc::PicoSetup::open_named(&port)?;
+        let _ = pico.hello()?;
+        // Move the cleartext into a local mutable buffer so set_wifi can
+        // zeroize it; the Zeroizing<String> in `creds` zeroizes on drop
+        // as defense in depth.
+        let mut pass = creds.password.as_str().to_string();
+        let rc = pico.set_wifi(&creds.ssid, &mut pass);
+        use zeroize::Zeroize;
+        pass.zeroize();
+        rc?;
+        pico.reboot_to_run()?;
+        Ok(creds.ssid)
+    })
+    .await
+    .context("join wifi_apply_saved task")?;
+
+    match result {
+        Ok(ssid) => {
+            emit(
+                out,
+                LabEvent::WifiResult {
+                    id,
+                    ok: true,
+                    detail: Some(format!("applied saved credentials for SSID '{ssid}'")),
+                },
+            )
+            .await;
+        }
+        Err(e) => {
+            emit(
+                out,
+                LabEvent::WifiResult {
+                    id,
+                    ok: false,
+                    detail: Some(format!("{e:#}")),
+                },
+            )
+            .await;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_wifi_clear(id: String, out: &mpsc::Sender<String>) -> Result<()> {
     let port = match cdc::find_setup_port() {
         Ok(p) => p,
         Err(e) => {
@@ -839,22 +901,13 @@ async fn handle_wifi_set(
             return Ok(());
         }
     };
-
     let result = tokio::task::spawn_blocking(move || -> Result<()> {
         let mut pico = cdc::PicoSetup::open_named(&port)?;
         let _ = pico.hello()?;
-        let mut pass_buf = password;
-        let rc = pico.set_wifi(&ssid, &mut pass_buf);
-        // pass_buf is zeroized by set_wifi on success; defense-in-depth
-        // here for the error path.
-        use zeroize::Zeroize;
-        pass_buf.zeroize();
-        rc?;
-        pico.reboot_to_run()
+        pico.clear_wifi()
     })
     .await
-    .context("join wifi_set task")?;
-
+    .context("join wifi_clear task")?;
     match result {
         Ok(()) => {
             emit(
@@ -862,7 +915,7 @@ async fn handle_wifi_set(
                 LabEvent::WifiResult {
                     id,
                     ok: true,
-                    detail: None,
+                    detail: Some("cleared Pico flash credentials".into()),
                 },
             )
             .await;
