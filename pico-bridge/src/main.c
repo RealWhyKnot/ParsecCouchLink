@@ -301,6 +301,38 @@ int main(void) {
     tusb_init();
     diag_log_msg("usb_init: tusb_init complete");
 
+    // Pump TinyUSB until the host completes enumeration or 1500 ms,
+    // whichever comes first. Run mode's first blocking step is
+    // wifi_init()/cyw43_arch_init_with_country(), which can hold the
+    // CPU for hundreds of ms to a couple of seconds while it streams
+    // the CYW43 firmware blob to the radio. Without this pump, Windows
+    // sends GET_DESCRIPTOR(DEVICE) into a stack with no task ticking,
+    // times out, and abandons the device as VID_0000:PID_0002. Setup
+    // mode mounts in well under 100 ms so the pump exits early and
+    // costs us nothing on the setup path.
+    {
+        absolute_time_t pump_start = get_absolute_time();
+        absolute_time_t deadline   = make_timeout_time_ms(1500);
+        bool mounted_in_pump = false;
+        while (!time_reached(deadline)) {
+            tud_task();
+            if (tud_mounted()) { mounted_in_pump = true; break; }
+            sleep_us(500);
+        }
+        uint32_t elapsed_ms = (uint32_t)(
+            absolute_time_diff_us(pump_start, get_absolute_time()) / 1000);
+        if (mounted_in_pump) {
+            diag_log_printf(
+                "usb_init: enumeration completed during pump (%u ms)",
+                (unsigned)elapsed_ms);
+        } else {
+            diag_log_printf(
+                "usb_init: pump timeout after %u ms (mounted=%d) -- "
+                "continuing with mode init",
+                (unsigned)elapsed_ms, (int)tud_mounted());
+        }
+    }
+
     if (mode == BOOT_MODE_RUN) {
         run_mode_main_loop();
     } else {
