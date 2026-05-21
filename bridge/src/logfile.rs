@@ -25,6 +25,7 @@ static FILE_SETTER: OnceLock<FilterSetter> = OnceLock::new();
 /// Apply a new tracing filter directive at runtime. Both stderr and file
 /// filters (when present) are updated. Returns an error if the directive does
 /// not parse; missing reload handles (no `init()` yet) are skipped silently.
+#[allow(dead_code)] // exported for future runtime-tuning hooks
 pub fn set_filter(directive: &str) -> Result<()> {
     // Parse-check first so a typo doesn't half-apply.
     EnvFilter::try_new(directive)

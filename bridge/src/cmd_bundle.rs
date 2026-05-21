@@ -1247,6 +1247,7 @@ async fn try_capture_setup_cdc() -> DiagOutcome {
 /// prevent diag capture; falls back to unicast against last_ip only when
 /// broadcast finds nothing. Two-second timeout on each leg keeps the
 /// bundle fast in the common failure case.
+#[allow(dead_code)] // available for the bundle flow; cmd_lab uses its own inline UDP path
 pub(crate) async fn pull_pico_log_via_udp() -> Result<String, String> {
     match try_capture_run_udp().await {
         DiagOutcome::Captured { text, .. } => Ok(text),

@@ -138,12 +138,14 @@ pub struct FlashOutcome {
 pub async fn flash_uf2_to_bootsel(uf2: &Path, wait_timeout: Duration) -> Result<FlashOutcome> {
     tracing::info!("flash: waiting for BOOTSEL drive (RPI-RP2 or RP2350)...");
     let start = Instant::now();
-    let (mount, board) = wait_for_bootsel_mount(wait_timeout).await.inspect_err(|_| {
-        tracing::error!(
-            "flash: timeout after {}s -- no BOOTSEL drive observed",
-            wait_timeout.as_secs()
-        )
-    })?;
+    let (mount, board) = wait_for_bootsel_mount(wait_timeout)
+        .await
+        .inspect_err(|_| {
+            tracing::error!(
+                "flash: timeout after {}s -- no BOOTSEL drive observed",
+                wait_timeout.as_secs()
+            )
+        })?;
     let wait_seconds = start.elapsed().as_secs();
     tracing::info!(
         "flash: BOOTSEL drive {} mounted as {} after {} s",
@@ -270,8 +272,8 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
         preview_mount.display()
     );
 
-    let uf2_path = resolve_uf2_path(uf2.as_deref(), preview_board)
-        .context("resolving which UF2 to flash")?;
+    let uf2_path =
+        resolve_uf2_path(uf2.as_deref(), preview_board).context("resolving which UF2 to flash")?;
     println!("Using firmware: {}", uf2_path.display());
     tracing::info!(
         "flash: using UF2 path={} source={}",
