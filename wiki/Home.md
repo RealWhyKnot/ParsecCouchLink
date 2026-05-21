@@ -26,7 +26,6 @@ Console player 2
 - [[Quick Start]] - install from a release zip and run the setup script.
 - [[Setup and Flashing]] - what the script does and how to recover a Pico.
 - [[Troubleshooting]] - what to run when setup or discovery fails.
-- [[Remote Sessions|Remote-Sessions]] - open a debug tunnel so someone you trust can look at your bridge over the network.
 - [[Reporting-Bugs]] - how to make a bundle and what to include in an issue.
 - [[Build]] - build the release zip from source.
 - [[Protocol]] - short runtime and setup protocol reference.
