@@ -40,6 +40,7 @@ pub const CMD_GET_DEVICE_NAME: u8 = 0x07;
 pub const CMD_SET_DEVICE_NAME: u8 = 0x08;
 pub const CMD_GET_UNIQUE_ID: u8 = 0x09;
 pub const CMD_GET_LOG_BUFFER: u8 = 0x0A;
+pub const CMD_REBOOT_TO_BOOTSEL: u8 = 0x0B;
 
 // Response opcodes
 pub const RSP_HELLO: u8 = 0x81;
@@ -52,6 +53,7 @@ pub const RSP_DEVICE_NAME: u8 = 0x87;
 pub const RSP_SET_DEVICE_NAME: u8 = 0x88;
 pub const RSP_UNIQUE_ID: u8 = 0x89;
 pub const RSP_LOG_BUFFER: u8 = 0x8A;
+pub const RSP_BOOTSEL_ACK: u8 = 0x8B;
 pub const RSP_NACK: u8 = 0xFE;
 
 // Error codes (carried in the NACK payload).
@@ -570,6 +572,83 @@ impl PicoSetup {
                     }
                     bail!(
                         "unexpected response 0x{:02X} to REBOOT_TO_RUN",
+                        frame.command,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Ask the Pico to jump to the bootrom's USB bootloader (the BOOTSEL
+    /// mass-storage drive) without a physical button press. Same
+    /// outcome model as `reboot_to_run`: any of (a) RSP_BOOTSEL_ACK
+    /// followed by reboot, (b) write/read error because the port
+    /// disappeared as the firmware handed the bus to the bootrom, or
+    /// (c) deadline elapsed with the port still open and silent --
+    /// only (c) is a real failure.
+    pub fn reboot_to_bootsel(&mut self) -> Result<()> {
+        let seq = self.seq;
+        self.seq = self.seq.wrapping_add(1);
+        let frame = encode(CMD_REBOOT_TO_BOOTSEL, seq, &[]);
+        if let Err(e) = self.port.write_all(&frame) {
+            if e.kind() != std::io::ErrorKind::TimedOut {
+                tracing::info!(
+                    "bootsel: write returned {:?} -- treating as success (Pico rebooted)",
+                    e.kind(),
+                );
+                return Ok(());
+            }
+            return Err(e).context("writing REBOOT_TO_BOOTSEL frame");
+        }
+        if let Err(e) = self.port.flush() {
+            tracing::debug!("cdc: flush after write returned {e:?}");
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(750);
+        let mut buf = Vec::with_capacity(MAX_FRAME);
+        loop {
+            let mut tmp = [0u8; 64];
+            match self.port.read(&mut tmp) {
+                Ok(0) => {}
+                Ok(n) => buf.extend_from_slice(&tmp[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    if Instant::now() >= deadline {
+                        tracing::warn!(
+                            "bootsel: no RSP and port still open after 750 ms ({} bytes buffered)",
+                            buf.len(),
+                        );
+                        bail!("REBOOT_TO_BOOTSEL: no response and port still open after 750 ms");
+                    }
+                }
+                Err(e) => {
+                    tracing::info!(
+                        "bootsel: read returned {:?} -- treating as success (Pico rebooted)",
+                        e.kind(),
+                    );
+                    return Ok(());
+                }
+            }
+            if let Some(start) = find_magic(&buf) {
+                if start > 0 {
+                    buf.drain(..start);
+                }
+                if let Ok((frame, _consumed)) = try_decode(&buf) {
+                    if frame.command == RSP_BOOTSEL_ACK {
+                        tracing::info!("bootsel: got RSP_BOOTSEL_ACK (0x8B)");
+                        return Ok(());
+                    }
+                    if frame.command == RSP_NACK {
+                        let code = frame.payload.first().copied().unwrap_or(ERR_INTERNAL);
+                        let detail = frame.payload.get(1).copied().unwrap_or(0);
+                        return Err(anyhow!(
+                            "Pico rejected REBOOT_TO_BOOTSEL: {} (code 0x{:02X}, detail 0x{:02X})",
+                            err_name(code),
+                            code,
+                            detail,
+                        ));
+                    }
+                    bail!(
+                        "unexpected response 0x{:02X} to REBOOT_TO_BOOTSEL",
                         frame.command,
                     );
                 }

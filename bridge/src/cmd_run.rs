@@ -14,7 +14,10 @@ use crate::exec_allowlist::Allowlist;
 use crate::telemetry::{
     self, ErrorBody, HeartbeatBody, HostMetadata, OutEvent, RemoteCmd, TelemetryHandle,
 };
-use crate::{cmd_bundle, config, discovery, exec_runner, file_serve, journal, logfile, network, protocol, xinput};
+use crate::{
+    cmd_bundle, config, discovery, exec_runner, file_serve, journal, logfile, network, protocol,
+    xinput,
+};
 
 pub async fn run() -> Result<()> {
     tracing::info!("run: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
@@ -52,9 +55,10 @@ pub async fn run() -> Result<()> {
         if let Some(tcfg) = cfg.telemetry.clone() {
             let meta = HostMetadata {
                 board_type: cfg.last_pico.as_ref().map(|p| board_label(p.board_type)),
-                firmware_version: cfg.last_pico.as_ref().map(|p| {
-                    format!("{}.{}.{}", p.fw_major, p.fw_minor, p.fw_patch)
-                }),
+                firmware_version: cfg
+                    .last_pico
+                    .as_ref()
+                    .map(|p| format!("{}.{}.{}", p.fw_major, p.fw_minor, p.fw_patch)),
                 device_uid: cfg
                     .last_pico
                     .as_ref()
@@ -70,20 +74,9 @@ pub async fn run() -> Result<()> {
             let (handle, cmd_rx) = telemetry::spawn(tcfg.clone(), meta, shutdown.clone());
             telemetry::forward_journal(handle.clone());
             spawn_heartbeat_publisher(handle.clone(), stats_rx.clone());
-            spawn_dispatcher(
-                handle.clone(),
-                cmd_rx,
-                allowlist.clone(),
-                drop_peer.clone(),
-            );
-            tracing::info!(
-                "tunnel: telemetry active, view URL is {}",
-                tcfg.view_url()
-            );
-            handle.note(format!(
-                "bridge v{} ready",
-                env!("CARGO_PKG_VERSION")
-            ));
+            spawn_dispatcher(handle.clone(), cmd_rx, allowlist.clone(), drop_peer.clone());
+            tracing::info!("tunnel: telemetry active, view URL is {}", tcfg.view_url());
+            handle.note(format!("bridge v{} ready", env!("CARGO_PKG_VERSION")));
         }
     } else {
         tracing::info!("tunnel: inactive (no session in config)");
@@ -209,10 +202,7 @@ fn spawn_stats_logger(mut rx: watch::Receiver<network::Stats>) {
     });
 }
 
-fn spawn_heartbeat_publisher(
-    tele: TelemetryHandle,
-    mut rx: watch::Receiver<network::Stats>,
-) {
+fn spawn_heartbeat_publisher(tele: TelemetryHandle, mut rx: watch::Receiver<network::Stats>) {
     let started = Instant::now();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(5));
@@ -282,15 +272,13 @@ async fn dispatch_one(
             drop_peer.notify_waiters();
             tele.note(format!("[{id}] peer dropped"));
         }
-        RemoteCmd::SetLogFilter { id, directive } => {
-            match logfile::set_filter(&directive) {
-                Ok(()) => tele.note(format!("[{id}] log filter -> {directive}")),
-                Err(e) => tele.publish(OutEvent::Error(ErrorBody {
-                    id: Some(id),
-                    message: format!("set_log_filter: {e}"),
-                })),
-            }
-        }
+        RemoteCmd::SetLogFilter { id, directive } => match logfile::set_filter(&directive) {
+            Ok(()) => tele.note(format!("[{id}] log filter -> {directive}")),
+            Err(e) => tele.publish(OutEvent::Error(ErrorBody {
+                id: Some(id),
+                message: format!("set_log_filter: {e}"),
+            })),
+        },
     }
 }
 

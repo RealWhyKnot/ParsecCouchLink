@@ -22,6 +22,11 @@ pub const TYPE_ACK: u8 = 0x04;
 /// firmware's existing on_recv() RX path accepts it. The reply is a
 /// sequence of variable-length `TYPE_LOG_CHUNK` datagrams.
 pub const TYPE_GET_LOG: u8 = 0x05;
+/// Request to jump to the bootrom USB bootloader (the BOOTSEL
+/// mass-storage drive) without a physical button press. Same 17-byte
+/// shape as the streaming types; body reserved. The Pico replies with a
+/// normal `TYPE_ACK` and then hands the bus over.
+pub const TYPE_REBOOT_TO_BOOTSEL: u8 = 0x06;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
@@ -273,6 +278,22 @@ pub fn encode_get_log(seq: u8) -> [u8; PACKET_SIZE] {
     let mut buf = [0u8; PACKET_SIZE];
     buf[0] = MAGIC;
     buf[1] = TYPE_GET_LOG;
+    buf[2] = seq;
+    buf[3] = 0;
+    // body[0..12] stays zero
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+/// Build a `TYPE_REBOOT_TO_BOOTSEL` request datagram. Same fixed shape;
+/// body reserved. Pico ACKs with a normal `TYPE_ACK` before handing the
+/// bus to the bootrom -- callers should match the ACK against the seq
+/// they sent, then wait long enough for `reset_usb_boot()` to take over
+/// (typically a few hundred ms) before searching for the BOOTSEL drive.
+pub fn encode_reboot_to_bootsel(seq: u8) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_REBOOT_TO_BOOTSEL;
     buf[2] = seq;
     buf[3] = 0;
     // body[0..12] stays zero
@@ -591,6 +612,24 @@ mod tests {
         assert_eq!(
             Packet::decode(&buf),
             Err(DecodeError::UnknownType(TYPE_GET_LOG))
+        );
+    }
+
+    #[test]
+    fn reboot_to_bootsel_encode_shape() {
+        let buf = encode_reboot_to_bootsel(7);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_REBOOT_TO_BOOTSEL);
+        assert_eq!(buf[2], 7);
+        assert_eq!(buf[3], 0);
+        for b in &buf[4..16] {
+            assert_eq!(*b, 0);
+        }
+        assert_eq!(buf[16], crc8(&buf[..16]));
+        assert_eq!(
+            Packet::decode(&buf),
+            Err(DecodeError::UnknownType(TYPE_REBOOT_TO_BOOTSEL))
         );
     }
 

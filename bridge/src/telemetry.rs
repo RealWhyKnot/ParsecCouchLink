@@ -16,9 +16,7 @@ use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Notify};
-use tokio_tungstenite::tungstenite::{
-    client::IntoClientRequest, http::HeaderValue, Message,
-};
+use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
 
 use crate::config::TelemetryConfig;
 use crate::journal;
@@ -290,10 +288,7 @@ pub fn spawn(
     let token = cfg.write_token.clone();
     let view_url = cfg.view_url();
 
-    tracing::info!(
-        "tunnel: configured ({}), view URL is {}",
-        url, view_url
-    );
+    tracing::info!("tunnel: configured ({}), view URL is {}", url, view_url);
 
     // Mirror commands the host should know about into local stdout/log so the
     // host can watch what's happening in their terminal.
@@ -328,8 +323,15 @@ async fn connection_loop(
 
     loop {
         tracing::info!("tunnel: connecting to {url}");
-        match connect_once(&url, &write_token, &hello, &mut out_rx, &cmd_tx, shutdown.clone())
-            .await
+        match connect_once(
+            &url,
+            &write_token,
+            &hello,
+            &mut out_rx,
+            &cmd_tx,
+            shutdown.clone(),
+        )
+        .await
         {
             Ok(reason) => {
                 tracing::info!("tunnel: session ended ({reason}); reconnecting");
@@ -338,7 +340,7 @@ async fn connection_loop(
             }
             Err(e) => {
                 consec_failures = consec_failures.saturating_add(1);
-                if consec_failures == 1 || consec_failures % 10 == 0 {
+                if consec_failures == 1 || consec_failures.is_multiple_of(10) {
                     tracing::warn!(
                         "tunnel: connect failed (attempt {consec_failures}): {e}. View URL: {view_url}"
                     );
@@ -382,7 +384,9 @@ async fn connect_once(
 
     // Send hello first.
     let hello_msg = encode(hello).context("encode hello")?;
-    sink.send(Message::Text(hello_msg)).await.context("send hello")?;
+    sink.send(Message::Text(hello_msg))
+        .await
+        .context("send hello")?;
 
     loop {
         tokio::select! {
@@ -517,4 +521,3 @@ pub fn forward_journal(handle: TelemetryHandle) {
         }
     });
 }
-

@@ -7,11 +7,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::{anyhow, Context, Result};
 use tokio::net::UdpSocket;
 use tokio::sync::{watch, Notify};
 use tokio::time::{interval, Instant};
 
-use crate::protocol::{GamepadState, Packet, FLAG_PARSEC_CONNECTED};
+use crate::protocol::{self, GamepadState, Packet, PacketKind, FLAG_PARSEC_CONNECTED};
 use crate::xinput;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(16);
@@ -133,6 +134,57 @@ pub async fn run(
             } => {
                 tracing::info!("peer {peer} dropped by tunnel command");
                 return Exit::PeerLost;
+            }
+        }
+    }
+}
+
+/// One-shot helper: send `TYPE_REBOOT_TO_BOOTSEL` to the Pico at `peer`
+/// and wait up to `timeout` for the firmware's `TYPE_ACK`. Returns Ok on
+/// ACK, Err on timeout or socket failure. Used by lab-mode's
+/// `force_bootsel` so a remote operator can drop the Pico into BOOTSEL
+/// drive mode without pressing the physical button.
+///
+/// The bootrom takes over within ~100 ms of the ACK leaving the Pico, so
+/// a short timeout (500 ms) is plenty. Callers who want to confirm the
+/// BOOTSEL drive actually mounted should follow up with the usual
+/// `cmd_flash` drive-detect.
+#[allow(dead_code)] // wired up by cmd_lab in a later commit
+pub async fn send_reboot_to_bootsel(peer: SocketAddr, timeout: Duration) -> Result<()> {
+    let socket = UdpSocket::bind("0.0.0.0:0")
+        .await
+        .context("binding ephemeral UDP socket")?;
+    let req = protocol::encode_reboot_to_bootsel(0);
+    socket
+        .send_to(&req, peer)
+        .await
+        .with_context(|| format!("send REBOOT_TO_BOOTSEL to {peer}"))?;
+    let mut buf = [0u8; 64];
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| anyhow!("no ack from {peer} within {} ms", timeout.as_millis()))?;
+        match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+            Ok(Ok((n, from))) => {
+                if from != peer {
+                    continue;
+                }
+                match Packet::decode(&buf[..n]) {
+                    Ok(pkt) if matches!(pkt.kind, PacketKind::Ack(_)) => return Ok(()),
+                    Ok(_) => continue,
+                    Err(e) => {
+                        tracing::debug!("force_bootsel: discarded non-ack from {from}: {e}");
+                    }
+                }
+            }
+            Ok(Err(e)) => return Err(e).context("recv ack"),
+            Err(_) => {
+                return Err(anyhow!(
+                    "no ack from {peer} within {} ms",
+                    timeout.as_millis()
+                ))
             }
         }
     }

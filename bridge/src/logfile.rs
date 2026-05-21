@@ -70,8 +70,7 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
     let (stderr_filter, stderr_handle) =
         tracing_subscriber::reload::Layer::new(EnvFilter::new(&stderr_filter_str));
     let _ = STDERR_SETTER.set(Box::new(move |directive: &str| -> Result<()> {
-        let f = EnvFilter::try_new(directive)
-            .map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+        let f = EnvFilter::try_new(directive).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
         stderr_handle
             .reload(f)
             .map_err(|e| anyhow::anyhow!("stderr reload: {e}"))
@@ -99,8 +98,7 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
     let (file_filter, file_handle) =
         tracing_subscriber::reload::Layer::new(EnvFilter::new(&file_filter_str));
     let _ = FILE_SETTER.set(Box::new(move |directive: &str| -> Result<()> {
-        let f = EnvFilter::try_new(directive)
-            .map_err(|e| anyhow::anyhow!("parse: {e}"))?;
+        let f = EnvFilter::try_new(directive).map_err(|e| anyhow::anyhow!("parse: {e}"))?;
         file_handle
             .reload(f)
             .map_err(|e| anyhow::anyhow!("file reload: {e}"))

@@ -20,9 +20,7 @@ use crate::config;
 
 const FILE_NAME: &str = "exec_allowlist.toml";
 
-const DEFAULT_ENTRIES: &[&str] = &[
-    "couchlink", "cmake", "ninja", "dir", "ls", "type", "cat",
-];
+const DEFAULT_ENTRIES: &[&str] = &["couchlink", "cmake", "ninja", "dir", "ls", "type", "cat"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct OnDisk {
@@ -155,7 +153,9 @@ mod tests {
     fn case_and_extension_insensitive() {
         let a = Allowlist::defaults();
         assert!(a.resolve("CMake.exe").is_some());
-        assert!(a.resolve("C:\\Program Files\\CMake\\bin\\cmake.exe").is_some());
+        assert!(a
+            .resolve("C:\\Program Files\\CMake\\bin\\cmake.exe")
+            .is_some());
     }
 
     #[test]

@@ -77,10 +77,7 @@ pub async fn spawn(
             emit_error(
                 &tele,
                 &id,
-                format!(
-                    "spawn '{}' failed: {e}",
-                    resolved.display()
-                ),
+                format!("spawn '{}' failed: {e}", resolved.display()),
             );
             emit_exit(&tele, &id, 127, 0);
             return;
