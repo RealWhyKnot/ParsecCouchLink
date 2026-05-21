@@ -26,6 +26,7 @@ Console player 2
 - [[Quick Start]] - install from a release zip and run the setup script.
 - [[Setup and Flashing]] - what the script does and how to recover a Pico.
 - [[Troubleshooting]] - what to run when setup or discovery fails.
+- [[Lab Mode]] - opt-in remote-flash session for collaborative testing.
 - [[Reporting-Bugs]] - how to make a bundle and what to include in an issue.
 - [[Build]] - build the release zip from source.
 - [[Protocol]] - short runtime and setup protocol reference.
