@@ -111,40 +111,45 @@ fn family_name(family_id: u32) -> &'static str {
     }
 }
 
-pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
-    println!("Looking for a Pico in BOOTSEL mode (RPI-RP2 or RP2350 drive, 60 s timeout)...");
-    println!("If your Pico is not in BOOTSEL yet: hold the BOOTSEL button, plug the Pico");
-    println!("into this PC with a micro-USB data cable, then release BOOTSEL as soon as");
-    println!("the RPI-RP2 or RP2350 drive appears in File Explorer.");
+/// Structured result of a flash operation. Returned by the in-process
+/// `flash_uf2_to_bootsel` core so non-CLI callers (lab mode, future
+/// scripted flows) get a typed answer instead of parsing stdout.
+#[allow(dead_code)] // fields read by cmd_lab in a later commit
+#[derive(Clone, Debug)]
+pub struct FlashOutcome {
+    pub board: BootselBoard,
+    pub mount: PathBuf,
+    pub uf2_path: PathBuf,
+    pub bytes_written: usize,
+    pub wait_seconds: u64,
+    /// True if the drive vanished mid-write (the Pico rebooted into the
+    /// freshly-flashed firmware). This is the expected happy path on a
+    /// fast machine and is not an error.
+    pub rebooted_during_copy: bool,
+}
 
+/// Core flash sequence: wait for BOOTSEL drive, validate UF2 family,
+/// copy. Logs progress via tracing so anything draining the tracing
+/// stream (the CLI's console mirror, the journal bus, the lab tunnel)
+/// sees the same operator-readable timeline.
+///
+/// `uf2` is the file to copy -- already resolved by the caller.
+/// `wait_timeout` bounds the BOOTSEL-drive scan.
+pub async fn flash_uf2_to_bootsel(uf2: &Path, wait_timeout: Duration) -> Result<FlashOutcome> {
     tracing::info!("flash: waiting for BOOTSEL drive (RPI-RP2 or RP2350)...");
     let start = Instant::now();
-    let (mount, board) = wait_for_bootsel_mount(Duration::from_secs(60))
-        .await
-        .inspect_err(|_| {
-            tracing::error!("flash: timeout after 60s -- no BOOTSEL drive observed")
-        })?;
-    let elapsed = start.elapsed().as_secs();
+    let (mount, board) = wait_for_bootsel_mount(wait_timeout).await.inspect_err(|_| {
+        tracing::error!(
+            "flash: timeout after {}s -- no BOOTSEL drive observed",
+            wait_timeout.as_secs()
+        )
+    })?;
+    let wait_seconds = start.elapsed().as_secs();
     tracing::info!(
         "flash: BOOTSEL drive {} mounted as {} after {} s",
         board.label(),
         mount.display(),
-        elapsed,
-    );
-    println!("Detected {} at {}", board.label(), mount.display());
-
-    let uf2_path =
-        resolve_uf2_path(uf2.as_deref(), board).context("resolving which UF2 to flash")?;
-    println!("Using firmware: {}", uf2_path.display());
-    // Log after resolve so the path in the file is always the final resolved one.
-    tracing::info!(
-        "flash: using UF2 path={} source={}",
-        uf2_path.display(),
-        if uf2.is_some() {
-            "override"
-        } else {
-            "auto-pick"
-        },
+        wait_seconds,
     );
 
     // Pre-flight: peek the UF2 header and refuse to write if the family
@@ -152,7 +157,7 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
     // discards wrong-family blocks and remounts as BOOTSEL with no
     // feedback to the operator -- a copy that looks like it succeeded
     // but produces a device that never enumerates. Block here instead.
-    match read_uf2_family_id(&uf2_path).await {
+    match read_uf2_family_id(uf2).await {
         Ok(Some(family)) => {
             if board.accepts_family(family) {
                 tracing::debug!(
@@ -174,7 +179,7 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
                     "UF2 family mismatch: {} has family 0x{:08X} ({}), but the detected \
                      BOOTSEL drive is {}. The bootloader would silently reject this write \
                      and the Pico would never come out of BOOTSEL.\n\n  For {}, use {}.",
-                    uf2_path.display(),
+                    uf2.display(),
                     family,
                     family_name(family),
                     board.label(),
@@ -184,12 +189,9 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
             }
         }
         Ok(None) => {
-            // Not a recognizable UF2 magic. Let the copy proceed and the
-            // bootloader complain if it really is malformed -- we don't
-            // want to block manual recovery flows with non-standard files.
             tracing::warn!(
                 "flash: UF2 magic not recognized in {}; skipping family check",
-                uf2_path.display(),
+                uf2.display(),
             );
         }
         Err(e) => {
@@ -197,50 +199,109 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
         }
     }
 
-    println!("Copying {} -> {} ...", uf2_path.display(), mount.display());
-
     // The bootloader reboots the Pico as soon as the file copy finishes,
     // so the OS may return EOF or a write error on the very last block.
     // Treat a partial-write error after the drive vanished as success.
-    let dest_name = uf2_path
+    let dest_name = uf2
         .file_name()
         .map(|n| n.to_owned())
         .unwrap_or_else(|| "couchlink-pico.uf2".into());
     let dest = mount.join(&dest_name);
 
-    let bytes = tokio::fs::read(&uf2_path)
+    let bytes = tokio::fs::read(uf2)
         .await
-        .with_context(|| format!("reading {}", uf2_path.display()))?;
-    let n = bytes.len();
-    match tokio::fs::write(&dest, bytes).await {
+        .with_context(|| format!("reading {}", uf2.display()))?;
+    let bytes_written = bytes.len();
+    let rebooted_during_copy = match tokio::fs::write(&dest, bytes).await {
         Ok(()) => {
-            tracing::info!("flash: copied {} bytes to {}", n, dest.display());
-            println!(
-                "Wrote {} bytes. The Pico should now reboot into the new firmware.",
-                n,
+            tracing::info!(
+                "flash: copied {} bytes to {}",
+                bytes_written,
+                dest.display()
             );
+            false
         }
         Err(e) => {
             if !mount.exists() {
                 tracing::info!(
                     "flash: drive vanished after copy -- treating as success, Pico is rebooting"
                 );
-                println!(
-                    "Pico rebooted mid-write (this is normal). Approximately {} bytes \
-                     transferred before reboot.",
-                    n,
-                );
+                true
             } else {
                 return Err(e)
                     .with_context(|| format!("writing {} (Pico still present)", dest.display()));
             }
         }
-    }
+    };
 
     let mut cfg = crate::config::load().unwrap_or_default();
-    cfg.last_uf2 = Some(uf2_path);
+    cfg.last_uf2 = Some(uf2.to_path_buf());
     let _ = crate::config::save(&cfg);
 
+    Ok(FlashOutcome {
+        board,
+        mount,
+        uf2_path: uf2.to_path_buf(),
+        bytes_written,
+        wait_seconds,
+        rebooted_during_copy,
+    })
+}
+
+pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
+    println!("Looking for a Pico in BOOTSEL mode (RPI-RP2 or RP2350 drive, 60 s timeout)...");
+    println!("If your Pico is not in BOOTSEL yet: hold the BOOTSEL button, plug the Pico");
+    println!("into this PC with a micro-USB data cable, then release BOOTSEL as soon as");
+    println!("the RPI-RP2 or RP2350 drive appears in File Explorer.");
+
+    // CLI surface needs to know the board before resolving the UF2 path,
+    // which means doing the BOOTSEL wait twice if we route through the
+    // factored core. Cheaper: detect once here, then call a small helper
+    // that skips the wait. But we'd rather keep the duplication low; the
+    // factored core's wait_for_bootsel_mount is bounded and idempotent
+    // once the drive is mounted, so calling it after we already know
+    // the drive is up just returns the same answer cheaply.
+    let preview_start = Instant::now();
+    let (preview_mount, preview_board) = wait_for_bootsel_mount(Duration::from_secs(60)).await?;
+    let _ = preview_start; // wait_seconds gets recomputed inside the core.
+    println!(
+        "Detected {} at {}",
+        preview_board.label(),
+        preview_mount.display()
+    );
+
+    let uf2_path = resolve_uf2_path(uf2.as_deref(), preview_board)
+        .context("resolving which UF2 to flash")?;
+    println!("Using firmware: {}", uf2_path.display());
+    tracing::info!(
+        "flash: using UF2 path={} source={}",
+        uf2_path.display(),
+        if uf2.is_some() {
+            "override"
+        } else {
+            "auto-pick"
+        },
+    );
+    println!(
+        "Copying {} -> {} ...",
+        uf2_path.display(),
+        preview_mount.display()
+    );
+
+    let outcome = flash_uf2_to_bootsel(&uf2_path, Duration::from_secs(60)).await?;
+
+    if outcome.rebooted_during_copy {
+        println!(
+            "Pico rebooted mid-write (this is normal). Approximately {} bytes transferred \
+             before reboot.",
+            outcome.bytes_written,
+        );
+    } else {
+        println!(
+            "Wrote {} bytes. The Pico should now reboot into the new firmware.",
+            outcome.bytes_written,
+        );
+    }
     Ok(())
 }
 

@@ -21,7 +21,28 @@ use zip::ZipWriter;
 use crate::protocol::{self, LogChunk, Packet, PacketKind, ACK_FLAG_LOG_CHUNK_SUPPORTED};
 use crate::{cdc, config, journal};
 
-pub async fn run(output: Option<PathBuf>) -> Result<()> {
+/// Structured result of a bundle build. Returned by `build_bundle` so
+/// callers (lab mode, future scripted flows) get a typed answer without
+/// scraping the CLI's `println!` summary.
+#[allow(dead_code)] // fields read by cmd_lab in a later commit
+#[derive(Clone, Debug)]
+pub struct BundleSummary {
+    pub zip_path: PathBuf,
+    pub manifest_json: String,
+    pub pico_diag_captured: bool,
+    pub pico_diag_outcome: String,
+    pub pico_diag_source: Option<String>,
+    pub crash_file_count: usize,
+    pub setup_transcript_count: usize,
+    pub pico_usb_enumerated: bool,
+}
+
+/// Build the support bundle zip. Captures diag, doctor, usb topology,
+/// logs, and writes them to `out_path`. Returns a structured summary.
+///
+/// CLI-side prompts (open-issues-in-browser, summary printing) live in
+/// `run`, not here -- this function is silent on stdout/stderr.
+pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     journal!("bundle", "run started");
     let diag = capture_pico_diag().await;
     journal!(
@@ -82,10 +103,6 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 
     let doctor_text = run_doctor_silently().await;
 
-    let out_path = output.unwrap_or_else(|| {
-        let stamp = Local::now().format("%Y%m%d-%H%M%S");
-        PathBuf::from(format!("couchlink-bundle-{stamp}.zip"))
-    });
     let f = std::fs::File::create(&out_path)
         .with_context(|| format!("creating {}", out_path.display()))?;
     let mut zip = ZipWriter::new(f);
@@ -231,26 +248,51 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 
     zip.finish()?;
 
+    Ok(BundleSummary {
+        zip_path: out_path,
+        manifest_json,
+        pico_diag_captured,
+        pico_diag_outcome,
+        pico_diag_source,
+        crash_file_count: crash_files.len(),
+        setup_transcript_count: setup_transcripts.len(),
+        pico_usb_enumerated,
+    })
+}
+
+pub async fn run(output: Option<PathBuf>) -> Result<()> {
+    let out_path = output.unwrap_or_else(|| {
+        let stamp = Local::now().format("%Y%m%d-%H%M%S");
+        PathBuf::from(format!("couchlink-bundle-{stamp}.zip"))
+    });
+    let summary = build_bundle(out_path).await?;
+
     let issue_url = crate::support::issue_url();
-    println!("Wrote {}", out_path.display());
+    println!("Wrote {}", summary.zip_path.display());
     println!("  manifest.json + doctor.txt + bridge logs");
-    if pico_diag_captured {
-        match pico_diag_source.as_deref() {
+    if summary.pico_diag_captured {
+        match summary.pico_diag_source.as_deref() {
             Some(src) => println!("  pico-diag.txt: captured via {src}"),
             None => println!("  pico-diag.txt: captured"),
         }
     } else {
-        println!("  pico-diag.txt: not captured ({pico_diag_outcome}) -- see the file for details");
+        println!(
+            "  pico-diag.txt: not captured ({}) -- see the file for details",
+            summary.pico_diag_outcome
+        );
     }
-    if crash_files.is_empty() {
+    if summary.crash_file_count == 0 {
         println!("  crashes/: none");
     } else {
-        println!("  crashes/: {} files", crash_files.len());
+        println!("  crashes/: {} files", summary.crash_file_count);
     }
-    if setup_transcripts.is_empty() {
+    if summary.setup_transcript_count == 0 {
         println!("  setup transcripts: none");
     } else {
-        println!("  setup transcripts: {} files", setup_transcripts.len());
+        println!(
+            "  setup transcripts: {} files",
+            summary.setup_transcript_count
+        );
     }
     println!();
     println!("Wi-Fi password and SSID are not included. Safe to share.");
