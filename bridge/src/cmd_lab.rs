@@ -1,11 +1,27 @@
-//! `couchlink lab-mode` -- silent remote-flash session.
+//! `couchlink lab-mode` -- opt-in remote pair-flash session.
 //!
-//! Replaces the broad `couchlink tunnel` flow with a tight command
-//! surface focused on the deploy/test iteration loop: receive a UF2
-//! over the tunnel, drop the Pico into BOOTSEL (via firmware command or
-//! `picotool` fallback), flash, run health checks, ship the bundle
-//! back. Nothing visible on the host's console besides a one-time
-//! banner.
+//! The host starts this subcommand explicitly; the printed session URL
+//! is shared with a remote operator (the developer iterating on
+//! firmware) by the host themselves. While active:
+//!
+//! * The accepted command set is fully enumerated in `LabCmd` below.
+//!   There is no arbitrary shell, file read, or process spawn -- every
+//!   command is a typed, bounded operation against a specific surface
+//!   (upload a UF2, flash, query firmware diag, apply pre-saved
+//!   Wi-Fi credentials, etc.).
+//! * Every received command is written to the lab-mode log at
+//!   `%LOCALAPPDATA%\ParsecCouchLink\data\logs\lab-mode.log` so the
+//!   host can audit the session after the fact.
+//! * The host ends the session immediately with Ctrl+C, or by closing
+//!   the terminal. Restarting the bridge rotates the session tokens,
+//!   so a previously shared URL stops working.
+//! * The tunnel relay (`CouchLinkTunnel`) enforces the same
+//!   command-kind allowlist server-side and will reject anything
+//!   outside it.
+//!
+//! The console stays quiet during the session to avoid spamming the
+//! host's terminal with per-command output; the rotating log file is
+//! the authoritative transcript.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -36,10 +52,11 @@ pub async fn run(server: Option<String>, reset: bool) -> Result<()> {
         .context("provisioning lab-mode session with tunnel server")?;
     let view_url = cfg.view_url();
 
-    // Silent everywhere except this once. The two-line banner is the entire
-    // host-visible surface of lab-mode.
+    // Print the session URL so the host knows the session is active
+    // and what to share. The rest of the per-command activity goes to
+    // the rotating log file (the audit trail), not stdout.
     println!("Lab session: {view_url}");
-    println!("Ctrl+C to end.");
+    println!("Ctrl+C to end. Activity log: %LOCALAPPDATA%\\ParsecCouchLink\\data\\logs\\");
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = shutdown.clone();
@@ -79,10 +96,10 @@ pub async fn run(server: Option<String>, reset: bool) -> Result<()> {
                 match serde_json::from_str::<LabCmd>(&raw) {
                     Ok(cmd) => {
                         if let Err(e) = dispatch(cmd, &mut upload, &out_tx).await {
-                            let _ = send(&out_tx, &LabEvent::Error {
+                            emit(&out_tx, LabEvent::Error {
                                 id: None,
                                 message: format!("{e:#}"),
-                            });
+                            }).await;
                         }
                     }
                     Err(e) => {
@@ -268,11 +285,21 @@ fn wire_envelope(ev: &LabEvent) -> Result<String> {
     Ok(serde_json::to_string(&frame)?)
 }
 
-fn send(out: &mpsc::Sender<String>, ev: &LabEvent) -> Result<()> {
-    let msg = wire_envelope(ev)?;
-    out.try_send(msg)
-        .map_err(|e| anyhow::anyhow!("outbox send failed: {e}"))?;
-    Ok(())
+/// Push an event into the outbox. Returns immediately; if the channel
+/// is briefly full, the call serialises on the bounded queue's slot
+/// (256 deep, plenty for the iteration loop). Failures are logged but
+/// not propagated -- a tunnel hiccup must not collapse the dispatcher.
+async fn emit(out: &mpsc::Sender<String>, ev: LabEvent) {
+    let msg = match wire_envelope(&ev) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("lab-mode: failed to serialize event: {e}");
+            return;
+        }
+    };
+    if let Err(e) = out.send(msg).await {
+        tracing::warn!("lab-mode: outbox closed, dropping event: {e}");
+    }
 }
 
 fn spawn_journal_forwarder(out: mpsc::Sender<String>) {
@@ -282,13 +309,14 @@ fn spawn_journal_forwarder(out: mpsc::Sender<String>) {
         loop {
             match rx.recv().await {
                 Ok(entry) => {
-                    let _ = send(
+                    emit(
                         &out,
-                        &LabEvent::Journal {
+                        LabEvent::Journal {
                             category: entry.category,
                             message: entry.message,
                         },
-                    );
+                    )
+                    .await;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     // Some events dropped; keep going.
@@ -301,37 +329,65 @@ fn spawn_journal_forwarder(out: mpsc::Sender<String>) {
 
 // ---------- upload state ----------
 
+const UPLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Chunked upload tracker. Stashes incoming chunks by index in memory
+/// so out-of-order delivery, duplicates, and gaps are detectable
+/// without trusting the wire. The file on disk is only written after
+/// every chunk in `0..expected_chunks` has arrived and the sha256
+/// matches what we computed locally.
 struct UploadState {
-    /// Path the next chunk will append to. Stays the same across an
-    /// upload sequence; cleared (and the file truncated) when chunk
-    /// `chunk_index == 0` arrives.
+    /// Path the assembled UF2 lands at once the upload completes.
     path: PathBuf,
-    received_chunks: u32,
+    /// Upload id from chunk 0 -- subsequent chunks must match.
+    current_id: Option<String>,
+    /// `BTreeMap` because we want ordered iteration on assembly.
+    chunks: std::collections::BTreeMap<u32, Vec<u8>>,
     expected_chunks: u32,
-    bytes: u64,
-    hasher: Sha256,
-    complete_sha256: Option<String>,
+    /// Wall-clock of the last chunk arrival; used for stall detection.
+    last_chunk_at: Option<std::time::Instant>,
+    /// Set after a successful assembly. `wifi_apply_saved` and `flash`
+    /// gate on this being present.
+    finished_sha256: Option<String>,
+    finished_bytes: u64,
 }
 
 impl UploadState {
     fn new() -> Self {
         Self {
             path: std::env::temp_dir().join(UPLOAD_FILENAME),
-            received_chunks: 0,
+            current_id: None,
+            chunks: std::collections::BTreeMap::new(),
             expected_chunks: 0,
-            bytes: 0,
-            hasher: Sha256::new(),
-            complete_sha256: None,
+            last_chunk_at: None,
+            finished_sha256: None,
+            finished_bytes: 0,
         }
     }
 
-    /// Final UF2 path (only meaningful after `complete_sha256` is Some).
+    /// Drop in-progress upload state. Called when a new chunk-0 arrives
+    /// or when an explicit reset is needed (stall, error).
+    fn reset(&mut self) {
+        self.current_id = None;
+        self.chunks.clear();
+        self.expected_chunks = 0;
+        self.last_chunk_at = None;
+        // finished_sha256 / finished_bytes / path retained -- a stale
+        // upload is still flashable until a new one supersedes it.
+    }
+
+    /// Final UF2 path (only meaningful after `finished_sha256` is Some).
     fn finished_path(&self) -> Option<&Path> {
-        if self.complete_sha256.is_some() {
+        if self.finished_sha256.is_some() {
             Some(&self.path)
         } else {
             None
         }
+    }
+
+    /// Total bytes buffered (in-memory) for the in-progress upload.
+    fn in_progress_bytes(&self) -> u64 {
+        self.chunks.values().map(|b| b.len() as u64).sum()
     }
 }
 
@@ -366,62 +422,119 @@ async fn handle_upload(
     let bytes = B64
         .decode(b64.as_bytes())
         .context("decode upload_uf2 base64 payload")?;
+    let total = total_chunks.max(1);
+
+    // Detect a stalled previous upload (no new chunk for >30 s) and
+    // start over fresh on the new chunk regardless of its index. The
+    // operator's client is expected to begin a new upload with
+    // chunk_index = 0; we tolerate the case where it doesn't.
+    if let Some(last) = upload.last_chunk_at {
+        if last.elapsed() > UPLOAD_STALL_TIMEOUT {
+            tracing::warn!(
+                "lab: upload stalled (>{:?} since last chunk); resetting",
+                UPLOAD_STALL_TIMEOUT
+            );
+            upload.reset();
+        }
+    }
 
     if chunk_index == 0 {
-        // Fresh upload: truncate any prior file and reset hasher.
-        upload.received_chunks = 0;
-        upload.expected_chunks = total_chunks.max(1);
-        upload.bytes = 0;
-        upload.hasher = Sha256::new();
-        upload.complete_sha256 = None;
-        tokio::fs::write(&upload.path, &bytes)
-            .await
-            .with_context(|| format!("write {}", upload.path.display()))?;
+        // Fresh upload: drop everything from the prior sequence.
+        upload.reset();
+        upload.current_id = Some(id.clone());
+        upload.expected_chunks = total;
     } else {
-        use tokio::io::AsyncWriteExt;
-        let mut f = tokio::fs::OpenOptions::new()
-            .append(true)
-            .open(&upload.path)
-            .await
-            .with_context(|| format!("append to {}", upload.path.display()))?;
-        f.write_all(&bytes).await.context("append chunk bytes")?;
+        // Continuation chunk -- must belong to an in-progress upload.
+        let Some(current) = upload.current_id.as_ref() else {
+            anyhow::bail!("chunk_index={chunk_index} without a chunk-0 having started an upload");
+        };
+        if current != &id {
+            anyhow::bail!("chunk id `{id}` does not match in-progress upload id `{current}`");
+        }
+        if total != upload.expected_chunks {
+            anyhow::bail!(
+                "chunk total_chunks={total} disagrees with chunk-0's {} (replay or corruption)",
+                upload.expected_chunks
+            );
+        }
     }
-    upload.hasher.update(&bytes);
-    upload.received_chunks = upload.received_chunks.saturating_add(1);
-    upload.bytes = upload.bytes.saturating_add(bytes.len() as u64);
 
-    let _ = send(
+    if chunk_index >= upload.expected_chunks {
+        anyhow::bail!(
+            "chunk_index={chunk_index} >= total_chunks={}",
+            upload.expected_chunks
+        );
+    }
+    if upload.chunks.contains_key(&chunk_index) {
+        anyhow::bail!("duplicate chunk_index={chunk_index} for upload id `{id}`");
+    }
+    upload.chunks.insert(chunk_index, bytes);
+    upload.last_chunk_at = Some(std::time::Instant::now());
+
+    emit(
         out,
-        &LabEvent::UploadProgress {
+        LabEvent::UploadProgress {
             id: id.clone(),
-            received_chunks: upload.received_chunks,
+            received_chunks: upload.chunks.len() as u32,
             total_chunks: upload.expected_chunks,
-            bytes: upload.bytes,
+            bytes: upload.in_progress_bytes(),
         },
-    );
+    )
+    .await;
 
-    if upload.received_chunks >= upload.expected_chunks {
-        let digest = upload.hasher.clone().finalize();
-        let sha = hex_lower(&digest);
-        upload.complete_sha256 = Some(sha.clone());
-        let _ = send(
+    if upload.chunks.len() as u32 == upload.expected_chunks {
+        // Contiguous-from-zero check: BTreeMap iteration is ordered.
+        let contiguous = upload
+            .chunks
+            .keys()
+            .enumerate()
+            .all(|(i, k)| *k == i as u32);
+        if !contiguous {
+            anyhow::bail!("chunk sequence not contiguous despite count match (gap)");
+        }
+
+        // Assemble + write + hash atomically. If write fails we keep
+        // the in-memory chunks so the operator can retry just `flash`
+        // without re-uploading.
+        let mut hasher = Sha256::new();
+        let mut assembled: Vec<u8> = Vec::with_capacity(upload.in_progress_bytes() as usize);
+        for chunk in upload.chunks.values() {
+            hasher.update(chunk);
+            assembled.extend_from_slice(chunk);
+        }
+        let sha = hex_lower(&hasher.finalize());
+
+        tokio::fs::write(&upload.path, &assembled)
+            .await
+            .with_context(|| format!("write assembled UF2 to {}", upload.path.display()))?;
+
+        upload.finished_sha256 = Some(sha.clone());
+        upload.finished_bytes = assembled.len() as u64;
+        let size = upload.finished_bytes;
+        let path = upload.path.display().to_string();
+        // Free the buffer now that the file is on disk.
+        upload.chunks.clear();
+        upload.last_chunk_at = None;
+
+        emit(
             out,
-            &LabEvent::UploadComplete {
+            LabEvent::UploadComplete {
                 id,
-                path: upload.path.display().to_string(),
-                size: upload.bytes,
+                path,
+                size,
                 sha256: sha,
             },
-        );
+        )
+        .await;
     }
     Ok(())
 }
 
 async fn handle_flash(id: String, upload: &UploadState, out: &mpsc::Sender<String>) -> Result<()> {
     let Some(uf2) = upload.finished_path() else {
-        let _ = send(
+        emit(
             out,
-            &LabEvent::FlashDone {
+            LabEvent::FlashDone {
                 id,
                 ok: false,
                 board: None,
@@ -430,24 +543,26 @@ async fn handle_flash(id: String, upload: &UploadState, out: &mpsc::Sender<Strin
                 rebooted_during_copy: false,
                 error: Some("no completed upload_uf2 in this session".into()),
             },
-        );
+        )
+        .await;
         return Ok(());
     };
 
-    let _ = send(
+    emit(
         out,
-        &LabEvent::FlashStage {
+        LabEvent::FlashStage {
             id: id.clone(),
             stage: "waiting_bootsel".into(),
             detail: "scanning for RPI-RP2 / RP2350 drive (60 s timeout)".into(),
         },
-    );
+    )
+    .await;
 
     match cmd_flash::flash_uf2_to_bootsel(uf2, Duration::from_secs(60)).await {
         Ok(outcome) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::FlashDone {
+                LabEvent::FlashDone {
                     id,
                     ok: true,
                     board: Some(outcome.board.label().to_string()),
@@ -456,12 +571,13 @@ async fn handle_flash(id: String, upload: &UploadState, out: &mpsc::Sender<Strin
                     rebooted_during_copy: outcome.rebooted_during_copy,
                     error: None,
                 },
-            );
+            )
+            .await;
         }
         Err(e) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::FlashDone {
+                LabEvent::FlashDone {
                     id,
                     ok: false,
                     board: None,
@@ -470,7 +586,8 @@ async fn handle_flash(id: String, upload: &UploadState, out: &mpsc::Sender<Strin
                     rebooted_during_copy: false,
                     error: Some(format!("{e:#}")),
                 },
-            );
+            )
+            .await;
         }
     }
     Ok(())
@@ -487,15 +604,16 @@ async fn handle_force_bootsel(id: String, out: &mpsc::Sender<String>) -> Result<
         .context("join CDC reboot task")?;
         match result {
             Ok(()) => {
-                let _ = send(
+                emit(
                     out,
-                    &LabEvent::BootselResult {
+                    LabEvent::BootselResult {
                         id,
                         method: "cdc".into(),
                         ok: true,
                         detail: None,
                     },
-                );
+                )
+                .await;
                 return Ok(());
             }
             Err(e) => {
@@ -512,15 +630,16 @@ async fn handle_force_bootsel(id: String, out: &mpsc::Sender<String>) -> Result<
                 .with_context(|| format!("config last_pico.last_ip `{ip}` did not parse as IP"))?;
             match network::send_reboot_to_bootsel(peer, Duration::from_secs(2)).await {
                 Ok(()) => {
-                    let _ = send(
+                    emit(
                         out,
-                        &LabEvent::BootselResult {
+                        LabEvent::BootselResult {
                             id,
                             method: "udp".into(),
                             ok: true,
                             detail: Some(format!("via {peer}")),
                         },
-                    );
+                    )
+                    .await;
                     return Ok(());
                 }
                 Err(e) => {
@@ -534,26 +653,28 @@ async fn handle_force_bootsel(id: String, out: &mpsc::Sender<String>) -> Result<
     // alive, even if firmware is wedged.
     match picotool_force_reboot().await {
         Ok(detail) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::BootselResult {
+                LabEvent::BootselResult {
                     id,
                     method: "picotool".into(),
                     ok: true,
                     detail: Some(detail),
                 },
-            );
+            )
+            .await;
         }
         Err(e) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::BootselResult {
+                LabEvent::BootselResult {
                     id,
                     method: "picotool".into(),
                     ok: false,
                     detail: Some(format!("{e:#}")),
                 },
-            );
+            )
+            .await;
         }
     }
     Ok(())
@@ -610,47 +731,50 @@ async fn handle_doctor(id: String, out: &mpsc::Sender<String>) -> Result<()> {
             elapsed_ms: o.elapsed_ms,
         })
         .collect();
-    let _ = send(out, &LabEvent::DoctorResult { id, checks });
+    emit(out, LabEvent::DoctorResult { id, checks }).await;
     Ok(())
 }
 
 async fn handle_bundle(id: String, out: &mpsc::Sender<String>) -> Result<()> {
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let zip_path = std::env::temp_dir().join(format!("couchlink-bundle-{stamp}.zip"));
-    let _ = send(
+    emit(
         out,
-        &LabEvent::BundleProgress {
+        LabEvent::BundleProgress {
             id: id.clone(),
             stage: "capturing".into(),
         },
-    );
+    )
+    .await;
     match cmd_bundle::build_bundle(zip_path).await {
         Ok(summary) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::BundleDone {
+                LabEvent::BundleDone {
                     id: id.clone(),
                     ok: true,
                     zip_path: Some(summary.zip_path.display().to_string()),
                     manifest_json: Some(summary.manifest_json),
                     error: None,
                 },
-            );
+            )
+            .await;
             // Stream the zip back in 32 KiB chunks so the operator gets the
             // file without having to read it off the host's disk.
             stream_file(&summary.zip_path, &id, out).await?;
         }
         Err(e) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::BundleDone {
+                LabEvent::BundleDone {
                     id,
                     ok: false,
                     zip_path: None,
                     manifest_json: None,
                     error: Some(format!("{e:#}")),
                 },
-            );
+            )
+            .await;
         }
     }
     Ok(())
@@ -670,25 +794,27 @@ async fn stream_file(path: &Path, id: &str, out: &mpsc::Sender<String>) -> Resul
         if n == 0 {
             break;
         }
-        let _ = send(
+        emit(
             out,
-            &LabEvent::FileChunk {
+            LabEvent::FileChunk {
                 id: id.to_string(),
                 seq,
                 b64: B64.encode(&buf[..n]),
             },
-        );
+        )
+        .await;
         seq = seq.saturating_add(1);
         total = total.saturating_add(n as u64);
     }
-    let _ = send(
+    emit(
         out,
-        &LabEvent::FileEof {
+        LabEvent::FileEof {
             id: id.to_string(),
             total_chunks: seq,
             total_bytes: total,
         },
-    );
+    )
+    .await;
     Ok(())
 }
 
@@ -701,14 +827,15 @@ async fn handle_wifi_set(
     let port = match cdc::find_setup_port() {
         Ok(p) => p,
         Err(e) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::WifiResult {
+                LabEvent::WifiResult {
                     id,
                     ok: false,
                     detail: Some(format!("no setup-mode Pico found: {e:#}")),
                 },
-            );
+            )
+            .await;
             return Ok(());
         }
     };
@@ -730,24 +857,26 @@ async fn handle_wifi_set(
 
     match result {
         Ok(()) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::WifiResult {
+                LabEvent::WifiResult {
                     id,
                     ok: true,
                     detail: None,
                 },
-            );
+            )
+            .await;
         }
         Err(e) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::WifiResult {
+                LabEvent::WifiResult {
                     id,
                     ok: false,
                     detail: Some(format!("{e:#}")),
                 },
-            );
+            )
+            .await;
         }
     }
     Ok(())
@@ -763,31 +892,33 @@ async fn handle_pull_log(id: String, out: &mpsc::Sender<String>) -> Result<()> {
         .ok()
         .and_then(|c| c.last_pico.and_then(|p| p.last_ip))
     else {
-        let _ = send(
+        emit(
             out,
-            &LabEvent::PullLogResult {
+            LabEvent::PullLogResult {
                 id,
                 ok: false,
                 log_text: None,
                 lost_bytes: 0,
                 detail: Some("no last_pico.last_ip in config".into()),
             },
-        );
+        )
+        .await;
         return Ok(());
     };
     let peer: SocketAddr = match format!("{ip}:{}", protocol::PORT).parse() {
         Ok(a) => a,
         Err(e) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::PullLogResult {
+                LabEvent::PullLogResult {
                     id,
                     ok: false,
                     log_text: None,
                     lost_bytes: 0,
                     detail: Some(format!("config last_ip `{ip}` did not parse: {e}")),
                 },
-            );
+            )
+            .await;
             return Ok(());
         }
     };
@@ -795,31 +926,33 @@ async fn handle_pull_log(id: String, out: &mpsc::Sender<String>) -> Result<()> {
     let socket = match UdpSocket::bind("0.0.0.0:0").await {
         Ok(s) => s,
         Err(e) => {
-            let _ = send(
+            emit(
                 out,
-                &LabEvent::PullLogResult {
+                LabEvent::PullLogResult {
                     id,
                     ok: false,
                     log_text: None,
                     lost_bytes: 0,
                     detail: Some(format!("bind: {e}")),
                 },
-            );
+            )
+            .await;
             return Ok(());
         }
     };
     let req = protocol::encode_get_log(0);
     if let Err(e) = socket.send_to(&req, peer).await {
-        let _ = send(
+        emit(
             out,
-            &LabEvent::PullLogResult {
+            LabEvent::PullLogResult {
                 id,
                 ok: false,
                 log_text: None,
                 lost_bytes: 0,
                 detail: Some(format!("send GET_LOG: {e}")),
             },
-        );
+        )
+        .await;
         return Ok(());
     }
 
@@ -850,16 +983,17 @@ async fn handle_pull_log(id: String, out: &mpsc::Sender<String>) -> Result<()> {
                 }
             }
             Ok(Err(e)) => {
-                let _ = send(
+                emit(
                     out,
-                    &LabEvent::PullLogResult {
+                    LabEvent::PullLogResult {
                         id,
                         ok: false,
                         log_text: None,
                         lost_bytes: 0,
                         detail: Some(format!("recv: {e}")),
                     },
-                );
+                )
+                .await;
                 return Ok(());
             }
             Err(_) => break,
@@ -872,9 +1006,9 @@ async fn handle_pull_log(id: String, out: &mpsc::Sender<String>) -> Result<()> {
         body.extend_from_slice(&c.payload);
     }
     let log_text = String::from_utf8_lossy(&body).into_owned();
-    let _ = send(
+    emit(
         out,
-        &LabEvent::PullLogResult {
+        LabEvent::PullLogResult {
             id,
             ok: !chunks.is_empty(),
             log_text: Some(log_text),
@@ -885,7 +1019,8 @@ async fn handle_pull_log(id: String, out: &mpsc::Sender<String>) -> Result<()> {
                 Some("incomplete (no LAST_CHUNK flag seen)".into())
             },
         },
-    );
+    )
+    .await;
     Ok(())
 }
 
@@ -895,21 +1030,22 @@ async fn handle_state(id: String, upload: &UploadState, out: &mpsc::Sender<Strin
         .last_pico
         .as_ref()
         .and_then(|p| serde_json::to_value(p).ok());
-    let last_upload = upload.complete_sha256.as_ref().map(|sha| UploadStateBody {
+    let last_upload = upload.finished_sha256.as_ref().map(|sha| UploadStateBody {
         path: upload.path.display().to_string(),
-        size: upload.bytes,
+        size: upload.finished_bytes,
         sha256: sha.clone(),
     });
-    let _ = send(
+    emit(
         out,
-        &LabEvent::StateSnapshot {
+        LabEvent::StateSnapshot {
             id,
             bridge_version: env!("CARGO_PKG_VERSION").to_string(),
             last_pico,
             setup_complete: cfg.setup_complete,
             last_upload,
         },
-    );
+    )
+    .await;
     Ok(())
 }
 
