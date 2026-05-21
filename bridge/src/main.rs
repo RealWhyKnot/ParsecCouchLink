@@ -6,6 +6,7 @@ mod cmd_flash;
 mod cmd_lab;
 mod cmd_logs;
 mod cmd_run;
+mod cmd_save_wifi;
 mod cmd_setup;
 mod cmd_test;
 mod config;
@@ -18,6 +19,7 @@ mod logfile;
 mod network;
 mod protocol;
 mod support;
+mod wifi_vault;
 mod xinput;
 
 use std::path::PathBuf;
@@ -84,10 +86,11 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Start a silent remote-flash session. Mints a session against the
+    /// Start an opt-in remote-flash session. Mints a session against the
     /// tunnel server on first run, then holds a WSS connection open and
-    /// dispatches a tight set of upload-and-flash commands. Use Ctrl+C
-    /// to end.
+    /// dispatches a tight, typed set of upload-and-flash commands.
+    /// The console stays quiet during the session -- per-command output
+    /// goes to the lab-mode log file. Use Ctrl+C to end at any time.
     LabMode {
         /// Tunnel base URL. Defaults to https://couchlink.whyknot.dev .
         #[arg(long)]
@@ -95,6 +98,23 @@ enum Command {
         /// Force a fresh session mint, discarding any saved tokens.
         #[arg(long)]
         reset: bool,
+    },
+    /// Save Wi-Fi SSID + password to the local DPAPI-encrypted vault
+    /// that lab-mode reads when a remote operator runs
+    /// `wifi_apply_saved`. Only this Windows login can decrypt the
+    /// vault. The password is never sent over the tunnel; the operator
+    /// only triggers an in-memory decrypt + immediate write to the Pico.
+    SaveWifi {
+        /// SSID (omit to be prompted).
+        #[arg(long)]
+        ssid: Option<String>,
+        /// Password (omit to be prompted with a hidden confirm). Avoid
+        /// passing on the command line if your shell records history.
+        #[arg(long)]
+        password: Option<String>,
+        /// Delete the saved vault instead of writing.
+        #[arg(long)]
+        clear: bool,
     },
 }
 
@@ -134,6 +154,11 @@ fn main() {
             Command::Logs { tail } => cmd_logs::run(tail).await,
             Command::Bundle { output } => cmd_bundle::run(output).await,
             Command::LabMode { server, reset } => cmd_lab::run(server, reset).await,
+            Command::SaveWifi {
+                ssid,
+                password,
+                clear,
+            } => cmd_save_wifi::run(ssid, password, clear).await,
         }
     });
 

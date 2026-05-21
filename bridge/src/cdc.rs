@@ -500,6 +500,28 @@ impl PicoSetup {
         Ok(())
     }
 
+    /// Wipe stored Wi-Fi credentials on the Pico. Use before
+    /// `reboot_to_run` (or after, depending on whether the caller wants
+    /// to leave the Pico in setup mode) to put the device back into the
+    /// "no creds" state.
+    pub fn clear_wifi(&mut self) -> Result<()> {
+        let resp = self.exchange(CMD_CLEAR_WIFI, &[])?;
+        if resp.command == RSP_NACK {
+            let code = resp.payload.first().copied().unwrap_or(ERR_INTERNAL);
+            let detail = resp.payload.get(1).copied().unwrap_or(0);
+            return Err(anyhow!(
+                "Pico rejected CLEAR_WIFI: {} (code 0x{:02X}, detail 0x{:02X})",
+                err_name(code),
+                code,
+                detail,
+            ));
+        }
+        if resp.command != RSP_CLEAR_WIFI {
+            bail!("unexpected response 0x{:02X} to CLEAR_WIFI", resp.command);
+        }
+        Ok(())
+    }
+
     pub fn reboot_to_run(&mut self) -> Result<()> {
         // After CMD_REBOOT_TO_RUN, three outcomes are all acceptable:
         //   - the firmware replies RSP_REBOOT and then reboots (happy path),
