@@ -258,7 +258,11 @@ mod tests {
     fn dpapi_round_trip_in_memory() {
         let payload = b"\x01\x05home2\x08hunter12";
         let cipher = dpapi_protect(payload).expect("protect");
-        assert_ne!(cipher.as_slice(), payload.as_slice(), "ciphertext == plaintext");
+        assert_ne!(
+            cipher.as_slice(),
+            payload.as_slice(),
+            "ciphertext == plaintext"
+        );
         let back = dpapi_unprotect(&cipher).expect("unprotect");
         assert_eq!(&back, payload, "round-trip changed bytes");
     }
