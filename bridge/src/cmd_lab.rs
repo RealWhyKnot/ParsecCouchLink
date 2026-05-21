@@ -160,7 +160,62 @@ enum LabCmd {
     State {
         id: String,
     },
+    /// Send CDC_CMD_HELLO to a setup-mode Pico and return the firmware
+    /// version, board type, and creds-present flag. Cheaper than a full
+    /// `doctor`; useful for "did the flash succeed and the Pico come
+    /// back up?" checks during iteration.
+    Identify {
+        id: String,
+    },
+    /// Broadcast UDP discovery on port 4242 and return the first ACK
+    /// that comes back. Useful when `last_pico.last_ip` is stale or
+    /// when the firmware has hopped to a new IP after a reboot.
+    Discover {
+        id: String,
+        /// Discovery timeout in milliseconds. Default 2000.
+        #[serde(default = "default_discover_ms")]
+        timeout_ms: u64,
+    },
+    /// Round-trip latency check. Echoes the operator's nonce alongside
+    /// the host's wall-clock so they can correlate events without
+    /// trusting either side's monotonic.
+    Ping {
+        id: String,
+        #[serde(default)]
+        nonce: String,
+    },
+    /// Read the tail of the bridge's state-journal.log. `tail_lines`
+    /// defaults to 200 and is capped at 2000 to keep the response
+    /// bounded.
+    ReadStateJournal {
+        id: String,
+        #[serde(default = "default_tail_lines")]
+        tail_lines: usize,
+    },
+    /// Read the tail of today's rotating tracing log. Same shape as
+    /// `read_state_journal`.
+    ReadBridgeLog {
+        id: String,
+        #[serde(default = "default_tail_lines")]
+        tail_lines: usize,
+    },
+    /// Pause for `ms` milliseconds before reporting back. Useful when
+    /// scripting sequences like "force_bootsel -> sleep 1500 -> flash"
+    /// so the operator does not have to maintain client-side timers.
+    Sleep {
+        id: String,
+        ms: u64,
+    },
 }
+
+fn default_discover_ms() -> u64 {
+    2000
+}
+fn default_tail_lines() -> usize {
+    200
+}
+const MAX_TAIL_LINES: usize = 2000;
+const MAX_SLEEP_MS: u64 = 60_000;
 
 fn default_total_chunks() -> u32 {
     1
@@ -256,6 +311,50 @@ enum LabEvent {
         last_pico: Option<serde_json::Value>,
         setup_complete: bool,
         last_upload: Option<UploadStateBody>,
+        wifi_vault_saved: bool,
+    },
+    IdentifyResult {
+        id: String,
+        ok: bool,
+        fw_major: Option<u8>,
+        fw_minor: Option<u8>,
+        fw_patch: Option<u8>,
+        board_type: Option<u8>,
+        proto_version: Option<u8>,
+        creds_present: Option<bool>,
+        wifi_joined: Option<bool>,
+        detail: Option<String>,
+    },
+    DiscoverResult {
+        id: String,
+        ok: bool,
+        peer: Option<String>,
+        proto_version: Option<u8>,
+        fw_major: Option<u8>,
+        fw_minor: Option<u8>,
+        fw_patch: Option<u8>,
+        board_type: Option<u8>,
+        unique_id_short: Option<u32>,
+        uptime_seconds: Option<u32>,
+        detail: Option<String>,
+    },
+    PingResult {
+        id: String,
+        nonce: String,
+        host_ms: i64,
+    },
+    LogTailResult {
+        id: String,
+        source: String,
+        ok: bool,
+        path: Option<String>,
+        lines: Vec<String>,
+        truncated_from_lines: Option<usize>,
+        detail: Option<String>,
+    },
+    SleepResult {
+        id: String,
+        slept_ms: u64,
     },
     Error {
         id: Option<String>,
@@ -418,6 +517,16 @@ async fn dispatch(cmd: LabCmd, upload: &mut UploadState, out: &mpsc::Sender<Stri
         LabCmd::WifiClear { id } => handle_wifi_clear(id, out).await,
         LabCmd::PullLog { id } => handle_pull_log(id, out).await,
         LabCmd::State { id } => handle_state(id, upload, out).await,
+        LabCmd::Identify { id } => handle_identify(id, out).await,
+        LabCmd::Discover { id, timeout_ms } => handle_discover(id, timeout_ms, out).await,
+        LabCmd::Ping { id, nonce } => handle_ping(id, nonce, out).await,
+        LabCmd::ReadStateJournal { id, tail_lines } => {
+            handle_read_log_tail(id, "state_journal", state_journal_path(), tail_lines, out).await
+        }
+        LabCmd::ReadBridgeLog { id, tail_lines } => {
+            handle_read_log_tail(id, "bridge_log", todays_bridge_log_path(), tail_lines, out).await
+        }
+        LabCmd::Sleep { id, ms } => handle_sleep(id, ms, out).await,
     }
 }
 
@@ -1096,9 +1205,366 @@ async fn handle_state(id: String, upload: &UploadState, out: &mpsc::Sender<Strin
             last_pico,
             setup_complete: cfg.setup_complete,
             last_upload,
+            wifi_vault_saved: crate::wifi_vault::exists(),
         },
     )
     .await;
+    Ok(())
+}
+
+async fn handle_identify(id: String, out: &mpsc::Sender<String>) -> Result<()> {
+    let port = match cdc::find_setup_port() {
+        Ok(p) => p,
+        Err(e) => {
+            emit(
+                out,
+                LabEvent::IdentifyResult {
+                    id,
+                    ok: false,
+                    fw_major: None,
+                    fw_minor: None,
+                    fw_patch: None,
+                    board_type: None,
+                    proto_version: None,
+                    creds_present: None,
+                    wifi_joined: None,
+                    detail: Some(format!("no setup-mode Pico found: {e:#}")),
+                },
+            )
+            .await;
+            return Ok(());
+        }
+    };
+    let outcome = tokio::task::spawn_blocking(move || -> Result<cdc::HelloAck> {
+        let mut pico = cdc::PicoSetup::open_named(&port)?;
+        pico.hello()
+    })
+    .await
+    .context("join identify task")?;
+    match outcome {
+        Ok(hello) => {
+            // 0x02 is HELLO_FLAG_WIFI_JOINED on the firmware side.
+            let wifi_joined = Some((hello.flags & 0x02) != 0);
+            emit(
+                out,
+                LabEvent::IdentifyResult {
+                    id,
+                    ok: true,
+                    fw_major: Some(hello.fw_major),
+                    fw_minor: Some(hello.fw_minor),
+                    fw_patch: Some(hello.fw_patch),
+                    board_type: Some(hello.board_type),
+                    proto_version: Some(hello.proto_version),
+                    creds_present: Some(hello.creds_present()),
+                    wifi_joined,
+                    detail: None,
+                },
+            )
+            .await;
+        }
+        Err(e) => {
+            emit(
+                out,
+                LabEvent::IdentifyResult {
+                    id,
+                    ok: false,
+                    fw_major: None,
+                    fw_minor: None,
+                    fw_patch: None,
+                    board_type: None,
+                    proto_version: None,
+                    creds_present: None,
+                    wifi_joined: None,
+                    detail: Some(format!("{e:#}")),
+                },
+            )
+            .await;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_discover(id: String, timeout_ms: u64, out: &mpsc::Sender<String>) -> Result<()> {
+    use crate::protocol::{Packet, PacketKind};
+    use std::net::SocketAddr;
+    use tokio::net::UdpSocket;
+
+    let timeout = Duration::from_millis(timeout_ms.min(15_000));
+    let socket = match UdpSocket::bind("0.0.0.0:0").await {
+        Ok(s) => s,
+        Err(e) => {
+            emit(
+                out,
+                LabEvent::DiscoverResult {
+                    id,
+                    ok: false,
+                    peer: None,
+                    proto_version: None,
+                    fw_major: None,
+                    fw_minor: None,
+                    fw_patch: None,
+                    board_type: None,
+                    unique_id_short: None,
+                    uptime_seconds: None,
+                    detail: Some(format!("bind: {e}")),
+                },
+            )
+            .await;
+            return Ok(());
+        }
+    };
+    if let Err(e) = socket.set_broadcast(true) {
+        tracing::debug!("lab: discover set_broadcast: {e}");
+    }
+    let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", protocol::PORT)
+        .parse()
+        .expect("broadcast addr is constant");
+    let req = Packet::discover(0).encode();
+    if let Err(e) = socket.send_to(&req, broadcast_addr).await {
+        emit(
+            out,
+            LabEvent::DiscoverResult {
+                id,
+                ok: false,
+                peer: None,
+                proto_version: None,
+                fw_major: None,
+                fw_minor: None,
+                fw_patch: None,
+                board_type: None,
+                unique_id_short: None,
+                uptime_seconds: None,
+                detail: Some(format!("broadcast send: {e}")),
+            },
+        )
+        .await;
+        return Ok(());
+    }
+    let mut buf = [0u8; 64];
+    let result = tokio::time::timeout(timeout, socket.recv_from(&mut buf)).await;
+    match result {
+        Ok(Ok((n, from))) => match Packet::decode(&buf[..n]) {
+            Ok(pkt) => match pkt.kind {
+                PacketKind::Ack(info) => {
+                    emit(
+                        out,
+                        LabEvent::DiscoverResult {
+                            id,
+                            ok: true,
+                            peer: Some(from.to_string()),
+                            proto_version: Some(info.proto_version),
+                            fw_major: Some(info.fw_major),
+                            fw_minor: Some(info.fw_minor),
+                            fw_patch: Some(info.fw_patch),
+                            board_type: Some(info.board_type),
+                            unique_id_short: Some(info.unique_id_short),
+                            uptime_seconds: Some(info.uptime_seconds),
+                            detail: None,
+                        },
+                    )
+                    .await;
+                }
+                other => {
+                    emit(
+                        out,
+                        LabEvent::DiscoverResult {
+                            id,
+                            ok: false,
+                            peer: Some(from.to_string()),
+                            proto_version: None,
+                            fw_major: None,
+                            fw_minor: None,
+                            fw_patch: None,
+                            board_type: None,
+                            unique_id_short: None,
+                            uptime_seconds: None,
+                            detail: Some(format!("reply was not ACK: {other:?}")),
+                        },
+                    )
+                    .await;
+                }
+            },
+            Err(e) => {
+                emit(
+                    out,
+                    LabEvent::DiscoverResult {
+                        id,
+                        ok: false,
+                        peer: Some(from.to_string()),
+                        proto_version: None,
+                        fw_major: None,
+                        fw_minor: None,
+                        fw_patch: None,
+                        board_type: None,
+                        unique_id_short: None,
+                        uptime_seconds: None,
+                        detail: Some(format!("decode: {e}")),
+                    },
+                )
+                .await;
+            }
+        },
+        Ok(Err(e)) => {
+            emit(
+                out,
+                LabEvent::DiscoverResult {
+                    id,
+                    ok: false,
+                    peer: None,
+                    proto_version: None,
+                    fw_major: None,
+                    fw_minor: None,
+                    fw_patch: None,
+                    board_type: None,
+                    unique_id_short: None,
+                    uptime_seconds: None,
+                    detail: Some(format!("recv: {e}")),
+                },
+            )
+            .await;
+        }
+        Err(_) => {
+            emit(
+                out,
+                LabEvent::DiscoverResult {
+                    id,
+                    ok: false,
+                    peer: None,
+                    proto_version: None,
+                    fw_major: None,
+                    fw_minor: None,
+                    fw_patch: None,
+                    board_type: None,
+                    unique_id_short: None,
+                    uptime_seconds: None,
+                    detail: Some(format!("no ACK within {timeout_ms} ms")),
+                },
+            )
+            .await;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_ping(id: String, nonce: String, out: &mpsc::Sender<String>) -> Result<()> {
+    emit(
+        out,
+        LabEvent::PingResult {
+            id,
+            nonce,
+            host_ms: chrono::Utc::now().timestamp_millis(),
+        },
+    )
+    .await;
+    Ok(())
+}
+
+async fn handle_sleep(id: String, ms: u64, out: &mpsc::Sender<String>) -> Result<()> {
+    let bounded = ms.min(MAX_SLEEP_MS);
+    tokio::time::sleep(Duration::from_millis(bounded)).await;
+    emit(
+        out,
+        LabEvent::SleepResult {
+            id,
+            slept_ms: bounded,
+        },
+    )
+    .await;
+    Ok(())
+}
+
+fn state_journal_path() -> Result<PathBuf> {
+    Ok(config::log_dir()?.join("state-journal.log"))
+}
+
+fn todays_bridge_log_path() -> Result<PathBuf> {
+    let stamp = chrono::Local::now().format("%Y-%m-%d");
+    Ok(config::log_dir()?.join(format!("couchlink.{stamp}.log")))
+}
+
+async fn handle_read_log_tail(
+    id: String,
+    source: &'static str,
+    path: Result<PathBuf>,
+    requested_lines: usize,
+    out: &mpsc::Sender<String>,
+) -> Result<()> {
+    let path = match path {
+        Ok(p) => p,
+        Err(e) => {
+            emit(
+                out,
+                LabEvent::LogTailResult {
+                    id,
+                    source: source.to_string(),
+                    ok: false,
+                    path: None,
+                    lines: Vec::new(),
+                    truncated_from_lines: None,
+                    detail: Some(format!("resolve log path: {e:#}")),
+                },
+            )
+            .await;
+            return Ok(());
+        }
+    };
+    let want = requested_lines.clamp(1, MAX_TAIL_LINES);
+    let read_result = tokio::fs::read_to_string(&path).await;
+    match read_result {
+        Ok(text) => {
+            let total_lines = text.lines().count();
+            let skip = total_lines.saturating_sub(want);
+            let lines: Vec<String> = text.lines().skip(skip).map(|s| s.to_string()).collect();
+            let truncated = if total_lines > want {
+                Some(total_lines)
+            } else {
+                None
+            };
+            emit(
+                out,
+                LabEvent::LogTailResult {
+                    id,
+                    source: source.to_string(),
+                    ok: true,
+                    path: Some(path.display().to_string()),
+                    lines,
+                    truncated_from_lines: truncated,
+                    detail: None,
+                },
+            )
+            .await;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            emit(
+                out,
+                LabEvent::LogTailResult {
+                    id,
+                    source: source.to_string(),
+                    ok: false,
+                    path: Some(path.display().to_string()),
+                    lines: Vec::new(),
+                    truncated_from_lines: None,
+                    detail: Some("file does not exist yet".into()),
+                },
+            )
+            .await;
+        }
+        Err(e) => {
+            emit(
+                out,
+                LabEvent::LogTailResult {
+                    id,
+                    source: source.to_string(),
+                    ok: false,
+                    path: Some(path.display().to_string()),
+                    lines: Vec::new(),
+                    truncated_from_lines: None,
+                    detail: Some(format!("{e:#}")),
+                },
+            )
+            .await;
+        }
+    }
     Ok(())
 }
 
