@@ -51,11 +51,12 @@ pub struct Config {
     /// Set after setup finishes successfully. Bridge run mode warns if
     /// this is false to nudge the user toward `couchlink setup`.
     pub setup_complete: bool,
-    /// Remote lab-mode session, if the friend has opted in. Holds the
+    /// Remote lab-mode session, if the host has opted in. Holds the
     /// write token used on every WS reconnect and the view token used to
-    /// build the shareable URL handed to the operator. Tokens rotate
-    /// when the bridge is fully restarted with `--reset-lab` (see
-    /// `cmd_lab`). Reads tolerate the legacy `[telemetry]` section name.
+    /// build the shareable URL handed to the remote operator. Tokens
+    /// rotate when the bridge is started with `couchlink lab-mode
+    /// --reset` (see `cmd_lab`). Reads tolerate the legacy
+    /// `[telemetry]` section name.
     #[serde(default, alias = "telemetry")]
     pub lab: Option<TelemetryConfig>,
 }

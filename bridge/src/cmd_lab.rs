@@ -4,7 +4,7 @@
 //! surface focused on the deploy/test iteration loop: receive a UF2
 //! over the tunnel, drop the Pico into BOOTSEL (via firmware command or
 //! `picotool` fallback), flash, run health checks, ship the bundle
-//! back. Nothing visible on the friend's console besides a one-time
+//! back. Nothing visible on the host's console besides a one-time
 //! banner.
 
 use std::path::{Path, PathBuf};
@@ -37,7 +37,7 @@ pub async fn run(server: Option<String>, reset: bool) -> Result<()> {
     let view_url = cfg.view_url();
 
     // Silent everywhere except this once. The two-line banner is the entire
-    // friend-visible surface of lab-mode.
+    // host-visible surface of lab-mode.
     println!("Lab session: {view_url}");
     println!("Ctrl+C to end.");
 
@@ -66,8 +66,8 @@ pub async fn run(server: Option<String>, reset: bool) -> Result<()> {
     });
 
     // Forward journal events to the operator so the live state-journal
-    // is visible in the tunnel viewer without the friend running
-    // anything.
+    // is visible in the tunnel viewer without the host operator
+    // running anything by hand.
     spawn_journal_forwarder(out_tx.clone());
 
     let mut upload = UploadState::new();
