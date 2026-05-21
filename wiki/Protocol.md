@@ -23,6 +23,7 @@ Packet types:
 | `0x03` | Discovery broadcast from the bridge. |
 | `0x04` | Pico ack with firmware and board identity. |
 | `0x05` | `GET_LOG` -- bridge requests the firmware diagnostic ring. Same 17-byte shape as the others; body is reserved. |
+| `0x06` | `REBOOT_TO_BOOTSEL` -- bridge requests the Pico jump to the bootrom's USB bootloader (RPI-RP2 / RP2350 mass-storage drive) for unattended re-flashing. Same 17-byte shape; body is reserved. Pico replies with a normal `0x04` ACK before the jump so the bridge can confirm receipt. |
 | `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
 
 The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body.
@@ -49,6 +50,7 @@ Commands:
 | `REBOOT_TO_RUN` | Reboot into runtime mode. |
 | `SELF_TEST` | Firmware-side setup checks. |
 | `GET_LOG_BUFFER` | Read the Pico diagnostic ring buffer. |
+| `REBOOT_TO_BOOTSEL` | Jump to the bootrom USB bootloader so a new UF2 can be dropped onto the mass-storage drive without pressing the physical BOOTSEL button. Pico ACKs first and lets the TX FIFO drain before handing the bus to the bootrom. |
 
 ## USB Vendor Diag (setup mode)
 

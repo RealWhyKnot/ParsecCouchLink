@@ -17,3 +17,8 @@ void net_udp_task(void);
 bool     net_udp_has_peer(void);
 uint32_t net_udp_tx_count(void);
 uint32_t net_udp_rx_count(void);
+
+// Returns true once a TYPE_REBOOT_TO_BOOTSEL has been acked AND the ACK
+// has had time to leave the Wi-Fi PHY. Caller is expected to disconnect
+// USB and call reset_usb_boot() (does not return).
+bool net_udp_bootsel_pending(void);

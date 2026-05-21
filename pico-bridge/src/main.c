@@ -10,6 +10,7 @@
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "pico/unique_id.h"
+#include "pico/bootrom.h"
 #include "hardware/watchdog.h"
 #include "tusb.h"
 
@@ -112,6 +113,20 @@ static void log_board_identity(void) {
                     PICO_BRIDGE_FW_PATCH, PICO_BRIDGE_BOARD_TYPE, id);
 }
 
+// Cleanly hand the USB bus over to the RP2040/RP2350 bootrom's USB
+// bootloader. The host sees an explicit disconnect followed by a fresh
+// connect from the bootrom's MSD+PICOBOOT composite, instead of an
+// abrupt yank that leaves stale CDC/XInput descriptors cached. Does
+// not return -- the bootrom takes over.
+static void jump_to_bootrom_usb(void) {
+    tud_disconnect();
+    sleep_ms(5);
+    reset_usb_boot(0, 0);
+    // reset_usb_boot does not return; this loop satisfies the compiler
+    // and serves as a safety net if it ever did.
+    for (;;) tight_loop_contents();
+}
+
 // Inline state-name helper for the assoc watchdog log line. The
 // canonical wifi_state_name() is static in heartbeat.c; duplicating
 // the four-case switch here avoids an API surface change for a single
@@ -185,6 +200,11 @@ static void run_mode_main_loop(void) {
         watchdog_tick();
         heartbeat_run_mode_task();
 
+        if (net_udp_bootsel_pending()) {
+            diag_log_msg("run: REBOOT_TO_BOOTSEL acknowledged, jumping to bootrom");
+            jump_to_bootrom_usb();
+        }
+
         // Wi-Fi association watchdog. Fires once and triggers a bounce
         // to setup mode so the user can re-provision if the credentials
         // are wrong or the AP is unreachable at this location.
@@ -245,6 +265,11 @@ static void setup_mode_main_loop(void) {
             sleep_ms(50);
             watchdog_reboot(0, 0, 100);
             for (;;) tight_loop_contents();
+        }
+        if (cdc_handlers_bootsel_pending()) {
+            diag_log_msg("setup: REBOOT_TO_BOOTSEL acknowledged, jumping to bootrom");
+            sleep_ms(50);
+            jump_to_bootrom_usb();
         }
         sleep_us(500);
     }

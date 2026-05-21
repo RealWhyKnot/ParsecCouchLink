@@ -45,12 +45,13 @@ static const char *lwip_err_name(err_t e) {
 #define WIRE_PKT_SIZE     17
 #define MAGIC             0xA5
 
-#define TYPE_STATE        0x01
-#define TYPE_HEARTBEAT    0x02
-#define TYPE_DISCOVER     0x03
-#define TYPE_ACK          0x04
-#define TYPE_GET_LOG      0x05
-#define TYPE_LOG_CHUNK    0x85
+#define TYPE_STATE              0x01
+#define TYPE_HEARTBEAT          0x02
+#define TYPE_DISCOVER           0x03
+#define TYPE_ACK                0x04
+#define TYPE_GET_LOG            0x05
+#define TYPE_REBOOT_TO_BOOTSEL  0x06
+#define TYPE_LOG_CHUNK          0x85
 
 #define FLAG_PARSEC_CONNECTED        0x01
 // Capability bit set in ACK[3] (the flags byte, formerly always zero)
@@ -77,6 +78,12 @@ static absolute_time_t next_keepalive;
 static uint32_t  uid_short;
 static uint32_t  tx_count;   // ack + keepalive + log-chunk datagrams sent
 static uint32_t  rx_count;   // received datagrams (including malformed)
+
+// Set when TYPE_REBOOT_TO_BOOTSEL arrives. The settle deadline gives the
+// ACK packet a moment to clear the Wi-Fi PHY before the caller jumps to
+// the bootrom (reset_usb_boot() never returns).
+static bool            bootsel_pending;
+static absolute_time_t bootsel_settle_deadline;
 
 // CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
 static uint8_t crc8(const uint8_t *data, size_t n) {
@@ -279,6 +286,15 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p,
         // and this lets `couchlink bundle` work even when discovery is
         // racing the latch.
         send_log_chunks(addr, port, seq);
+    } else if (type == TYPE_REBOOT_TO_BOOTSEL) {
+        // ACK first, then arm the main-loop jump. Don't gate on peer
+        // latching: a fresh lab-mode flow may not have a STATE/HEARTBEAT
+        // round-trip yet. 100 ms is generous head-room for the ACK to
+        // clear the Wi-Fi PHY before reset_usb_boot() kills the stack.
+        send_ack(addr, port, seq);
+        bootsel_pending = true;
+        bootsel_settle_deadline = make_timeout_time_ms(100);
+        diag_log_msg("net_udp: REBOOT_TO_BOOTSEL acked, jumping to bootrom in 100 ms");
     } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT) {
         if (!have_peer
             || !ip_addr_cmp(&peer_addr, addr)
@@ -324,6 +340,12 @@ static void send_keepalive(void) {
 bool     net_udp_has_peer(void) { return have_peer; }
 uint32_t net_udp_tx_count(void) { return tx_count; }
 uint32_t net_udp_rx_count(void) { return rx_count; }
+
+bool net_udp_bootsel_pending(void) {
+    return bootsel_pending
+        && absolute_time_diff_us(get_absolute_time(),
+                                 bootsel_settle_deadline) <= 0;
+}
 
 bool net_udp_init(void) {
     pcb = udp_new();
