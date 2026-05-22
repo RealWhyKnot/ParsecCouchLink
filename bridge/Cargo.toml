@@ -32,7 +32,6 @@ toml = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 crc = "3"
 hex = "0.4"
-sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 # Filesystem / OS paths
@@ -48,14 +47,6 @@ serialport = "4"
 # interface regardless of CDC bulk endpoint state). Pure-Rust, no libusb.
 nusb = "0.1"
 
-# Tunnel client (opt-in via `couchlink tunnel ...` and config). rustls-only so
-# we don't drag in OpenSSL / SChannel build chain for the WS / HTTPS pieces.
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
-futures-util = { version = "0.3", default-features = false, features = ["sink"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
-url = "2"
-base64 = "0.22"
-
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_Foundation",
@@ -68,9 +59,6 @@ windows = { version = "0.58", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",
     "Win32_Networking_WinSock",
-    # DPAPI for the lab-mode wifi-credential vault.
-    "Win32_Security_Cryptography",
-    "Win32_System_Memory",
 ] }
 
 [profile.release]
