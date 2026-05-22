@@ -55,6 +55,12 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
         return current;
     }
 
+    if (rr->reason == RESET_REASON_FLASH_UPDATE) {
+        diag_log_msg("boot: UF2 reflash detected -- forcing setup mode with creds retained");
+        current = BOOT_MODE_SETUP;
+        return current;
+    }
+
     if (bootsel_at_boot) {
         // BOOTSEL is pressed right now. Force setup mode immediately.
         // Whether creds get wiped depends on how long BOOTSEL stays held:

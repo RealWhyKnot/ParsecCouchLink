@@ -80,6 +80,7 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         PicoEnumState::NotEnumerated => None,
         PicoEnumState::EnumeratedSetupMode
         | PicoEnumState::EnumeratedButInterfaceUnclaimable { .. } => Some("setup".to_string()),
+        PicoEnumState::EnumeratedParentOnly => Some("parent_only".to_string()),
         PicoEnumState::EnumeratedRunMode => Some("run".to_string()),
     };
 
@@ -119,11 +120,14 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     // Always write pico-diag.txt. The body is a self-narrating stub
     // when capture failed; the per-variant message names the failing
     // step so the bundle is actionable without reading the bridge log.
-    // VendorNotFound is special: its stub text depends on pico_enum_state.
-    let pico_diag_body = if matches!(diag, DiagOutcome::VendorNotFound) {
-        vendor_not_found_stub_text(&pico_enum_state)
-    } else {
-        diag.stub_text()
+    // VendorNotFound and parent-only VendorOpenFailed are special: their
+    // stub text depends on the USB topology captured in pico_enum_state.
+    let pico_diag_body = match (&diag, &pico_enum_state) {
+        (DiagOutcome::VendorNotFound, _) => vendor_not_found_stub_text(&pico_enum_state),
+        (DiagOutcome::VendorOpenFailed { .. }, PicoEnumState::EnumeratedParentOnly) => {
+            parent_only_stub_text()
+        }
+        _ => diag.stub_text(),
     };
     zip.start_file("pico-diag.txt", opts)?;
     zip.write_all(pico_diag_body.as_bytes())?;
@@ -906,6 +910,7 @@ fn vendor_not_found_stub_text(state: &PicoEnumState) -> String {
                 "0x2E8A:0xCAF0 (run mode, no vendor interface)",
             )],
         ),
+        PicoEnumState::EnumeratedParentOnly => parent_only_stub_text(),
         PicoEnumState::EnumeratedSetupMode
         | PicoEnumState::EnumeratedButInterfaceUnclaimable { .. } => stub_failure(
             "Found a Pico with a diag-vendor interface but could not claim it via WinUSB.",
@@ -919,6 +924,23 @@ fn vendor_not_found_stub_text(state: &PicoEnumState) -> String {
             &[("looking_for_vid_pid", "0x2E8A:0xCAF0 + vendor interface")],
         ),
     }
+}
+
+fn parent_only_stub_text() -> String {
+    stub_failure(
+        "Windows sees the Pico USB parent device, but no usable CDC, WinUSB, or \
+         XInput child interface is currently bound.",
+        &[
+            "Unplug and replug the Pico, then re-run `couchlink bundle`; Windows may \
+             complete child-interface binding on a clean enumeration.",
+            "If this happened immediately after a UF2 flash, flash firmware that forces \
+             setup mode on UF2 reflash so old saved credentials cannot bypass CDC setup.",
+            "If the parent-only state persists, collect Windows Device Manager details \
+             for the Pico entry; the configuration descriptor or driver bind failed \
+             before any command path could reach firmware diagnostics.",
+        ],
+        &[("enumerated_device", "USB\\VID_2E8A&PID_CAF0 parent only")],
+    )
 }
 
 /// Format a self-diagnosing stub body. Leads with a one-sentence root
@@ -1509,6 +1531,9 @@ enum PicoEnumState {
     /// VID_2E8A&PID_CAF0 present with both MI_00 (CDC) and MI_02 (vendor).
     /// The vendor interface should be WinUSB-bound in setup mode.
     EnumeratedSetupMode,
+    /// VID_2E8A&PID_CAF0 parent is present, but Windows has not exposed any
+    /// child interface. This is neither healthy setup mode nor healthy run mode.
+    EnumeratedParentOnly,
     /// VID_2E8A&PID_CAF0 present but no MI_02 / vendor interface found.
     /// Run-mode firmware presents only the XInput composite without a
     /// vendor interface; xusb22.sys being bound is a secondary indicator.
@@ -1523,10 +1548,10 @@ enum PicoEnumState {
 /// present; it looks for specific Instance ID patterns.
 ///
 /// Setup mode: the composite parent VID_2E8A&PID_CAF0\... plus a child
-/// with &MI_02 (the WinUSB vendor interface). Run mode: the composite
-/// parent is present but no MI_02 child exists (the firmware presents
-/// XInput only). The absence of both parent and children means
-/// NotEnumerated.
+/// with &MI_02 (the WinUSB vendor interface). Older run-mode builds used
+/// the same parent with non-diag child interfaces. Parent-only means Windows
+/// saw the device descriptor but did not expose any interface child, so it is
+/// tracked separately from a healthy run-mode shape.
 fn classify_pico_enum(pnputil_text: &str) -> PicoEnumState {
     // Check for the parent device.
     let has_parent = pnputil_text
@@ -1544,8 +1569,14 @@ fn classify_pico_enum(pnputil_text: &str) -> PicoEnumState {
 
     if has_vendor_itf {
         PicoEnumState::EnumeratedSetupMode
+    } else if !pnputil_text
+        .lines()
+        .any(|l| l.contains("VID_2E8A") && l.contains("PID_CAF0") && l.contains("&MI_"))
+    {
+        PicoEnumState::EnumeratedParentOnly
     } else {
-        // Parent present but no vendor interface -- run mode firmware shape.
+        // Parent and at least one child present, but no vendor interface --
+        // old run-mode firmware shape.
         PicoEnumState::EnumeratedRunMode
     }
 }
@@ -2031,12 +2062,14 @@ Driver Name:                xusb22.inf
     }
 
     #[test]
-    fn classify_pico_enum_parent_only_is_run_mode() {
-        // Parent with no children at all (e.g. driver not yet bound) should
-        // classify as run mode (no vendor interface visible) rather than
-        // NotEnumerated.
+    fn classify_pico_enum_parent_only_is_parent_only() {
+        // Parent with no children at all is an incomplete Windows binding
+        // state, not a healthy run-mode shape.
         let text = "Instance ID: USB\\VID_2E8A&PID_CAF0\\E0C9125B0D9B\nStatus: Started\n";
-        assert_eq!(classify_pico_enum(text), PicoEnumState::EnumeratedRunMode);
+        assert_eq!(
+            classify_pico_enum(text),
+            PicoEnumState::EnumeratedParentOnly
+        );
     }
 
     #[test]
@@ -2054,6 +2087,19 @@ Driver Name:                xusb22.inf
             "missing watchdog tip: {stub}"
         );
         assert!(stub.contains("BOOTSEL"), "missing BOOTSEL tip: {stub}");
+    }
+
+    #[test]
+    fn vendor_not_found_stub_parent_only_names_binding_failure() {
+        let stub = vendor_not_found_stub_text(&PicoEnumState::EnumeratedParentOnly);
+        assert!(
+            stub.contains("parent device"),
+            "missing parent-only diagnosis: {stub}"
+        );
+        assert!(
+            stub.contains("UF2 flash"),
+            "missing flash-specific hint: {stub}"
+        );
     }
 
     #[test]

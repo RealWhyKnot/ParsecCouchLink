@@ -9,9 +9,10 @@ typedef enum {
     BOOT_MODE_RUN   = 1,   // XInput, Wi-Fi
 } boot_mode_t;
 
-// Decide which mode to boot into. Reads the force_setup breadcrumb
-// from `rr`, samples BOOTSEL once at t=0 (non-blocking), and checks
-// stored credentials. Call exactly once, early in main, BEFORE
+// Decide which mode to boot into. Reads reset context from `rr`
+// (including force-setup bounces and RP2350 UF2 reflash detection),
+// samples BOOTSEL once at t=0 (non-blocking), and checks stored
+// credentials. Call exactly once, early in main, BEFORE
 // tusb_init() -- the D+ pull-up must not be asserted until this
 // returns so the host sees a single clean connect event with the
 // correct descriptor persona.
