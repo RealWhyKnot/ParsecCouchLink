@@ -3,12 +3,11 @@
 //! streams state and heartbeats. Survives Pico reboots: on peer staleness
 //! it returns to discovery automatically.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use tokio::net::UdpSocket;
-use tokio::sync::{watch, Notify};
+use tokio::sync::watch;
 
 use crate::{config, discovery, journal, network, protocol, xinput};
 
@@ -33,8 +32,7 @@ pub async fn run() -> Result<()> {
     let (stats_tx, stats_rx) = watch::channel(network::Stats::default());
     spawn_stats_logger(stats_rx);
 
-    let drop_peer = Arc::new(Notify::new());
-    let supervisor = supervisor_loop(socket, xinput_rx, stats_tx, drop_peer.clone());
+    let supervisor = supervisor_loop(socket, xinput_rx, stats_tx);
     tokio::select! {
         r = supervisor => r,
         _ = tokio::signal::ctrl_c() => {
@@ -48,7 +46,6 @@ async fn supervisor_loop(
     socket: UdpSocket,
     xinput_rx: watch::Receiver<xinput::Snapshot>,
     stats_tx: watch::Sender<network::Stats>,
-    drop_peer: Arc<Notify>,
 ) -> Result<()> {
     loop {
         tracing::info!("run: entering discovery, broadcasting for a Pico on LAN");
@@ -108,15 +105,7 @@ async fn supervisor_loop(
             );
         }
 
-        match network::run(
-            &socket,
-            peer,
-            xinput_rx.clone(),
-            stats_tx.clone(),
-            Some(drop_peer.clone()),
-        )
-        .await
-        {
+        match network::run(&socket, peer, xinput_rx.clone(), stats_tx.clone()).await {
             network::Exit::PeerLost => {
                 tracing::warn!("peer lost, returning to discovery");
                 journal!("run", "peer {peer} lost; returning to discovery");

@@ -1,5 +1,0 @@
-# The pre-built picotool.exe is fetched from raspberrypi/pico-sdk-tools
-# at build time, not vendored into git. build.ps1 caches the zip and
-# the extracted exe here so subsequent builds skip the download.
-*
-!.gitignore

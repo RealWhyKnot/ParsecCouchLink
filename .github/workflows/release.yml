@@ -32,6 +32,8 @@ jobs:
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Rust cache
         uses: actions/cache@v5
@@ -59,6 +61,15 @@ jobs:
         shell: pwsh
         run: |
           choco install ninja gcc-arm-embedded -y --no-progress
+
+      - name: Rust format
+        run: cargo fmt --manifest-path bridge/Cargo.toml -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --manifest-path bridge/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path bridge/Cargo.toml --locked
 
       - name: Resolve version
         id: version

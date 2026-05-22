@@ -4,11 +4,10 @@
 //! answering, exits PeerLost so the supervisor can re-enter discovery.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::sync::{watch, Notify};
+use tokio::sync::watch;
 use tokio::time::{interval, Instant};
 
 use crate::protocol::{GamepadState, Packet, FLAG_PARSEC_CONNECTED};
@@ -34,7 +33,6 @@ pub async fn run(
     peer: SocketAddr,
     mut xinput_rx: watch::Receiver<xinput::Snapshot>,
     stats_tx: watch::Sender<Stats>,
-    drop_peer: Option<Arc<Notify>>,
 ) -> Exit {
     tracing::info!(
         "network: streaming to {peer}; throughput summary every 5 s. Press Ctrl-C to stop."
@@ -124,15 +122,6 @@ pub async fn run(
                     );
                     return Exit::PeerLost;
                 }
-            }
-            _ = async {
-                match drop_peer.as_ref() {
-                    Some(n) => n.notified().await,
-                    None => std::future::pending::<()>().await,
-                }
-            } => {
-                tracing::info!("peer {peer} dropped by tunnel command");
-                return Exit::PeerLost;
             }
         }
     }

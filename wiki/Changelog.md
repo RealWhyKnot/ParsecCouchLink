@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Release packaging describes only the current CouchLink setup, streaming, diagnostic, flashing, and Wi-Fi configuration tools. Protocol docs list the active setup and runtime commands.
 - Firmware writes one heartbeat line every 5 seconds while running, covering USB mount/suspend state, Wi-Fi state with IP and RSSI, peer presence, and tx/rx packet counters. A quiet system used to leave the diag ring with no recent entries; the heartbeat guarantees there is always state to reason about in `pico-diag.txt`.
 - Firmware fault context expanded. On HardFault / BusFault / UsageFault / MemManage the breadcrumb now captures the full hardware-stacked basic exception frame (R0-R3, R12, LR, PC, xPSR) plus SP and -- on Cortex-M33 / Pico 2 W -- the CFSR / HFSR / MMFAR / BFAR. The next boot's log names the cause directly (divide-by-zero, unaligned-access, precise-bus-error, etc.) rather than just an address.
 - Bridge writes a `state-journal.log` next to the rotating log: one short operator-readable line per high-signal event (wizard stage transitions, CDC open + line state, HELLO timeouts with byte counts, discovery, peer transitions, bundle outcomes). Included in `couchlink bundle`. Survives across program restarts.
@@ -15,5 +16,5 @@
 - `couchlink setup` stage 4 waits up to 120 s (was 60 s) for the setup-mode CDC port to appear and prints a progress line every 10 s while it waits. The previous 60 s budget was tight when the host went through USB passthrough (VM, WSL2) or a first-time driver bind.
 - `couchlink setup` stage 4 treats a port-disappeared event right after `REBOOT_TO_RUN` as success rather than a hard error. The firmware always reboots after handling that command, so a missing reply is the expected outcome of a fast reboot, not a failure.
 - Firmware CDC `bcdDevice` is derived from the firmware semver macros (`PICO_BRIDGE_FW_MAJOR/MINOR`) so Windows re-binds `usbser.sys` after a CDC-protocol break instead of reusing a cached binding from an older interface layout.
-- Release zip now stages `setup.ps1`, `couchlink.exe`, and `couchlink-pico.uf2` together.
+- Release zip stages `setup.ps1`, `couchlink.exe`, and both board-specific UF2 files together.
 - Wiki pages now hold setup, flashing, troubleshooting, build, and protocol notes.

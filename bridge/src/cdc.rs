@@ -208,7 +208,12 @@ impl PicoSetup {
     }
 
     // Like exchange() but produces a command-specific NACK error message.
-    fn exchange_named(&mut self, cmd_label: &str, command: u8, payload: &[u8]) -> Result<Frame> {
+    fn exchange_named(
+        &mut self,
+        command_label: &str,
+        command: u8,
+        payload: &[u8],
+    ) -> Result<Frame> {
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
         let frame = encode(command, seq, payload);
@@ -222,7 +227,7 @@ impl PicoSetup {
             let detail = resp.payload.get(1).copied().unwrap_or(0);
             return Err(anyhow!(
                 "Pico rejected {}: {} (code 0x{:02X}, detail 0x{:02X})",
-                cmd_label,
+                command_label,
                 err_name(code),
                 code,
                 detail,

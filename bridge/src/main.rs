@@ -76,7 +76,7 @@ enum Command {
         #[arg(long)]
         tail: bool,
     },
-    /// Produce a support-bundle ZIP that's safe to send for remote debugging.
+    /// Produce a support-bundle ZIP that's safe to send with a bug report.
     Bundle {
         /// Output path. Default: a timestamped ZIP in the current directory.
         #[arg(short, long)]

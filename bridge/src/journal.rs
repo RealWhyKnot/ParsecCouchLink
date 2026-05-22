@@ -21,7 +21,6 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
 use chrono::Local;
-use tokio::sync::broadcast;
 
 use crate::config;
 
@@ -30,26 +29,6 @@ const MAX_BYTES_KEPT: u64 = 1024 * 1024; // 1 MiB -- truncate on init when over
 
 static FILE: LazyLock<Mutex<Option<File>>> = LazyLock::new(|| Mutex::new(None));
 static WARNED: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
-
-/// Live tap into journal writes. Independent of the on-disk file; subscribers
-/// in a tokio context (e.g. the telemetry forwarder) receive a clone of every
-/// entry. Bounded; lagged subscribers drop oldest entries.
-static BUS: LazyLock<broadcast::Sender<Entry>> = LazyLock::new(|| {
-    let (tx, _rx) = broadcast::channel(256);
-    tx
-});
-
-#[derive(Clone, Debug)]
-pub struct Entry {
-    #[allow(dead_code)] // consumed by subscribers that want client-side timestamping
-    pub ts_ms: i64,
-    pub category: String,
-    pub message: String,
-}
-
-pub fn subscribe() -> broadcast::Receiver<Entry> {
-    BUS.subscribe()
-}
 
 pub fn path() -> Option<PathBuf> {
     config::log_dir().ok().map(|d| d.join(FILENAME))
@@ -104,15 +83,6 @@ pub fn init() {
 pub fn event(category: &str, message: impl AsRef<str>) -> std::io::Result<()> {
     let now = Local::now();
     let message_owned = message.as_ref().to_string();
-
-    // Fan out to live subscribers regardless of file state. send() returns
-    // Err only when there are zero subscribers, which is the common case --
-    // we don't care.
-    let _ = BUS.send(Entry {
-        ts_ms: now.timestamp_millis(),
-        category: category.to_string(),
-        message: message_owned.clone(),
-    });
 
     let mut guard = FILE.lock().unwrap();
     let Some(f) = guard.as_mut() else {

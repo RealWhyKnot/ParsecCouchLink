@@ -112,9 +112,9 @@ fn family_name(family_id: u32) -> &'static str {
 }
 
 /// Structured result of a flash operation. Returned by the in-process
-/// `flash_uf2_to_bootsel` core so non-CLI callers (lab mode, future
-/// scripted flows) get a typed answer instead of parsing stdout.
-#[allow(dead_code)] // fields read by cmd_lab in a later commit
+/// `flash_uf2_to_bootsel` core so callers get a typed answer instead
+/// of parsing stdout.
+#[allow(dead_code)] // returned for tests and future local automation
 #[derive(Clone, Debug)]
 pub struct FlashOutcome {
     pub board: BootselBoard,
@@ -129,9 +129,8 @@ pub struct FlashOutcome {
 }
 
 /// Core flash sequence: wait for BOOTSEL drive, validate UF2 family,
-/// copy. Logs progress via tracing so anything draining the tracing
-/// stream (the CLI's console mirror, the journal bus, the lab tunnel)
-/// sees the same operator-readable timeline.
+/// copy. Logs progress via tracing so the terminal and rotating log
+/// see the same operator-readable timeline.
 ///
 /// `uf2` is the file to copy -- already resolved by the caller.
 /// `wait_timeout` bounds the BOOTSEL-drive scan.

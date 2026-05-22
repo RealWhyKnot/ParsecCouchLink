@@ -22,9 +22,9 @@ use crate::protocol::{self, LogChunk, Packet, PacketKind, ACK_FLAG_LOG_CHUNK_SUP
 use crate::{cdc, config, journal};
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
-/// callers (lab mode, future scripted flows) get a typed answer without
+/// callers get a typed answer without
 /// scraping the CLI's `println!` summary.
-#[allow(dead_code)] // fields read by cmd_lab in a later commit
+#[allow(dead_code)] // returned for tests and future local automation
 #[derive(Clone, Debug)]
 pub struct BundleSummary {
     pub zip_path: PathBuf,
@@ -866,7 +866,7 @@ impl DiagOutcome {
                      bit and the next bundle will UDP-pull diag automatically.",
                     "If you cannot reflash right now, the bridge log at \
                      %LOCALAPPDATA%\\ParsecCouchLink\\data\\logs has \
-                     bridge-side telemetry that does not depend on the firmware.",
+                     bridge-side observations that do not depend on the firmware.",
                 ],
                 &[("peer", &peer.to_string())],
             ),
@@ -1265,19 +1265,10 @@ async fn try_capture_setup_cdc() -> DiagOutcome {
     })
 }
 
-/// Run-mode UDP path. Tries broadcast first so a stale last_ip does not
-/// prevent diag capture; falls back to unicast against last_ip only when
-/// broadcast finds nothing. Two-second timeout on each leg keeps the
-/// bundle fast in the common failure case.
-#[allow(dead_code)] // available for the bundle flow; cmd_lab uses its own inline UDP path
-pub(crate) async fn pull_pico_log_via_udp() -> Result<String, String> {
-    match try_capture_run_udp().await {
-        DiagOutcome::Captured { text, .. } => Ok(text),
-        DiagOutcome::Empty { .. } => Ok(String::new()),
-        other => Err(format!("{other:?}")),
-    }
-}
-
+// Run-mode UDP path. Tries broadcast first so a stale last_ip does not
+// prevent diag capture; falls back to unicast against last_ip only when
+// broadcast finds nothing. Two-second timeout on each leg keeps the
+// bundle fast in the common failure case.
 async fn try_capture_run_udp() -> DiagOutcome {
     let cfg = config::load().unwrap_or_default();
     let last_ip = cfg.last_pico.as_ref().and_then(|p| p.last_ip.clone());

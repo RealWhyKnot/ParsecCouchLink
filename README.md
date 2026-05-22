@@ -40,6 +40,7 @@ After setup, have the remote player join through Parsec. The bridge sends their 
 | `couchlink.exe` | Windows bridge. Runs at logon or manually. |
 | `couchlink-pico2w.uf2` | Firmware for the Pico 2 W (RP2350). |
 | `couchlink-picow.uf2` | Firmware for the Pico W / Pico WH (RP2040). |
+| `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `configure-wifi.ps1` | Convenience wrappers for common support and maintenance commands. |
 | `README.txt` | Short release-folder instructions. |
 | `LICENSE` / `NOTICE` | License text and release archive notes. |
 
@@ -70,7 +71,7 @@ The bundle contains logs, doctor output, and (if the Pico is in setup
 mode) firmware diagnostics. It does NOT contain your Wi-Fi password.
 
 If the bridge won't run at all, the setup transcript at
-`%LOCALAPPDATA%\ParsecToDreamcast\logs\setup-*.log` is the next-best
+`%LOCALAPPDATA%\ParsecCouchLink\data\logs\setup-*.log` is the next-best
 thing -- attach that instead.
 
 See the wiki's [Reporting-Bugs](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Reporting-Bugs)
@@ -81,6 +82,7 @@ page for the full version.
 - `bridge/` - Rust Windows bridge and setup wizard.
 - `pico-bridge/` - Pico firmware.
 - `setup.ps1` - release entrypoint for first-run setup.
+- `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `configure-wifi.ps1` - release-folder command wrappers.
 - `build.ps1` - local build and release zip staging.
 - `wiki/` - source-controlled GitHub Wiki pages.
 

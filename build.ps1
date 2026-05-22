@@ -121,17 +121,12 @@ Each subcommand also has a one-shot wrapper script. Right-click and
 "Run with PowerShell", or call from an existing PowerShell prompt:
 
   couchlink.exe          start the bridge for a Parsec session
+  couchlink.exe test     run one diagnostic check by name
   doctor.ps1             run every diagnostic check
   bundle.ps1             produce a support-bundle ZIP for bug reports
   logs.ps1               print log path (use --tail to follow live)
   flash.ps1              re-flash without re-running setup
   configure-wifi.ps1     re-send Wi-Fi credentials (Pico must be in setup mode)
-
-Lab-mode also ships in this zip. The host runs `couchlink lab-mode` to
-open a remote-test session; `couchlink save-wifi` saves Wi-Fi creds to
-a DPAPI-encrypted local vault (only this Windows login can decrypt).
-picotool.exe is bundled so the lab-mode `force_bootsel` fallback can
-drop the Pico into BOOTSEL drive mode even if the firmware is wedged.
 
 The wrappers record a transcript under
   %LOCALAPPDATA%\ParsecCouchLink\data\logs

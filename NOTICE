@@ -9,7 +9,9 @@ Free Software Foundation. See LICENSE for the full text.
 Release archives published from this repository contain:
 
 - couchlink.exe, built from the Rust sources in bridge/.
-- couchlink-pico.uf2, built from the Pico firmware sources in pico-bridge/.
+- couchlink-pico2w.uf2, built from the Pico 2 W firmware sources in pico-bridge/.
+- couchlink-picow.uf2, built from the Pico W / Pico WH firmware sources in pico-bridge/.
+- PowerShell wrapper scripts for setup, diagnostics, logs, bundles, flashing, and Wi-Fi configuration.
 
 The build uses Rust crates from crates.io and the Raspberry Pi Pico SDK. Those
 components retain their own upstream licenses.

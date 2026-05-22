@@ -11,7 +11,7 @@ Windows host running couchlink.exe
    |
    | Wi-Fi
    v
-Raspberry Pi Pico 2 W running couchlink-pico.uf2
+Raspberry Pi Pico W or Pico 2 W running CouchLink firmware
    |
    | USB as wired Xbox 360 controller
    v
@@ -37,7 +37,8 @@ Console player 2
 |---|---|
 | `setup.ps1` | The first-run setup script. |
 | `couchlink.exe` | Windows app that reads the Parsec gamepad and sends state to the Pico. |
-| `couchlink-pico.uf2` | Pico firmware flashed by setup. |
+| `couchlink-pico2w.uf2` | Firmware for Pico 2 W. |
+| `couchlink-picow.uf2` | Firmware for Pico W / Pico WH. |
 | `README.txt` | Short copy of the release-folder instructions. |
 
 ## Normal Flow

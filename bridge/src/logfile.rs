@@ -16,7 +16,7 @@ use tracing_subscriber::Layer;
 use crate::config;
 
 /// Type-erased filter swappers, registered by `init()` once the layers exist.
-/// `set_filter()` invokes each in turn so a tunnel command can re-target
+/// `set_filter()` invokes each in turn so runtime controls can re-target
 /// verbosity at runtime without spelling out the layered subscriber type.
 type FilterSetter = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
 static STDERR_SETTER: OnceLock<FilterSetter> = OnceLock::new();

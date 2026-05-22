@@ -21,72 +21,7 @@ pub enum CheckResult {
     Fail(String, String),
 }
 
-#[allow(dead_code)] // helpers consumed by cmd_lab in a later commit
-impl CheckResult {
-    /// Lowercase status tag (`pass`, `warn`, `skip`, `fail`). Stable
-    /// across versions -- used by lab-mode JSON envelopes.
-    pub fn status(&self) -> &'static str {
-        match self {
-            Self::Pass(_) => "pass",
-            Self::Warn(_) => "warn",
-            Self::Skip(_) => "skip",
-            Self::Fail(_, _) => "fail",
-        }
-    }
-
-    pub fn message(&self) -> &str {
-        match self {
-            Self::Pass(m) | Self::Warn(m) | Self::Skip(m) | Self::Fail(m, _) => m,
-        }
-    }
-
-    /// `Some(hint)` only for `Fail`.
-    pub fn hint(&self) -> Option<&str> {
-        match self {
-            Self::Fail(_, h) => Some(h),
-            _ => None,
-        }
-    }
-}
-
 pub type BoxedCheck = std::pin::Pin<Box<dyn std::future::Future<Output = CheckResult>>>;
-
-/// One row of the doctor ladder, with the check name and how long it
-/// took. Used by non-CLI callers (lab mode, bundle) that want the
-/// structured outcome instead of the formatted console output.
-#[allow(dead_code)] // consumed by cmd_lab in a later commit
-#[derive(Debug)]
-pub struct DoctorCheckOutcome {
-    pub name: &'static str,
-    pub result: CheckResult,
-    pub elapsed_ms: u128,
-}
-
-/// Run the full diagnostic ladder and return structured outcomes. No
-/// stdout/stderr output -- callers format as they see fit.
-#[allow(dead_code)] // consumed by cmd_lab in a later commit
-pub async fn run_all_checks() -> Vec<DoctorCheckOutcome> {
-    let checks: Vec<(&'static str, BoxedCheck)> = vec![
-        ("paths", Box::pin(check_paths())),
-        ("xinput", Box::pin(check_xinput())),
-        ("startup", Box::pin(check_startup_shortcut())),
-        ("firewall", Box::pin(check_firewall())),
-        ("wifi-band", Box::pin(check_24ghz_warning())),
-        ("cdc", Box::pin(check_cdc())),
-        ("discover", Box::pin(check_discover())),
-    ];
-    let mut out = Vec::with_capacity(checks.len());
-    for (name, fut) in checks {
-        let t0 = Instant::now();
-        let result = fut.await;
-        out.push(DoctorCheckOutcome {
-            name,
-            result,
-            elapsed_ms: t0.elapsed().as_millis(),
-        });
-    }
-    out
-}
 
 pub async fn run() -> Result<()> {
     tracing::info!("doctor: starting, bridge v{}", env!("CARGO_PKG_VERSION"));

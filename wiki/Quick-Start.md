@@ -65,7 +65,7 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\bundle.ps1            # produce a support-bundle ZIP for bug reports
 .\flash.ps1             # re-flash without re-running setup
 .\configure-wifi.ps1    # re-send Wi-Fi credentials (Pico must be in setup mode)
-.\test.ps1 <name>       # run one diagnostic check by name
+.\couchlink.exe test <name>  # run one diagnostic check by name
 ```
 
 The wrappers record a transcript under `%LOCALAPPDATA%\ParsecCouchLink\data\logs\` alongside the bridge's own logs, so one folder has everything a bug report needs. The bare `couchlink.exe` form works too -- the wrappers are just shortcuts that pre-name the subcommand and capture a transcript.

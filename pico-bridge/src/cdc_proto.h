@@ -23,7 +23,6 @@
 #define CDC_CMD_HELLO              0x01
 #define CDC_CMD_GET_STATUS         0x02
 #define CDC_CMD_SET_WIFI           0x03
-#define CDC_CMD_CLEAR_WIFI         0x04
 #define CDC_CMD_REBOOT_TO_RUN      0x05
 #define CDC_CMD_SELF_TEST          0x06
 #define CDC_CMD_GET_DEVICE_NAME    0x07
@@ -35,7 +34,6 @@
 #define CDC_RSP_HELLO              0x81
 #define CDC_RSP_STATUS             0x82
 #define CDC_RSP_SET_WIFI           0x83
-#define CDC_RSP_CLEAR_WIFI         0x84
 #define CDC_RSP_REBOOT             0x85
 #define CDC_RSP_SELF_TEST          0x86
 #define CDC_RSP_DEVICE_NAME        0x87

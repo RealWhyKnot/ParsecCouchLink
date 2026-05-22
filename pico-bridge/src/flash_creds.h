@@ -48,5 +48,5 @@ bool flash_creds_load(flash_creds_t *out);
 //   -3 = post-write verify (re-read + CRC) failed
 int  flash_creds_store(const flash_creds_t *rec);
 
-// Erase both slots. Used by CMD_CLEAR_WIFI.
+// Erase both slots. Used by the physical BOOTSEL credential-wipe path.
 void flash_creds_clear(void);

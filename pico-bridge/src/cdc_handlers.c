@@ -15,7 +15,6 @@
 static uint8_t rx_buf[RX_BUFFER_SIZE];
 static size_t  rx_len;
 static bool    reboot_pending;
-static bool    bootsel_pending;
 
 static void send_nack(uint8_t seq, uint8_t code, uint8_t detail) {
     uint8_t payload[2] = { code, detail };
@@ -89,11 +88,6 @@ static size_t handle_set_wifi(const cdc_frame_view_t *req,
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     return cdc_encode(CDC_RSP_SET_WIFI, req->seq, NULL, 0, reply, cap);
-}
-
-static size_t handle_clear_wifi(uint8_t seq, uint8_t *reply, size_t cap) {
-    flash_creds_clear();
-    return cdc_encode(CDC_RSP_CLEAR_WIFI, seq, NULL, 0, reply, cap);
 }
 
 static size_t handle_reboot(uint8_t seq, uint8_t *reply, size_t cap) {
@@ -185,7 +179,6 @@ size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_ca
         case CDC_CMD_HELLO:           return handle_hello(req->seq, reply, reply_cap);
         case CDC_CMD_GET_STATUS:      return handle_hello(req->seq, reply, reply_cap); // for now, same body
         case CDC_CMD_SET_WIFI:        return handle_set_wifi(req, reply, reply_cap);
-        case CDC_CMD_CLEAR_WIFI:      return handle_clear_wifi(req->seq, reply, reply_cap);
         case CDC_CMD_REBOOT_TO_RUN:   return handle_reboot(req->seq, reply, reply_cap);
         case CDC_CMD_SELF_TEST:       return handle_self_test(req->seq, reply, reply_cap);
         case CDC_CMD_GET_DEVICE_NAME: return handle_device_name_get(req->seq, reply, reply_cap);
@@ -202,7 +195,6 @@ size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_ca
 void cdc_handlers_init(void) {
     rx_len = 0;
     reboot_pending = false;
-    bootsel_pending = false;
 }
 
 bool cdc_handlers_reboot_pending(void) {
@@ -211,14 +203,6 @@ bool cdc_handlers_reboot_pending(void) {
     // returns the number of FREE bytes, so the FIFO is empty when it
     // equals the configured TX bufsize.
     return reboot_pending
-        && (tud_cdc_write_available() == CFG_TUD_CDC_TX_BUFSIZE);
-}
-
-bool cdc_handlers_bootsel_pending(void) {
-    // Same TX-drain gate as the run-mode reboot: the BOOTSEL_ACK frame
-    // must have actually left the device before we hand the bus over to
-    // the bootrom.
-    return bootsel_pending
         && (tud_cdc_write_available() == CFG_TUD_CDC_TX_BUFSIZE);
 }
 

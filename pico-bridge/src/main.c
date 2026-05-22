@@ -10,7 +10,6 @@
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "pico/unique_id.h"
-#include "pico/bootrom.h"
 #include "hardware/watchdog.h"
 #include "tusb.h"
 
@@ -111,20 +110,6 @@ static void log_board_identity(void) {
     diag_log_printf("boot: couchlink-pico fw=%d.%d.%d board=0x%02X unique-id=%s",
                     PICO_BRIDGE_FW_MAJOR, PICO_BRIDGE_FW_MINOR,
                     PICO_BRIDGE_FW_PATCH, PICO_BRIDGE_BOARD_TYPE, id);
-}
-
-// Cleanly hand the USB bus over to the RP2040/RP2350 bootrom's USB
-// bootloader. The host sees an explicit disconnect followed by a fresh
-// connect from the bootrom's MSD+PICOBOOT composite, instead of an
-// abrupt yank that leaves stale CDC/XInput descriptors cached. Does
-// not return -- the bootrom takes over.
-static void jump_to_bootrom_usb(void) {
-    tud_disconnect();
-    sleep_ms(5);
-    reset_usb_boot(0, 0);
-    // reset_usb_boot does not return; this loop satisfies the compiler
-    // and serves as a safety net if it ever did.
-    for (;;) tight_loop_contents();
 }
 
 // Inline state-name helper for the assoc watchdog log line. The
@@ -260,11 +245,6 @@ static void setup_mode_main_loop(void) {
             sleep_ms(50);
             watchdog_reboot(0, 0, 100);
             for (;;) tight_loop_contents();
-        }
-        if (cdc_handlers_bootsel_pending()) {
-            diag_log_msg("setup: REBOOT_TO_BOOTSEL acknowledged, jumping to bootrom");
-            sleep_ms(50);
-            jump_to_bootrom_usb();
         }
         sleep_us(500);
     }
