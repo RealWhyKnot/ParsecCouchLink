@@ -84,43 +84,6 @@ if (-not (Test-Path -LiteralPath $FirmwarePicow)) {
 Copy-Item -LiteralPath $FirmwarePico2w -Destination (Join-Path $StageDir "couchlink-pico2w.uf2") -Force
 Copy-Item -LiteralPath $FirmwarePicow  -Destination (Join-Path $StageDir "couchlink-picow.uf2")  -Force
 
-# picotool ships alongside the bridge so lab-mode's `force_bootsel`
-# fallback can drop a wedged Pico into BOOTSEL drive mode without a
-# physical button press. We vendor the official pre-built binary from
-# raspberrypi/pico-sdk-tools and cache it under tools/picotool/ so
-# subsequent builds don't re-download.
-$PicotoolVersion = "2.2.0-3"
-$PicotoolAssetName = "picotool-2.2.0-a4-x64-win.zip"
-$PicotoolUrl = "https://github.com/raspberrypi/pico-sdk-tools/releases/download/v$PicotoolVersion/$PicotoolAssetName"
-$PicotoolCacheDir = Join-Path $RepoRoot "tools\picotool"
-$PicotoolExe = Join-Path $PicotoolCacheDir "picotool.exe"
-if (-not (Test-Path -LiteralPath $PicotoolExe)) {
-    Write-Host ""
-    Write-Host "Fetching picotool $PicotoolVersion from raspberrypi/pico-sdk-tools..." -ForegroundColor Cyan
-    New-Item -ItemType Directory -Force -Path $PicotoolCacheDir | Out-Null
-    $PicotoolZip = Join-Path $PicotoolCacheDir $PicotoolAssetName
-    try {
-        # TLS 1.2 + UseBasicParsing for Windows PowerShell 5.1.
-        [Net.ServicePointManager]::SecurityProtocol = `
-            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $PicotoolUrl -OutFile $PicotoolZip -UseBasicParsing
-    } catch {
-        throw "Failed to download picotool from $PicotoolUrl : $_"
-    }
-    Expand-Archive -LiteralPath $PicotoolZip -DestinationPath $PicotoolCacheDir -Force
-    Remove-Item -LiteralPath $PicotoolZip -Force
-    if (-not (Test-Path -LiteralPath $PicotoolExe)) {
-        # Some sdk-tools releases nest picotool.exe inside a versioned
-        # subfolder; find it and lift it up.
-        $found = Get-ChildItem -LiteralPath $PicotoolCacheDir -Recurse -File -Filter picotool.exe | Select-Object -First 1
-        if ($null -eq $found) {
-            throw "picotool.exe not found in extracted archive at $PicotoolCacheDir"
-        }
-        Copy-Item -LiteralPath $found.FullName -Destination $PicotoolExe -Force
-    }
-}
-Copy-Item -LiteralPath $PicotoolExe -Destination (Join-Path $StageDir "picotool.exe") -Force
-
 $ScriptFiles = @(
     "setup.ps1",
     "doctor.ps1",
