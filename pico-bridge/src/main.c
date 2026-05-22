@@ -200,11 +200,6 @@ static void run_mode_main_loop(void) {
         watchdog_tick();
         heartbeat_run_mode_task();
 
-        if (net_udp_bootsel_pending()) {
-            diag_log_msg("run: REBOOT_TO_BOOTSEL acknowledged, jumping to bootrom");
-            jump_to_bootrom_usb();
-        }
-
         // Wi-Fi association watchdog. Fires once and triggers a bounce
         // to setup mode so the user can re-provision if the credentials
         // are wrong or the AP is unreachable at this location.

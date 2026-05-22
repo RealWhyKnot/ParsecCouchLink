@@ -101,11 +101,6 @@ static size_t handle_reboot(uint8_t seq, uint8_t *reply, size_t cap) {
     return cdc_encode(CDC_RSP_REBOOT, seq, NULL, 0, reply, cap);
 }
 
-static size_t handle_reboot_to_bootsel(uint8_t seq, uint8_t *reply, size_t cap) {
-    bootsel_pending = true;
-    return cdc_encode(CDC_RSP_BOOTSEL_ACK, seq, NULL, 0, reply, cap);
-}
-
 static size_t handle_unique_id(uint8_t seq, uint8_t *reply, size_t cap) {
     pico_unique_board_id_t id;
     pico_get_unique_board_id(&id);
@@ -197,7 +192,6 @@ size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_ca
         case CDC_CMD_SET_DEVICE_NAME: return handle_device_name_set(req, reply, reply_cap);
         case CDC_CMD_GET_UNIQUE_ID:   return handle_unique_id(req->seq, reply, reply_cap);
         case CDC_CMD_GET_LOG_BUFFER:  return handle_log_buffer(req->seq, reply, reply_cap);
-        case CDC_CMD_REBOOT_TO_BOOTSEL: return handle_reboot_to_bootsel(req->seq, reply, reply_cap);
         default: {
             uint8_t err[2] = { CDC_ERR_UNKNOWN_COMMAND, req->command };
             return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, reply_cap);
