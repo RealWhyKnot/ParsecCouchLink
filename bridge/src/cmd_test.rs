@@ -10,7 +10,7 @@ use crate::cmd_doctor::{
     check_24ghz_warning, check_cdc, check_discover, check_firewall, check_paths,
     check_startup_shortcut, check_xinput, CheckResult,
 };
-use crate::{discovery, protocol};
+use crate::{discovery, support};
 
 pub async fn run(which: &str, all: bool, reboot_to_run: bool) -> Result<()> {
     if reboot_to_run && which != "cdc" {
@@ -168,10 +168,7 @@ async fn run_discover_all() -> Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     let replies = discovery::collect(&socket, Duration::from_secs(8)).await?;
     if replies.is_empty() {
-        return Err(anyhow!(
-            "no Pico replied within 8 s on UDP/{}",
-            protocol::PORT
-        ));
+        return Err(anyhow!("{}", support::no_pico_wifi_help(8)));
     }
 
     for (peer, info) in &replies {

@@ -341,12 +341,7 @@ pub async fn check_discover() -> CheckResult {
         ),
         Err(_) => CheckResult::Fail(
             "no Pico replied within 3 s on UDP/4242".into(),
-            "Confirm the Pico is powered, joined your Wi-Fi, and on the same \
-             LAN as this PC. Common causes: AP isolation enabled on the router \
-             (see wiki/Troubleshooting.md), Pico on a different SSID, or this \
-             PC is multi-homed and the broadcast went out the wrong NIC. If \
-             unsure, run `couchlink configure-wifi` to re-provision."
-                .into(),
+            support::no_pico_wifi_short_hint().into(),
         ),
     }
 }

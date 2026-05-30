@@ -75,6 +75,22 @@ Run:
 .\couchlink.exe test discover
 ```
 
+If the guided menu says `No Pico replied on Wi-Fi`, that is not a
+controller problem. It means the PC did not receive a UDP discovery reply
+from a running Pico.
+
+Try this in order:
+
+1. Confirm the Pico is powered and not sitting in BOOTSEL. If it appears
+   as setup-mode USB, use `configure-wifi` first.
+2. Run `.\couchlink.exe test discover --all`.
+3. If the router name or password changed, run `.\couchlink.exe
+   configure-wifi`.
+4. If `configure-wifi` cannot find the Pico, use the credential-wipe
+   recovery in [[Setup and Flashing]], then run `configure-wifi` again.
+5. Run `.\couchlink.exe doctor`.
+6. Run `.\couchlink.exe bundle` and attach the ZIP to a bug report.
+
 Common causes:
 
 - Windows Firewall blocks UDP broadcast. The bridge will print a

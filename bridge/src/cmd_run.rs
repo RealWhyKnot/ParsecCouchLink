@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, FLAG_PARSEC_CONNECTED};
-use crate::{config, discovery, journal, xinput};
+use crate::{config, discovery, journal, support, xinput};
 
 const DEFAULT_DISCOVER_SECONDS: u64 = 5;
 const DEFAULT_STATUS_SECONDS: u64 = 2;
@@ -144,10 +144,7 @@ pub async fn run(options: RunOptions) -> Result<()> {
 
     let picos = discover_picos(Duration::from_secs(options.discover_seconds)).await?;
     if picos.is_empty() {
-        bail!(
-            "no Pico replied within {} s. Run `couchlink` for the guided menu or `couchlink test discover --all` for details.",
-            options.discover_seconds
-        );
+        bail!("{}", support::no_pico_wifi_help(options.discover_seconds));
     }
 
     let routes = if !options.routes.is_empty() {

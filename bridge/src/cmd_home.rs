@@ -7,7 +7,9 @@ use anyhow::{Context, Result};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, MultiSelect, Select};
 
-use crate::{cmd_configure_wifi, cmd_doctor, cmd_flash, cmd_run, cmd_setup, config, xinput};
+use crate::{
+    cmd_configure_wifi, cmd_doctor, cmd_flash, cmd_run, cmd_setup, config, support, xinput,
+};
 
 pub async fn run() -> Result<()> {
     loop {
@@ -43,11 +45,19 @@ async fn start_routing() -> Result<()> {
         println!("Looking for running Pico boards on Wi-Fi...");
         let picos = cmd_run::discover_picos(Duration::from_secs(5)).await?;
         if picos.is_empty() {
-            println!("No Pico replied on Wi-Fi.");
-            let choices = vec!["Try again", "Flash/update firmware", "Back"];
+            support::print_no_pico_wifi_help(5);
+            let choices = vec![
+                "Try discovery again",
+                "Set or change Wi-Fi",
+                "Run diagnostics",
+                "Flash/update firmware",
+                "Back",
+            ];
             match select("Next step", &choices, 0).await? {
                 0 => continue,
-                1 => flash_menu().await?,
+                1 => cmd_configure_wifi::run().await?,
+                2 => cmd_doctor::run().await?,
+                3 => flash_menu().await?,
                 _ => return Ok(()),
             }
             continue;
