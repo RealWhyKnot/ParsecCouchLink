@@ -24,6 +24,33 @@ For a shareable support bundle:
 
 The bundle includes recent logs and diagnostic output. It does not include Wi-Fi credentials or SSID.
 
+## Pico Debug And Recovery
+
+If the Pico feels "lost", use the debug menu first:
+
+```powershell
+.\couchlink.exe debug
+```
+
+The menu checks all three recoverable states:
+
+- **Wi-Fi/controller mode**: the normal running mode. The bridge can ask this Pico to reboot into USB debug mode.
+- **USB debug mode**: the setup USB serial mode. From here you can read logs, change Wi-Fi, switch back to Wi-Fi/controller mode, or enter BOOTSEL.
+- **BOOTSEL firmware mode**: the hardware fallback used by firmware update.
+
+Useful direct commands:
+
+```powershell
+.\couchlink.exe debug --status
+.\couchlink.exe debug --to-usb-debug
+.\couchlink.exe debug --to-wifi --port COM3
+.\couchlink.exe debug --to-bootsel
+.\couchlink.exe debug --logs
+```
+
+If none of those modes show a Pico, use BOOTSEL flashing. Hold BOOTSEL while
+plugging the Pico into this PC, then run the guided firmware update.
+
 ## Setup Cannot Find The Pico In BOOTSEL
 
 Check:
@@ -53,7 +80,8 @@ If neither setup-mode USB nor Wi-Fi discovery appears, try:
 1. Unplug the Pico.
 2. Plug it back in normally, without holding BOOTSEL.
 3. Wait 5 seconds.
-4. Rerun setup.
+4. Run `.\couchlink.exe debug --status`.
+5. Rerun setup.
 
 If it still fails, flash again.
 

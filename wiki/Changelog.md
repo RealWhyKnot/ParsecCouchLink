@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `couchlink debug` adds a guided Pico recovery menu and direct mode-switch commands for Wi-Fi/controller mode, USB debug mode, and BOOTSEL firmware mode.
 - `couchlink test usb` asks run-mode firmware over Wi-Fi for USB/XInput status, including mount/configuration state, descriptor counters, accepted IN reports, and host OUT traffic. The guided **Fix a problem** menu exposes the same check for console-adapter troubleshooting.
 - Release packaging describes only the current CouchLink setup, streaming, diagnostic, flashing, and Wi-Fi configuration tools. Protocol docs list the active setup and runtime commands.
 - Firmware writes one heartbeat line every 5 seconds while running, covering USB mount/suspend state, Wi-Fi state with IP and RSSI, peer presence, and tx/rx packet counters. A quiet system used to leave the diag ring with no recent entries; the heartbeat guarantees there is always state to reason about in `pico-diag.txt`.

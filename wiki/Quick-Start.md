@@ -67,7 +67,7 @@ The guided menu can:
 - Pick one Pico or all detected Picos.
 - Route Controller 1, 2, 3, or 4 to the Pico you choose.
 - Update Pico firmware with one guided path.
-- Fix a problem with health checks, Pico USB adapter checks, logs, and support bundles.
+- Fix a problem with health checks, Pico debug/recovery, USB adapter checks, logs, and support bundles.
 
 When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
 
@@ -86,10 +86,13 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\logs.ps1 --tail       # follow the active log file
 .\bundle.ps1            # produce a support-bundle ZIP for bug reports
 .\flash.ps1             # re-flash without re-running setup
+.\debug.ps1             # open Pico debug and recovery
 .\configure-wifi.ps1    # re-send Wi-Fi credentials
 .\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
 .\couchlink.exe run --route 1=07D37EB6  # route Controller 1 to a specific Pico UID
 .\couchlink.exe test usb --all  # check whether the USB adapter is polling the Pico
+.\couchlink.exe debug --status  # show whether the Pico is on Wi-Fi, USB debug, or BOOTSEL
+.\couchlink.exe debug --to-wifi --port COM3  # switch one USB debug Pico back to Wi-Fi
 .\couchlink.exe test <name>  # run one diagnostic check by name
 ```
 
@@ -110,3 +113,16 @@ After the Pico rejoins Wi-Fi, the command prints the confirmed Pico IP.
 If the Pico is already running on Wi-Fi, the command can ask it to reboot into
 setup-mode USB and then continue. If the Pico already has the correct Wi-Fi,
 choose **Use current Wi-Fi and stop**.
+
+## Pico Debug And Recovery
+
+If you are not sure which mode the Pico is in, run:
+
+```powershell
+.\couchlink.exe debug
+```
+
+The debug menu shows whether the Pico is in Wi-Fi/controller mode, USB debug
+mode, or BOOTSEL firmware mode. It can switch a Wi-Fi Pico into USB debug mode,
+switch USB debug mode back to Wi-Fi/controller mode, read the firmware log, and
+send a USB debug Pico into BOOTSEL for firmware update.

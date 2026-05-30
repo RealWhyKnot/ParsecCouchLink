@@ -51,6 +51,31 @@ After flashing, the Pico should reboot as a USB serial setup device. The setup w
 Then the Pico joins Wi-Fi and starts listening for the bridge on UDP port 4242.
 Setup prints the confirmed Pico IP after it receives a reply.
 
+## Mode Switching And Debug
+
+Run this when you need to see where the Pico is or move it between modes:
+
+```powershell
+.\couchlink.exe debug
+```
+
+The debug menu can:
+
+- Show Pico state across Wi-Fi/controller mode, USB debug mode, and BOOTSEL firmware mode.
+- Reboot a Wi-Fi Pico into USB debug mode.
+- Reboot a USB debug Pico back into Wi-Fi/controller mode.
+- Read the USB debug firmware log.
+- Send a USB debug Pico into BOOTSEL for firmware update.
+
+Direct commands are available for scripts:
+
+```powershell
+.\couchlink.exe debug --status
+.\couchlink.exe debug --to-usb-debug
+.\couchlink.exe debug --to-wifi --port COM3
+.\couchlink.exe debug --to-bootsel
+```
+
 ## No-Button Reflash
 
 If the Pico is already running CouchLink setup mode, the app can ask it to reboot into BOOTSEL. You do not need to press the BOOTSEL button for that path.

@@ -6,14 +6,14 @@
 //! `String` only as long as needed, and zeroized on `Drop` via the helper
 //! in `cdc.rs`. Neither SSID nor password ever hits disk.
 
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
-use tokio::net::UdpSocket;
 use zeroize::Zeroize;
 
-use crate::{cdc, cmd_run, protocol};
+use crate::{cdc, cmd_run, pico_mode};
 
 pub async fn run() -> Result<()> {
     println!("couchlink configure-wifi");
@@ -51,6 +51,7 @@ pub async fn run() -> Result<()> {
     // Move fields out of `creds` without destructuring (Drop on the parent
     // would forbid the destructure-move). After the takes, `creds.password`
     // is an empty String and the eventual Drop is a no-op.
+    let before_wifi = wifi_uid_set().await?;
     let ssid = std::mem::take(&mut creds.ssid);
     let mut password = std::mem::take(&mut creds.password);
     drop(creds);
@@ -65,12 +66,12 @@ pub async fn run() -> Result<()> {
     pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;
     println!();
     println!("Pico will reboot. Waiting up to 60 s for a Wi-Fi reply...");
-    print_discovered_pico_ips().await?;
+    print_discovered_pico_ips(before_wifi).await?;
     Ok(())
 }
 
 async fn find_setup_port_or_recover() -> Result<Option<String>> {
-    match wait_for_setup_port(Duration::from_secs(8)).await {
+    match pico_mode::wait_for_setup_port(Duration::from_secs(8)).await {
         Ok(port) => return Ok(Some(port)),
         Err(e) => {
             tracing::debug!("configure-wifi: no setup-mode USB after initial wait: {e:#}");
@@ -87,7 +88,7 @@ async fn find_setup_port_or_recover() -> Result<Option<String>> {
     }
 
     println!("No running Pico replied on Wi-Fi either. Continuing to wait for setup-mode USB...");
-    wait_for_setup_port(Duration::from_secs(47))
+    pico_mode::wait_for_setup_port(Duration::from_secs(47))
         .await
         .map(Some)
         .context(
@@ -128,9 +129,9 @@ async fn handle_running_picos(mut picos: Vec<cmd_run::PicoTarget>) -> Result<Opt
                 "Asking {} to reboot into setup-mode USB...",
                 pico.short_label()
             );
-            request_reboot_to_setup(&pico).await?;
+            pico_mode::request_reboot_to_setup(&pico).await?;
             println!("Waiting for setup-mode USB...");
-            wait_for_setup_port(Duration::from_secs(60))
+            pico_mode::wait_for_setup_port(Duration::from_secs(60))
                 .await
                 .map(Some)
                 .context(
@@ -143,54 +144,14 @@ async fn handle_running_picos(mut picos: Vec<cmd_run::PicoTarget>) -> Result<Opt
     }
 }
 
-async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
-    let socket = UdpSocket::bind("0.0.0.0:0")
-        .await
-        .context("binding UDP reboot-to-setup socket")?;
-    let mut seq = 0xE0u8;
-    for _ in 0..8 {
-        let req = protocol::encode_reboot_to_setup(seq);
-        seq = seq.wrapping_add(1);
-        socket
-            .send_to(&req, pico.peer)
-            .await
-            .with_context(|| format!("sending reboot-to-setup request to {}", pico.peer))?;
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    Ok(())
-}
-
-async fn wait_for_setup_port(timeout: Duration) -> Result<String> {
-    let started = Instant::now();
-    let deadline = started + timeout;
-    let mut next_beat = started + Duration::from_secs(10);
-    loop {
-        if let Ok(port) = cdc::find_setup_port() {
-            return Ok(port);
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            return cdc::find_setup_port();
-        }
-        if now >= next_beat {
-            let elapsed = now.duration_since(started).as_secs();
-            println!(
-                "  ... still waiting for setup-mode USB ({elapsed}s/{})",
-                timeout.as_secs()
-            );
-            next_beat = now + Duration::from_secs(10);
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-}
-
-async fn print_discovered_pico_ips() -> Result<()> {
+async fn print_discovered_pico_ips(before: BTreeSet<u32>) -> Result<()> {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(60);
     let mut next_beat = started + Duration::from_secs(10);
     loop {
         let picos = cmd_run::discover_picos(Duration::from_secs(2)).await?;
-        if !picos.is_empty() {
+        let current: BTreeSet<u32> = picos.iter().map(|pico| pico.info.unique_id_short).collect();
+        if !picos.is_empty() && current != before {
             print_pico_ips(&picos);
             return Ok(());
         }
@@ -217,6 +178,14 @@ async fn print_discovered_pico_ips() -> Result<()> {
             next_beat = now + Duration::from_secs(10);
         }
     }
+}
+
+async fn wifi_uid_set() -> Result<BTreeSet<u32>> {
+    Ok(cmd_run::discover_picos(Duration::from_secs(2))
+        .await?
+        .into_iter()
+        .map(|pico| pico.info.unique_id_short)
+        .collect())
 }
 
 fn print_pico_ips(picos: &[cmd_run::PicoTarget]) {

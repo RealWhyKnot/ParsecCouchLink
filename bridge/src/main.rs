@@ -1,6 +1,7 @@
 mod cdc;
 mod cmd_bundle;
 mod cmd_configure_wifi;
+mod cmd_debug;
 mod cmd_doctor;
 mod cmd_flash;
 mod cmd_home;
@@ -16,6 +17,7 @@ mod firmware_version;
 mod journal;
 mod known_folders;
 mod logfile;
+mod pico_mode;
 mod protocol;
 mod support;
 mod xinput;
@@ -106,6 +108,40 @@ enum Command {
     },
     /// Re-push Wi-Fi credentials to a Pico in setup mode via USB-CDC.
     ConfigureWifi,
+    /// Guided Pico debug/recovery menu. Can also switch between Wi-Fi, USB debug, and BOOTSEL modes.
+    Debug {
+        /// Show current Pico mode status and exit.
+        #[arg(long)]
+        status: bool,
+
+        /// Ask a Wi-Fi Pico to reboot into USB debug mode.
+        #[arg(long = "to-usb-debug")]
+        to_usb_debug: bool,
+
+        /// Ask a USB debug Pico to reboot into Wi-Fi/controller mode.
+        #[arg(long = "to-wifi")]
+        to_wifi: bool,
+
+        /// Ask a USB debug Pico to reboot into BOOTSEL firmware mode.
+        #[arg(long = "to-bootsel")]
+        to_bootsel: bool,
+
+        /// Read setup-mode USB debug logs.
+        #[arg(long)]
+        logs: bool,
+
+        /// Apply the selected action to every matching Pico.
+        #[arg(long)]
+        all: bool,
+
+        /// Select a Wi-Fi Pico by IP when using --to-usb-debug.
+        #[arg(long = "ip")]
+        ips: Vec<String>,
+
+        /// Select a setup-mode USB debug Pico by COM port for --to-wifi, --to-bootsel, or --logs.
+        #[arg(long = "port")]
+        ports: Vec<String>,
+    },
     /// Run a single diagnostic test by name.
     ///
     /// Names: xinput, paths, firewall, startup, discover, cdc, usb
@@ -190,6 +226,28 @@ fn main() {
             Some(Command::Doctor) => cmd_doctor::run().await,
             Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,
             Some(Command::ConfigureWifi) => cmd_configure_wifi::run().await,
+            Some(Command::Debug {
+                status,
+                to_usb_debug,
+                to_wifi,
+                to_bootsel,
+                logs,
+                all,
+                ips,
+                ports,
+            }) => {
+                cmd_debug::run(cmd_debug::DebugOptions {
+                    status,
+                    to_usb_debug,
+                    to_wifi,
+                    to_bootsel,
+                    logs,
+                    all,
+                    ips,
+                    ports,
+                })
+                .await
+            }
             Some(Command::Test {
                 which,
                 all,

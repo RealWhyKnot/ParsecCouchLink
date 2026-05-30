@@ -89,6 +89,7 @@ $ScriptFiles = @(
     "doctor.ps1",
     "bundle.ps1",
     "flash.ps1",
+    "debug.ps1",
     "configure-wifi.ps1",
     "logs.ps1"
 )
@@ -126,6 +127,7 @@ Each subcommand also has a one-shot wrapper script. Right-click and
   bundle.ps1             produce a support-bundle ZIP for bug reports
   logs.ps1               print log path (use --tail to follow live)
   flash.ps1              re-flash without re-running setup
+  debug.ps1              Pico debug and recovery menu
   configure-wifi.ps1     re-send Wi-Fi credentials
 
 The wrappers record a transcript under

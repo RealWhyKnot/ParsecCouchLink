@@ -542,6 +542,10 @@ pub async fn wait_for_bootsel_mounts(
     }
 }
 
+pub fn visible_bootsel_mounts() -> Vec<(PathBuf, BootselBoard)> {
+    find_bootsel_mounts()
+}
+
 #[cfg(windows)]
 fn find_bootsel_mounts() -> Vec<(PathBuf, BootselBoard)> {
     use std::ffi::OsStr;

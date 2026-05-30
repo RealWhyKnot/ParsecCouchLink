@@ -8,7 +8,7 @@ use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, MultiSelect, Select};
 
 use crate::{
-    cmd_bundle, cmd_configure_wifi, cmd_doctor, cmd_flash, cmd_logs, cmd_run, cmd_setup,
+    cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_logs, cmd_run, cmd_setup,
     cmd_usb_diag, config, support, xinput,
 };
 
@@ -355,6 +355,7 @@ async fn support_menu() -> Result<()> {
         println!("Fix a problem");
         let choices = vec![
             "Run health check",
+            "Pico debug and recovery",
             "Check Pico USB adapter",
             "Create support bundle",
             "Show log folder",
@@ -367,12 +368,15 @@ async fn support_menu() -> Result<()> {
                 press_enter("Press Enter to return to support options.").await?;
             }
             1 => {
+                cmd_debug::run(cmd_debug::DebugOptions::default()).await?;
+            }
+            2 => {
                 cmd_usb_diag::run_interactive().await?;
                 press_enter("Press Enter to return to support options.").await?;
             }
-            2 => cmd_bundle::run(None).await?,
-            3 => cmd_logs::run(false).await?,
-            4 => cmd_logs::run(true).await?,
+            3 => cmd_bundle::run(None).await?,
+            4 => cmd_logs::run(false).await?,
+            5 => cmd_logs::run(true).await?,
             _ => return Ok(()),
         }
     }
@@ -383,6 +387,10 @@ async fn show_direct_commands() -> Result<()> {
     println!("Advanced commands");
     println!("  couchlink                         guided menu");
     println!("  couchlink setup                   first-time setup wizard");
+    println!("  couchlink debug                   Pico USB/Wi-Fi recovery menu");
+    println!("  couchlink debug --status          show USB debug, Wi-Fi, and BOOTSEL state");
+    println!("  couchlink debug --to-usb-debug    switch a Wi-Fi Pico to USB debug mode");
+    println!("  couchlink debug --to-wifi --port COM3  switch USB debug mode back to Wi-Fi mode");
     println!("  couchlink flash --from-usb --all  no-button reflash for setup-mode Picos");
     println!("  couchlink flash --all             flash every BOOTSEL drive");
     println!("  couchlink run                     stream using the saved layout, or one Pico if no layout is saved");
