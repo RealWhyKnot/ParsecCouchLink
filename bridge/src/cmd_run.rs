@@ -3,11 +3,13 @@
 //! module keeps the scriptable route syntax for startup shortcuts and
 //! third-party launchers.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, FLAG_PARSEC_CONNECTED};
@@ -17,6 +19,8 @@ const DEFAULT_DISCOVER_SECONDS: u64 = 5;
 const DEFAULT_STATUS_SECONDS: u64 = 2;
 const STREAM_TICK: Duration = Duration::from_millis(16);
 const PEER_STALE_AFTER: Duration = Duration::from_secs(5);
+const PEER_RECOVER_EVERY: Duration = Duration::from_secs(10);
+const PEER_RECOVERY_DISCOVER: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 pub struct RunOptions {
@@ -238,8 +242,8 @@ pub fn parse_route_specs(specs: &[String], picos: &[PicoTarget]) -> Result<Vec<S
 pub fn parse_user_slot(input: &str) -> Result<u32> {
     let s = input
         .trim()
-        .trim_start_matches(|c: char| c == 'p' || c == 'P')
-        .trim_start_matches(|c: char| c == 'x' || c == 'X');
+        .trim_start_matches(['p', 'P'])
+        .trim_start_matches(['x', 'X']);
     let user_slot: u32 = s
         .parse()
         .with_context(|| format!("invalid controller slot `{input}`"))?;
@@ -360,6 +364,8 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
     let mut status = interval(Duration::from_secs(options.status_seconds.max(1)));
     status.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut buf = [0u8; 64];
+    let (recovery_tx, mut recovery_rx) = mpsc::channel::<Result<Vec<PicoTarget>>>(1);
+    let mut recovery_in_flight = false;
 
     loop {
         tokio::select! {
@@ -376,8 +382,30 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
                     Err(e) => return Err(e).context("receiving stream reply"),
                 }
             }
-            _ = status.tick(), if !options.quiet => {
-                print_status(&mut runtime);
+            _ = status.tick() => {
+                if !options.quiet {
+                    print_status(&mut runtime);
+                }
+                if !recovery_in_flight && schedule_recovery_if_needed(&mut runtime) {
+                    recovery_in_flight = true;
+                    let tx = recovery_tx.clone();
+                    tokio::spawn(async move {
+                        let result = discover_picos(PEER_RECOVERY_DISCOVER).await;
+                        let _ = tx.send(result).await;
+                    });
+                }
+            }
+            recovery = recovery_rx.recv() => {
+                recovery_in_flight = false;
+                match recovery {
+                    Some(Ok(picos)) => apply_recovery_results(&mut runtime, &picos, options.quiet),
+                    Some(Err(e)) if !options.quiet => {
+                        println!("Recovery discovery failed: {e:#}");
+                        println!("  Check Wi-Fi, firewall, and router client isolation, then run `couchlink test discover --all`.");
+                    }
+                    Some(Err(_)) => {}
+                    None => {}
+                }
             }
             _ = tokio::signal::ctrl_c() => {
                 if !options.quiet {
@@ -391,9 +419,16 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
 }
 
 fn validate_routes(routes: &[StreamRoute]) -> Result<()> {
+    let mut pico_uids = HashSet::new();
     for route in routes {
         if route.source_slot >= 4 {
             bail!("controller slot must be 1, 2, 3, or 4");
+        }
+        if !pico_uids.insert(route.pico.info.unique_id_short) {
+            bail!(
+                "the same Pico ({}) is routed more than once. Pick one source controller per Pico.",
+                route.pico.uid_hex()
+            );
         }
     }
     Ok(())
@@ -434,6 +469,8 @@ struct RouteRuntime {
     last_packet_number: Option<u32>,
     source_connected: bool,
     last_send_type: &'static str,
+    last_recovery_attempt: Option<Instant>,
+    recovery_hint_printed: bool,
 }
 
 impl RouteRuntime {
@@ -449,6 +486,8 @@ impl RouteRuntime {
             last_packet_number: None,
             source_connected: false,
             last_send_type: "heartbeat",
+            last_recovery_attempt: None,
+            recovery_hint_printed: false,
         }
     }
 
@@ -557,6 +596,64 @@ fn print_status(routes: &mut [RouteRuntime]) {
             route.last_state.right_x,
             route.last_state.right_y,
         );
+        if route.inbound_total == 0 && route.sent_total > 180 && !route.recovery_hint_printed {
+            println!(
+                "    hint: no Pico reply yet. Confirm this Pico is powered, on the same Wi-Fi, and visible in `couchlink test discover --all`."
+            );
+            route.recovery_hint_printed = true;
+        } else if route.inbound_total > 0
+            && route.last_inbound.elapsed() > PEER_STALE_AFTER
+            && !route.recovery_hint_printed
+        {
+            println!(
+                "    hint: this Pico stopped replying. CouchLink will try to rediscover it; check power and Wi-Fi if it stays stale."
+            );
+            route.recovery_hint_printed = true;
+        }
+    }
+}
+
+fn schedule_recovery_if_needed(routes: &mut [RouteRuntime]) -> bool {
+    let now = Instant::now();
+    let mut needed = false;
+    for route in routes {
+        if route.last_inbound.elapsed() <= PEER_STALE_AFTER {
+            continue;
+        }
+        if route
+            .last_recovery_attempt
+            .map(|last| now.duration_since(last) < PEER_RECOVER_EVERY)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        route.last_recovery_attempt = Some(now);
+        needed = true;
+    }
+    needed
+}
+
+fn apply_recovery_results(routes: &mut [RouteRuntime], picos: &[PicoTarget], quiet: bool) {
+    for route in routes {
+        let Some(found) = picos
+            .iter()
+            .find(|p| p.info.unique_id_short == route.route.pico.info.unique_id_short)
+        else {
+            continue;
+        };
+        if found.peer != route.route.pico.peer {
+            if !quiet {
+                println!(
+                    "Recovered {}: {} -> {}",
+                    route.route.pico.uid_hex(),
+                    route.route.pico.peer,
+                    found.peer
+                );
+            }
+            route.route.pico = found.clone();
+            route.last_inbound = Instant::now();
+            route.recovery_hint_printed = false;
+        }
     }
 }
 
@@ -670,5 +767,21 @@ mod tests {
         assert_eq!(routes[0].pico.info.unique_id_short, 0x07D37EB6);
         assert_eq!(routes[1].source_slot, 1);
         assert_eq!(routes[1].pico.info.unique_id_short, 0x523861E6);
+    }
+
+    #[test]
+    fn validate_routes_rejects_same_pico_twice() {
+        let target = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+        let routes = vec![
+            StreamRoute {
+                source_slot: 0,
+                pico: target.clone(),
+            },
+            StreamRoute {
+                source_slot: 1,
+                pico: target,
+            },
+        ];
+        assert!(validate_routes(&routes).is_err());
     }
 }

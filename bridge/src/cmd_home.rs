@@ -209,39 +209,33 @@ async fn stream(routes: Vec<cmd_run::StreamRoute>, save: bool) -> Result<()> {
 }
 
 async fn flash_menu() -> Result<()> {
-    loop {
-        println!();
-        println!("Firmware update");
-        println!("Use setup-mode USB for no-button reflashing when the Pico firmware is already running setup mode.");
-        let choices = vec![
-            "Update setup-mode Pico(s) without BOOTSEL",
-            "Flash Pico(s) already in BOOTSEL",
-            "First-time setup wizard",
-            "Back",
-        ];
-        match select("Flash path", &choices, 0).await? {
-            0 => {
-                let result = cmd_flash::run(None, true, true).await;
-                if let Err(e) = result {
-                    println!();
-                    println!("No-button flash did not complete:");
-                    println!("  {e:#}");
-                    if confirm("Try BOOTSEL-drive flashing instead?", true).await? {
-                        cmd_flash::run(None, true, false).await?;
-                    }
+    println!();
+    println!("Firmware update");
+    println!(
+        "Use setup-mode USB for no-button reflashing when the Pico firmware is already running setup mode."
+    );
+    let choices = vec![
+        "Update setup-mode Pico(s) without BOOTSEL",
+        "Flash Pico(s) already in BOOTSEL",
+        "First-time setup wizard",
+        "Back",
+    ];
+    match select("Flash path", &choices, 0).await? {
+        0 => {
+            let result = cmd_flash::run(None, true, true).await;
+            if let Err(e) = result {
+                println!();
+                println!("No-button flash did not complete:");
+                println!("  {e:#}");
+                if confirm("Try BOOTSEL-drive flashing instead?", true).await? {
+                    cmd_flash::run(None, true, false).await?;
                 }
-                return Ok(());
             }
-            1 => {
-                cmd_flash::run(None, true, false).await?;
-                return Ok(());
-            }
-            2 => {
-                cmd_setup::run(None).await?;
-                return Ok(());
-            }
-            _ => return Ok(()),
+            Ok(())
         }
+        1 => cmd_flash::run(None, true, false).await,
+        2 => cmd_setup::run(None).await,
+        _ => Ok(()),
     }
 }
 
