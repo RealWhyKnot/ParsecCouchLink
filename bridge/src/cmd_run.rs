@@ -142,7 +142,12 @@ pub async fn run(options: RunOptions) -> Result<()> {
         return run_legacy_single().await;
     }
 
-    let picos = discover_picos(Duration::from_secs(options.discover_seconds)).await?;
+    let discover_timeout = Duration::from_secs(options.discover_seconds);
+    let mut picos = discover_picos(discover_timeout).await?;
+    let manual_ips = manual_ips_from_options(&options);
+    if !manual_ips.is_empty() {
+        picos = add_manual_ip_targets(picos, &manual_ips, discover_timeout).await?;
+    }
     if picos.is_empty() {
         bail!("{}", support::no_pico_wifi_help(options.discover_seconds));
     }
@@ -180,6 +185,50 @@ pub async fn discover_picos(timeout: Duration) -> Result<Vec<PicoTarget>> {
         .into_iter()
         .map(|(peer, info)| PicoTarget { peer, info })
         .collect())
+}
+
+pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> {
+    let socket = UdpSocket::bind("0.0.0.0:0")
+        .await
+        .context("binding UDP manual-IP probe socket")?;
+    let Some((peer, info)) = discovery::probe_ip(&socket, ip, timeout)
+        .await
+        .with_context(|| format!("probing Pico at {ip}:{}", protocol::PORT))?
+    else {
+        bail!(
+            "no Pico replied at {ip}:{} within {} s",
+            protocol::PORT,
+            timeout.as_secs()
+        );
+    };
+    if info.proto_version != protocol::PROTO_VERSION {
+        bail!(
+            "Pico at {peer} speaks protocol v{}, bridge speaks v{}. Update whichever side is older.",
+            info.proto_version,
+            protocol::PROTO_VERSION,
+        );
+    }
+    Ok(PicoTarget { peer, info })
+}
+
+async fn add_manual_ip_targets(
+    mut picos: Vec<PicoTarget>,
+    ips: &[IpAddr],
+    timeout: Duration,
+) -> Result<Vec<PicoTarget>> {
+    for ip in ips {
+        if picos.iter().any(|p| p.peer.ip() == *ip) {
+            continue;
+        }
+        let pico = probe_pico_ip(*ip, timeout).await?;
+        if !picos
+            .iter()
+            .any(|p| p.info.unique_id_short == pico.info.unique_id_short)
+        {
+            picos.push(pico);
+        }
+    }
+    Ok(picos)
 }
 
 pub fn auto_routes(
@@ -256,7 +305,7 @@ pub fn match_pico_selector(selector: &str, picos: &[PicoTarget]) -> Result<PicoT
         bail!("empty Pico selector");
     }
 
-    if let Ok(ip) = selector.parse::<IpAddr>() {
+    if let Some(ip) = parse_ip_selector(selector) {
         let matches: Vec<_> = picos.iter().filter(|p| p.peer.ip() == ip).collect();
         return single_match(selector, matches);
     }
@@ -292,6 +341,45 @@ pub fn match_pico_selector(selector: &str, picos: &[PicoTarget]) -> Result<PicoT
         "Pico `{}` was not found. Use a UID like 07D37EB6, an IP address, or rp2350/rp2040.",
         selector
     );
+}
+
+pub fn parse_ip_selector(input: &str) -> Option<IpAddr> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    trimmed.parse::<SocketAddr>().ok().map(|addr| addr.ip())
+}
+
+fn manual_ips_from_options(options: &RunOptions) -> Vec<IpAddr> {
+    let mut ips = Vec::new();
+    for spec in &options.picos {
+        push_ip_if_new(&mut ips, spec);
+    }
+    for spec in &options.routes {
+        if let Some(target) = route_target(spec) {
+            push_ip_if_new(&mut ips, target);
+        }
+    }
+    ips
+}
+
+fn push_ip_if_new(ips: &mut Vec<IpAddr>, input: &str) {
+    let Some(ip) = parse_ip_selector(input) else {
+        return;
+    };
+    if !ips.contains(&ip) {
+        ips.push(ip);
+    }
+}
+
+fn route_target(spec: &str) -> Option<&str> {
+    spec.split_once('=')
+        .or_else(|| spec.split_once(':'))
+        .map(|(_, target)| target.trim())
 }
 
 fn single_match(selector: &str, matches: Vec<&PicoTarget>) -> Result<PicoTarget> {
@@ -744,11 +832,50 @@ mod tests {
             0x523861E6
         );
         assert_eq!(
+            match_pico_selector("192.168.50.4:4242", &picos)
+                .unwrap()
+                .info
+                .unique_id_short,
+            0x523861E6
+        );
+        assert_eq!(
             match_pico_selector("rp2040", &picos)
                 .unwrap()
                 .info
                 .unique_id_short,
             0x523861E6
+        );
+    }
+
+    #[test]
+    fn parse_ip_selector_accepts_ip_and_socket_addr() {
+        assert_eq!(
+            parse_ip_selector("192.168.50.4"),
+            Some("192.168.50.4".parse().unwrap())
+        );
+        assert_eq!(
+            parse_ip_selector("192.168.50.4:4242"),
+            Some("192.168.50.4".parse().unwrap())
+        );
+        assert_eq!(parse_ip_selector("07D37EB6"), None);
+    }
+
+    #[test]
+    fn manual_ips_include_pico_and_route_targets() {
+        let options = RunOptions {
+            picos: vec!["192.168.50.4".to_string(), "07D37EB6".to_string()],
+            routes: vec![
+                "1=192.168.50.226".to_string(),
+                "2:192.168.50.4:4242".to_string(),
+            ],
+            ..RunOptions::default()
+        };
+        assert_eq!(
+            manual_ips_from_options(&options),
+            vec![
+                "192.168.50.4".parse::<IpAddr>().unwrap(),
+                "192.168.50.226".parse::<IpAddr>().unwrap()
+            ]
         );
     }
 

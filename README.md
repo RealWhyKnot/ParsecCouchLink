@@ -56,6 +56,7 @@ Useful commands:
 .\couchlink.exe doctor
 .\couchlink.exe logs --tail
 .\couchlink.exe configure-wifi
+.\couchlink.exe test discover --ip 192.168.50.4
 .\couchlink.exe bundle
 ```
 

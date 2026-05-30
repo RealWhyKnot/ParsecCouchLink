@@ -16,7 +16,7 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
 use tokio::net::UdpSocket;
 use zeroize::Zeroize;
 
-use crate::{cdc, config, diag_usb, journal, protocol};
+use crate::{cdc, cmd_run, config, diag_usb, journal, protocol};
 
 const SETUP_STAGE_NAMES: [&str; 6] = [
     "Pre-flight",
@@ -54,13 +54,17 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
         fw_major: identity.fw_major,
         fw_minor: identity.fw_minor,
         fw_patch: identity.fw_patch,
-        last_ip: Some(peer_ip),
+        last_ip: Some(peer_ip.clone()),
         device_name: None,
     });
     config::save(&cfg).context("saving config")?;
 
     println!();
     println!("Setup is complete. From now on, couchlink runs at logon.");
+    println!("Confirmed Pico IP: {peer_ip}");
+    println!(
+        "If discovery fails later, enter this IP manually or run `couchlink run --pico {peer_ip}`."
+    );
     println!("Have the remote player connect via Parsec, then run `couchlink` and choose controller routing.");
     Ok(())
 }
@@ -249,6 +253,9 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
                 timeout.as_secs(),
                 seq,
             );
+            if let Some((peer_ip, identity)) = prompt_manual_discovery_ip().await? {
+                return Ok((peer_ip, identity));
+            }
             attempt_diag_recovery_after_lan_timeout().await;
             bail!(
                 "no Pico answered within {} s. Check Wi-Fi credentials with \
@@ -283,6 +290,37 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
                 Err(e) => tracing::debug!("ignored malformed reply: {e}"),
             },
             _ => continue,
+        }
+    }
+}
+
+async fn prompt_manual_discovery_ip() -> Result<Option<(String, protocol::AckInfo)>> {
+    println!();
+    println!(
+        "No broadcast discovery reply arrived. If your router shows the Pico's IP address, enter it now to probe directly."
+    );
+    let text = prompt_optional_text("Pico IP address (blank to skip)").await?;
+    let Some(ip) = cmd_run::parse_ip_selector(&text) else {
+        if !text.trim().is_empty() {
+            println!("  Not a valid IP address: {}", text.trim());
+        }
+        return Ok(None);
+    };
+    println!("  Probing {ip}:{}...", protocol::PORT);
+    match cmd_run::probe_pico_ip(ip, Duration::from_secs(8)).await {
+        Ok(pico) => {
+            println!(
+                "  Pico replied at {} fw v{} uid 0x{:08X}",
+                pico.peer,
+                pico.info.firmware_version(),
+                pico.info.unique_id_short,
+            );
+            println!("  Save this IP for manual routing: {}", pico.peer.ip());
+            Ok(Some((pico.peer.ip().to_string(), pico.info)))
+        }
+        Err(e) => {
+            println!("  Manual IP probe failed: {e:#}");
+            Ok(None)
         }
     }
 }
@@ -507,6 +545,18 @@ async fn ask_press_enter(prompt: &str) -> Result<()> {
     })
     .await??;
     Ok(())
+}
+
+async fn prompt_optional_text(prompt: &str) -> Result<String> {
+    let prompt = prompt.to_string();
+    tokio::task::spawn_blocking(move || {
+        Input::<String>::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .allow_empty(true)
+            .interact_text()
+    })
+    .await?
+    .context("reading input")
 }
 
 struct WifiCreds {

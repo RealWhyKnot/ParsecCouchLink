@@ -6,11 +6,13 @@
 //! `String` only as long as needed, and zeroized on `Drop` via the helper
 //! in `cdc.rs`. Neither SSID nor password ever hits disk.
 
+use std::time::Duration;
+
 use anyhow::{bail, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Input, Password};
 use zeroize::Zeroize;
 
-use crate::cdc;
+use crate::{cdc, cmd_run};
 
 pub async fn run() -> Result<()> {
     println!("couchlink configure-wifi");
@@ -60,10 +62,35 @@ pub async fn run() -> Result<()> {
 
     pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;
     println!();
-    println!(
-        "Pico will reboot. Once it has joined the network it will respond \
-         to `couchlink test discover`."
-    );
+    println!("Pico will reboot. Waiting up to 60 s for a Wi-Fi reply...");
+    print_discovered_pico_ips().await?;
+    Ok(())
+}
+
+async fn print_discovered_pico_ips() -> Result<()> {
+    let picos = cmd_run::discover_picos(Duration::from_secs(60)).await?;
+    if picos.is_empty() {
+        println!("No Pico replied yet.");
+        println!("Run `couchlink test discover --all` after the Pico has joined Wi-Fi.");
+        println!("If your router shows its IP, run `couchlink test discover --ip <ip>`.");
+        return Ok(());
+    }
+    for pico in &picos {
+        println!(
+            "Pico replied at {}  fw v{}  uid 0x{:08X}",
+            pico.peer,
+            pico.info.firmware_version(),
+            pico.info.unique_id_short,
+        );
+    }
+    if picos.len() == 1 {
+        println!("Confirmed Pico IP: {}", picos[0].peer.ip());
+    } else {
+        println!("Confirmed Pico IPs:");
+        for pico in &picos {
+            println!("  {}  {}", pico.peer.ip(), pico.short_label());
+        }
+    }
     Ok(())
 }
 

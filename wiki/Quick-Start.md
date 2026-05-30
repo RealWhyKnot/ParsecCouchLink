@@ -46,9 +46,12 @@ Setup ends with:
 
 ```text
 Setup is complete. From now on, couchlink runs at logon.
+Confirmed Pico IP: 192.168.50.4
 ```
 
 Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose **Start or route controllers**.
+
+If automatic Wi-Fi discovery fails later, choose **Enter Pico IP manually** in the guided menu and enter the confirmed IP from setup.
 
 ## Daily Use
 
@@ -100,5 +103,7 @@ If the router or Wi-Fi password changes:
 ```
 
 (equivalent to `.\couchlink.exe configure-wifi`.)
+
+After the Pico rejoins Wi-Fi, the command prints the confirmed Pico IP.
 
 If the Pico cannot enter setup mode, follow [[Setup and Flashing]].

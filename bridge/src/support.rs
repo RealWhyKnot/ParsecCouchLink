@@ -29,10 +29,11 @@ pub fn no_pico_wifi_help(timeout_seconds: u64) -> String {
          Try this in order:\n\
            1. Confirm the Pico is powered and not sitting in BOOTSEL. If it appears as setup-mode USB, use `couchlink configure-wifi` first.\n\
            2. Run `couchlink test discover --all` to retry discovery.\n\
-           3. If the router, SSID, or password changed, run `couchlink configure-wifi`.\n\
-           4. If configure-wifi cannot find setup mode, use the BOOTSEL-button credential wipe from the wiki, then run configure-wifi again.\n\
-           5. Run `couchlink doctor`; check Windows Firewall, router client isolation, and whether the PC and Pico are on the same LAN.\n\
-           6. Run `couchlink bundle` and send the zip if it still fails."
+           3. If your router shows the Pico's IP, choose `Enter Pico IP manually` or run `couchlink test discover --ip <ip>`.\n\
+           4. If the router, SSID, or password changed, run `couchlink configure-wifi`.\n\
+           5. If configure-wifi cannot find setup mode, use the BOOTSEL-button credential wipe from the wiki, then run configure-wifi again.\n\
+           6. Run `couchlink doctor`; check Windows Firewall, router client isolation, and whether the PC and Pico are on the same LAN.\n\
+           7. Run `couchlink bundle` and send the zip if it still fails."
     )
 }
 
@@ -41,7 +42,7 @@ pub fn print_no_pico_wifi_help(timeout_seconds: u64) {
 }
 
 pub fn no_pico_wifi_short_hint() -> &'static str {
-    "Confirm the Pico is powered, not in BOOTSEL, and on the same LAN, then run `couchlink test discover --all`. If Wi-Fi changed or the Pico is in setup-mode USB, run `couchlink configure-wifi`. If it still fails, run `couchlink doctor` and `couchlink bundle`."
+    "Confirm the Pico is powered, not in BOOTSEL, and on the same LAN, then run `couchlink test discover --all`. If the router shows its IP, run `couchlink test discover --ip <ip>`. If Wi-Fi changed or the Pico is in setup-mode USB, run `couchlink configure-wifi`. If it still fails, run `couchlink doctor` and `couchlink bundle`."
 }
 
 #[cfg(test)]
@@ -53,6 +54,8 @@ mod tests {
         let help = no_pico_wifi_help(5);
         assert!(help.contains("No Pico replied on Wi-Fi within 5 s."));
         assert!(help.contains("not a controller problem"));
+        assert!(help.contains("Enter Pico IP manually"));
+        assert!(help.contains("couchlink test discover --ip <ip>"));
         assert!(help.contains("couchlink configure-wifi"));
         assert!(help.contains("couchlink doctor"));
         assert!(help.contains("couchlink bundle"));

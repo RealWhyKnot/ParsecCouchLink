@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 #[cfg(windows)]
 use std::net::Ipv4Addr;
-use std::net::{SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +25,7 @@ use tokio::time::interval;
 use crate::protocol::{self, AckInfo, Packet, PacketKind};
 
 const BROADCAST_INTERVAL: Duration = Duration::from_secs(1);
+const UNICAST_INTERVAL: Duration = Duration::from_millis(500);
 
 pub async fn run(socket: &UdpSocket) -> std::io::Result<(SocketAddr, AckInfo)> {
     socket.set_broadcast(true)?;
@@ -228,6 +229,39 @@ pub async fn collect(
     }
 
     Ok(found.into_values().collect())
+}
+
+pub async fn probe_ip(
+    socket: &UdpSocket,
+    ip: IpAddr,
+    duration: Duration,
+) -> std::io::Result<Option<(SocketAddr, AckInfo)>> {
+    let target = SocketAddr::new(ip, protocol::PORT);
+    let mut seq: u8 = 0;
+    let mut tick = interval(UNICAST_INTERVAL);
+    let mut buf = [0u8; 64];
+    let deadline = tokio::time::sleep(duration);
+    tokio::pin!(deadline);
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                let pkt = Packet::discover(seq);
+                seq = seq.wrapping_add(1);
+                socket.send_to(&pkt.encode(), target).await?;
+            }
+            r = socket.recv_from(&mut buf) => {
+                let Some((peer, info)) = handle_recv("manual-ip", r, &buf) else {
+                    continue;
+                };
+                if peer.ip() == ip {
+                    return Ok(Some((peer, info)));
+                }
+                tracing::debug!("discovery(manual-ip): ignoring reply from non-target {peer}");
+            }
+            _ = &mut deadline => return Ok(None),
+        }
+    }
 }
 
 fn handle_recv(

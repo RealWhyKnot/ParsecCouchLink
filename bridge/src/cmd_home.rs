@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use dialoguer::theme::ColorfulTheme;
-use dialoguer::{Confirm, MultiSelect, Select};
+use dialoguer::{Confirm, Input, MultiSelect, Select};
 
 use crate::{
     cmd_configure_wifi, cmd_doctor, cmd_flash, cmd_run, cmd_setup, config, support, xinput,
@@ -43,11 +43,12 @@ fn print_header() {
 async fn start_routing() -> Result<()> {
     loop {
         println!("Looking for running Pico boards on Wi-Fi...");
-        let picos = cmd_run::discover_picos(Duration::from_secs(5)).await?;
+        let mut picos = cmd_run::discover_picos(Duration::from_secs(5)).await?;
         if picos.is_empty() {
             support::print_no_pico_wifi_help(5);
             let choices = vec![
                 "Try discovery again",
+                "Enter Pico IP manually",
                 "Set or change Wi-Fi",
                 "Run diagnostics",
                 "Flash/update firmware",
@@ -55,12 +56,17 @@ async fn start_routing() -> Result<()> {
             ];
             match select("Next step", &choices, 0).await? {
                 0 => continue,
-                1 => cmd_configure_wifi::run().await?,
-                2 => cmd_doctor::run().await?,
-                3 => flash_menu().await?,
+                1 => {
+                    let Some(pico) = prompt_manual_pico_ip().await? else {
+                        continue;
+                    };
+                    picos.push(pico);
+                }
+                2 => cmd_configure_wifi::run().await?,
+                3 => cmd_doctor::run().await?,
+                4 => flash_menu().await?,
                 _ => return Ok(()),
             }
-            continue;
         }
 
         println!();
@@ -119,6 +125,33 @@ async fn start_routing() -> Result<()> {
             }
             2 => return route_custom(picos).await,
             _ => return Ok(()),
+        }
+    }
+}
+
+async fn prompt_manual_pico_ip() -> Result<Option<cmd_run::PicoTarget>> {
+    let text = input_text("Pico IP address (blank to cancel)").await?;
+    let Some(ip) = cmd_run::parse_ip_selector(&text) else {
+        if !text.trim().is_empty() {
+            println!("That does not look like an IP address: {}", text.trim());
+        }
+        return Ok(None);
+    };
+    println!("Probing {ip}:4242 directly...");
+    match cmd_run::probe_pico_ip(ip, Duration::from_secs(5)).await {
+        Ok(pico) => {
+            println!(
+                "Pico replied at {}  fw v{}  uid 0x{:08X}",
+                pico.peer,
+                pico.info.firmware_version(),
+                pico.info.unique_id_short,
+            );
+            println!("Save this IP for manual routing: {}", pico.peer.ip());
+            Ok(Some(pico))
+        }
+        Err(e) => {
+            println!("No Pico replied at {ip}: {e:#}");
+            Ok(None)
         }
     }
 }
@@ -262,6 +295,8 @@ async fn show_direct_commands() -> Result<()> {
         "  couchlink run --all               map Controller 1, 2, ... to every discovered Pico"
     );
     println!("  couchlink run --route 1=UID       route Controller 1 to a specific Pico UID");
+    println!("  couchlink run --pico 192.168.50.4 route to a Pico by manual IP");
+    println!("  couchlink test discover --ip 192.168.50.4  probe a Pico by manual IP");
     println!("  couchlink test discover --all     show every Pico answering on Wi-Fi");
     println!("  couchlink test cdc --all          show every setup-mode Pico over USB");
     println!();
@@ -276,6 +311,18 @@ async fn show_direct_commands() -> Result<()> {
         Err(e) => println!("  Discovery failed: {e:#}"),
     }
     press_enter("Press Enter to return to the menu.").await
+}
+
+async fn input_text(prompt: &str) -> Result<String> {
+    let prompt = prompt.to_string();
+    tokio::task::spawn_blocking(move || {
+        Input::<String>::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .allow_empty(true)
+            .interact_text()
+    })
+    .await?
+    .context("reading input")
 }
 
 fn saved_layout_label(routes: &[config::RouteConfig]) -> String {

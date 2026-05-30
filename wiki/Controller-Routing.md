@@ -66,10 +66,15 @@ The menu is the normal path. These commands are for scripts and launchers:
 ```powershell
 .\couchlink.exe run --all
 .\couchlink.exe run --route 1=07D37EB6 --route 2=523861E6
+.\couchlink.exe run --route 1=192.168.50.4
 .\couchlink.exe run --pico 07D37EB6
+.\couchlink.exe run --pico 192.168.50.4
 ```
 
 Use `.\couchlink.exe test discover --all` to list Pico UIDs before writing a route command.
+If broadcast discovery fails but the router shows the Pico's IP, use
+`.\couchlink.exe test discover --ip 192.168.50.4` or choose **Enter Pico
+IP manually** in the guided menu.
 
 ## Bench Testing Note
 

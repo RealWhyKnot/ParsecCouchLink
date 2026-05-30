@@ -53,10 +53,12 @@ enum Command {
         all: bool,
 
         /// Select one Pico by UID, IP, or board name. Repeat to select more than one.
+        /// If an IP is given and broadcast discovery misses it, the bridge probes that IP directly.
         #[arg(long = "pico")]
         picos: Vec<String>,
 
         /// Explicit route in the form 1=07D37EB6 or 2=192.168.50.4. Repeat for more routes.
+        /// IP targets are probed directly if broadcast discovery misses them.
         #[arg(long = "route")]
         routes: Vec<String>,
 
@@ -116,6 +118,10 @@ enum Command {
         /// For `test cdc`, reboot setup-mode Pico(s) into Wi-Fi run mode after USB checks pass.
         #[arg(long)]
         reboot_to_run: bool,
+
+        /// For `test discover`, probe a Pico by manual IP address.
+        #[arg(long = "ip")]
+        ips: Vec<String>,
     },
     /// Print where logs live, or tail the active log file.
     Logs {
@@ -187,7 +193,8 @@ fn main() {
                 which,
                 all,
                 reboot_to_run,
-            }) => cmd_test::run(&which, all, reboot_to_run).await,
+                ips,
+            }) => cmd_test::run(&which, all, reboot_to_run, ips).await,
             Some(Command::Logs { tail }) => cmd_logs::run(tail).await,
             Some(Command::Bundle { output }) => cmd_bundle::run(output).await,
         }

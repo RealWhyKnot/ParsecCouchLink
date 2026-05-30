@@ -10,13 +10,26 @@ use crate::cmd_doctor::{
     check_24ghz_warning, check_cdc, check_discover, check_firewall, check_paths,
     check_startup_shortcut, check_xinput, CheckResult,
 };
-use crate::{discovery, support};
+use crate::{cmd_run, discovery, support};
 
-pub async fn run(which: &str, all: bool, reboot_to_run: bool) -> Result<()> {
+pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) -> Result<()> {
     if reboot_to_run && which != "cdc" {
         return Err(anyhow!(
             "--reboot-to-run is only supported for `couchlink test cdc`"
         ));
+    }
+    if !ips.is_empty() {
+        if which != "discover" {
+            return Err(anyhow!(
+                "--ip is only supported for `couchlink test discover`"
+            ));
+        }
+        if all {
+            return Err(anyhow!(
+                "use either `couchlink test discover --all` or `couchlink test discover --ip <addr>`, not both"
+            ));
+        }
+        return run_discover_ips(ips).await;
     }
     if all {
         return match which {
@@ -64,6 +77,39 @@ pub async fn run(which: &str, all: bool, reboot_to_run: bool) -> Result<()> {
             std::process::exit(2);
         }
     }
+}
+
+async fn run_discover_ips(ips: Vec<String>) -> Result<()> {
+    let mut failures = 0usize;
+    for text in ips {
+        let Some(ip) = cmd_run::parse_ip_selector(&text) else {
+            failures += 1;
+            println!("FAIL  {} is not a valid IP address", text);
+            continue;
+        };
+        match cmd_run::probe_pico_ip(ip, Duration::from_secs(8)).await {
+            Ok(pico) => {
+                println!(
+                    "PASS  ack from {} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s",
+                    pico.peer,
+                    pico.info.proto_version,
+                    pico.info.firmware_version(),
+                    pico.info.board_type,
+                    pico.info.unique_id_short,
+                    pico.info.uptime_seconds,
+                );
+                println!("manual IP confirmed: {}", pico.peer.ip());
+            }
+            Err(e) => {
+                failures += 1;
+                println!("FAIL  {} {}", ip, e);
+            }
+        }
+    }
+    if failures > 0 {
+        std::process::exit(2);
+    }
+    Ok(())
 }
 
 async fn run_cdc_all(reboot_to_run: bool) -> Result<()> {

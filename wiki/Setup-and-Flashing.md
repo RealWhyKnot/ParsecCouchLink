@@ -49,6 +49,7 @@ After flashing, the Pico should reboot as a USB serial setup device. The setup w
 - Reboot-to-run command.
 
 Then the Pico joins Wi-Fi and starts listening for the bridge on UDP port 4242.
+Setup prints the confirmed Pico IP after it receives a reply.
 
 ## No-Button Reflash
 

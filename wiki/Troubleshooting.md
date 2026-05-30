@@ -84,12 +84,21 @@ Try this in order:
 1. Confirm the Pico is powered and not sitting in BOOTSEL. If it appears
    as setup-mode USB, use `configure-wifi` first.
 2. Run `.\couchlink.exe test discover --all`.
-3. If the router name or password changed, run `.\couchlink.exe
+3. If the router admin page shows the Pico's IP, probe it directly:
+
+   ```powershell
+   .\couchlink.exe test discover --ip 192.168.50.4
+   .\couchlink.exe run --pico 192.168.50.4
+   ```
+
+   The guided menu also offers **Enter Pico IP manually** when automatic
+   Wi-Fi discovery finds nothing.
+4. If the router name or password changed, run `.\couchlink.exe
    configure-wifi`.
-4. If `configure-wifi` cannot find the Pico, use the credential-wipe
+5. If `configure-wifi` cannot find the Pico, use the credential-wipe
    recovery in [[Setup and Flashing]], then run `configure-wifi` again.
-5. Run `.\couchlink.exe doctor`.
-6. Run `.\couchlink.exe bundle` and attach the ZIP to a bug report.
+6. Run `.\couchlink.exe doctor`.
+7. Run `.\couchlink.exe bundle` and attach the ZIP to a bug report.
 
 Common causes:
 
