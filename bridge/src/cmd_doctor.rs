@@ -23,7 +23,47 @@ pub enum CheckResult {
 
 pub type BoxedCheck = std::pin::Pin<Box<dyn std::future::Future<Output = CheckResult>>>;
 
+#[derive(Debug, Default)]
+pub struct DoctorSummary {
+    pub warns: usize,
+    pub fails: usize,
+    pub setup_complete: bool,
+}
+
 pub async fn run() -> Result<()> {
+    let summary = run_checks().await?;
+    if !summary.setup_complete && summary.fails == 0 {
+        println!("(note: config marks setup as incomplete; run `couchlink setup`)");
+        std::process::exit(3);
+    }
+    if summary.fails > 0 {
+        tracing::error!("doctor: {} fail(s), suggesting bundle", summary.fails);
+        support::print_help_footer();
+        std::process::exit(2);
+    }
+    if summary.warns > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+pub async fn run_interactive() -> Result<()> {
+    let summary = run_checks().await?;
+    if !summary.setup_complete && summary.fails == 0 {
+        println!("(note: setup is not complete yet; use `Update Pico firmware`, then `Set up or change Wi-Fi`.)");
+    }
+    if summary.fails > 0 {
+        println!();
+        println!("Health check found a blocking problem.");
+        println!("Use `Create support bundle` if you need to send the details.");
+    } else if summary.warns > 0 {
+        println!();
+        println!("Health check finished with warnings. Warnings do not always block streaming.");
+    }
+    Ok(())
+}
+
+async fn run_checks() -> Result<DoctorSummary> {
     tracing::info!("doctor: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
     println!("couchlink doctor v{}", env!("CARGO_PKG_VERSION"));
     println!();
@@ -80,19 +120,11 @@ pub async fn run() -> Result<()> {
     );
 
     let setup_complete = config::load().map(|c| c.setup_complete).unwrap_or(false);
-    if !setup_complete && fails == 0 {
-        println!("(note: config marks setup as incomplete; run `couchlink setup`)");
-        std::process::exit(3);
-    }
-    if fails > 0 {
-        tracing::error!("doctor: {} fail(s), suggesting bundle", fails);
-        support::print_help_footer();
-        std::process::exit(2);
-    }
-    if warns > 0 {
-        std::process::exit(1);
-    }
-    Ok(())
+    Ok(DoctorSummary {
+        warns,
+        fails,
+        setup_complete,
+    })
 }
 
 pub async fn check_paths() -> CheckResult {

@@ -24,11 +24,15 @@ pub const TYPE_ACK: u8 = 0x04;
 /// firmware's existing on_recv() RX path accepts it. The reply is a
 /// sequence of variable-length `TYPE_LOG_CHUNK` datagrams.
 pub const TYPE_GET_LOG: u8 = 0x05;
+/// Request for the firmware's current USB/XInput status over UDP.
+pub const TYPE_GET_USB_DIAG: u8 = 0x06;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
 /// for response opcodes.
 pub const TYPE_LOG_CHUNK: u8 = 0x85;
+/// USB/XInput status reply sent by run-mode firmware.
+pub const TYPE_USB_DIAG: u8 = 0x86;
 
 pub const FLAG_PARSEC_CONNECTED: u8 = 1 << 0;
 pub const FLAG_NEUTRALIZE: u8 = 1 << 1;
@@ -39,6 +43,19 @@ pub const FLAG_NEUTRALIZE: u8 = 1 << 1;
 /// continue to interoperate; new bridges gate the diag pull on this
 /// bit.
 pub const ACK_FLAG_LOG_CHUNK_SUPPORTED: u8 = 1 << 0;
+/// Set in the ACK flags byte when the firmware supports
+/// `TYPE_GET_USB_DIAG` / `TYPE_USB_DIAG`.
+pub const ACK_FLAG_USB_DIAG_SUPPORTED: u8 = 1 << 1;
+
+pub const USB_DIAG_WIRE_SIZE: usize = 78;
+pub const USB_DIAG_VERSION: u8 = 1;
+pub const USB_DIAG_FLAG_MOUNTED: u8 = 1 << 0;
+pub const USB_DIAG_FLAG_SUSPENDED: u8 = 1 << 1;
+pub const USB_DIAG_ACTIVITY_QUEUED: u8 = 1 << 0;
+pub const USB_DIAG_ACTIVITY_SENT: u8 = 1 << 1;
+pub const USB_DIAG_ACTIVITY_OUT: u8 = 1 << 2;
+pub const USB_DIAG_ACTIVITY_PEER: u8 = 1 << 3;
+pub const USB_DIAG_ACTIVITY_PARSEC: u8 = 1 << 4;
 
 /// Set in a `TYPE_LOG_CHUNK` datagram's `flags` byte to mark the final
 /// chunk in the reply sequence.
@@ -54,8 +71,8 @@ pub const LOG_CHUNK_MAX_PAYLOAD: usize = 256;
 pub const LOG_CHUNK_HEADER_LEN: usize = 12;
 
 /// Current wire-protocol version for the streaming/discovery path. Stays
-/// at 1 across the LogChunk addition -- new behaviour is gated on the
-/// `ACK_FLAG_LOG_CHUNK_SUPPORTED` capability bit instead.
+/// at 1 across optional diagnostics; new behaviour is gated on ACK
+/// capability bits instead.
 pub const PROTO_VERSION: u8 = 1;
 
 pub const BOARD_PICO_2_W: u8 = 0x01;
@@ -287,6 +304,209 @@ pub fn encode_get_log(seq: u8) -> [u8; PACKET_SIZE] {
     buf[16] = crc8(&buf[..16]);
     buf
 }
+
+/// Build a `TYPE_GET_USB_DIAG` request datagram. Same fixed shape as
+/// DISCOVER and GET_LOG so the firmware can process it in the existing
+/// UDP receive path.
+pub fn encode_get_usb_diag(seq: u8) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_GET_USB_DIAG;
+    buf[2] = seq;
+    buf[3] = 0;
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsbDiag {
+    pub seq: u8,
+    pub flags: u8,
+    pub version: u8,
+    pub usb_flags: u8,
+    pub activity_flags: u8,
+    pub last_out_len: u8,
+    pub now_ms: u32,
+    pub last_bridge_packet_ms: u32,
+    pub mount_count: u32,
+    pub umount_count: u32,
+    pub suspend_count: u32,
+    pub resume_count: u32,
+    pub device_desc_count: u32,
+    pub config_desc_count: u32,
+    pub xinput_in_queued_count: u32,
+    pub xinput_in_sent_count: u32,
+    pub xinput_out_count: u32,
+    pub last_mount_ms: u32,
+    pub last_umount_ms: u32,
+    pub last_in_queued_ms: u32,
+    pub last_in_sent_ms: u32,
+    pub last_out_ms: u32,
+    pub last_out_byte0: u8,
+    pub last_out_byte1: u8,
+}
+
+impl UsbDiag {
+    pub fn mounted(&self) -> bool {
+        self.usb_flags & USB_DIAG_FLAG_MOUNTED != 0
+    }
+
+    pub fn suspended(&self) -> bool {
+        self.usb_flags & USB_DIAG_FLAG_SUSPENDED != 0
+    }
+
+    pub fn xinput_report_sent(&self) -> bool {
+        self.activity_flags & USB_DIAG_ACTIVITY_SENT != 0
+    }
+
+    pub fn xinput_out_seen(&self) -> bool {
+        self.activity_flags & USB_DIAG_ACTIVITY_OUT != 0
+    }
+
+    pub fn bridge_peer_latched(&self) -> bool {
+        self.activity_flags & USB_DIAG_ACTIVITY_PEER != 0
+    }
+
+    pub fn parsec_connected(&self) -> bool {
+        self.activity_flags & USB_DIAG_ACTIVITY_PARSEC != 0
+    }
+
+    pub fn age_ms(&self, timestamp_ms: u32) -> Option<u32> {
+        if timestamp_ms == 0 {
+            None
+        } else {
+            Some(self.now_ms.wrapping_sub(timestamp_ms))
+        }
+    }
+
+    pub fn encode(&self) -> [u8; USB_DIAG_WIRE_SIZE] {
+        let mut buf = [0u8; USB_DIAG_WIRE_SIZE];
+        buf[0] = MAGIC;
+        buf[1] = TYPE_USB_DIAG;
+        buf[2] = self.seq;
+        buf[3] = self.flags;
+        buf[4] = self.version;
+        buf[5] = self.usb_flags;
+        buf[6] = self.activity_flags;
+        buf[7] = self.last_out_len;
+        put_u32_le(&mut buf, 8, self.now_ms);
+        put_u32_le(&mut buf, 12, self.last_bridge_packet_ms);
+        put_u32_le(&mut buf, 16, self.mount_count);
+        put_u32_le(&mut buf, 20, self.umount_count);
+        put_u32_le(&mut buf, 24, self.suspend_count);
+        put_u32_le(&mut buf, 28, self.resume_count);
+        put_u32_le(&mut buf, 32, self.device_desc_count);
+        put_u32_le(&mut buf, 36, self.config_desc_count);
+        put_u32_le(&mut buf, 40, self.xinput_in_queued_count);
+        put_u32_le(&mut buf, 44, self.xinput_in_sent_count);
+        put_u32_le(&mut buf, 48, self.xinput_out_count);
+        put_u32_le(&mut buf, 52, self.last_mount_ms);
+        put_u32_le(&mut buf, 56, self.last_umount_ms);
+        put_u32_le(&mut buf, 60, self.last_in_queued_ms);
+        put_u32_le(&mut buf, 64, self.last_in_sent_ms);
+        put_u32_le(&mut buf, 68, self.last_out_ms);
+        buf[72] = self.last_out_byte0;
+        buf[73] = self.last_out_byte1;
+        let crc =
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..USB_DIAG_WIRE_SIZE - 2]);
+        buf[USB_DIAG_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
+        buf[USB_DIAG_WIRE_SIZE - 1] = (crc >> 8) as u8;
+        buf
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, UsbDiagDecodeError> {
+        if buf.len() != USB_DIAG_WIRE_SIZE {
+            return Err(UsbDiagDecodeError::WrongSize {
+                got: buf.len(),
+                want: USB_DIAG_WIRE_SIZE,
+            });
+        }
+        if buf[0] != MAGIC {
+            return Err(UsbDiagDecodeError::WrongMagic);
+        }
+        if buf[1] != TYPE_USB_DIAG {
+            return Err(UsbDiagDecodeError::WrongType(buf[1]));
+        }
+        let crc_lo = buf[USB_DIAG_WIRE_SIZE - 2] as u16;
+        let crc_hi = buf[USB_DIAG_WIRE_SIZE - 1] as u16;
+        let crc_got = crc_lo | (crc_hi << 8);
+        let crc_want =
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..USB_DIAG_WIRE_SIZE - 2]);
+        if crc_got != crc_want {
+            return Err(UsbDiagDecodeError::BadCrc {
+                got: crc_got,
+                want: crc_want,
+            });
+        }
+        if buf[4] != USB_DIAG_VERSION {
+            return Err(UsbDiagDecodeError::UnsupportedVersion(buf[4]));
+        }
+        Ok(UsbDiag {
+            seq: buf[2],
+            flags: buf[3],
+            version: buf[4],
+            usb_flags: buf[5],
+            activity_flags: buf[6],
+            last_out_len: buf[7],
+            now_ms: read_u32_le(buf, 8),
+            last_bridge_packet_ms: read_u32_le(buf, 12),
+            mount_count: read_u32_le(buf, 16),
+            umount_count: read_u32_le(buf, 20),
+            suspend_count: read_u32_le(buf, 24),
+            resume_count: read_u32_le(buf, 28),
+            device_desc_count: read_u32_le(buf, 32),
+            config_desc_count: read_u32_le(buf, 36),
+            xinput_in_queued_count: read_u32_le(buf, 40),
+            xinput_in_sent_count: read_u32_le(buf, 44),
+            xinput_out_count: read_u32_le(buf, 48),
+            last_mount_ms: read_u32_le(buf, 52),
+            last_umount_ms: read_u32_le(buf, 56),
+            last_in_queued_ms: read_u32_le(buf, 60),
+            last_in_sent_ms: read_u32_le(buf, 64),
+            last_out_ms: read_u32_le(buf, 68),
+            last_out_byte0: buf[72],
+            last_out_byte1: buf[73],
+        })
+    }
+}
+
+fn put_u32_le(buf: &mut [u8], offset: usize, value: u32) {
+    buf[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn read_u32_le(buf: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum UsbDiagDecodeError {
+    WrongSize { got: usize, want: usize },
+    WrongMagic,
+    WrongType(u8),
+    UnsupportedVersion(u8),
+    BadCrc { got: u16, want: u16 },
+}
+
+impl std::fmt::Display for UsbDiagDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongSize { got, want } => {
+                write!(f, "USB diag wrong size: got {got}, want {want}")
+            }
+            Self::WrongMagic => write!(f, "USB diag wrong magic"),
+            Self::WrongType(t) => write!(f, "USB diag wrong type 0x{t:02X}"),
+            Self::UnsupportedVersion(v) => write!(f, "USB diag unsupported version {v}"),
+            Self::BadCrc { got, want } => {
+                write!(
+                    f,
+                    "USB diag CRC-16 mismatch: got 0x{got:04X}, want 0x{want:04X}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for UsbDiagDecodeError {}
 
 /// One chunk of the firmware's diag-log ring, sent in reply to a
 /// `TYPE_GET_LOG` request. The bridge reassembles a multi-chunk reply
@@ -600,6 +820,95 @@ mod tests {
             Packet::decode(&buf),
             Err(DecodeError::UnknownType(TYPE_GET_LOG))
         );
+    }
+
+    #[test]
+    fn usb_diag_request_encode_shape() {
+        let buf = encode_get_usb_diag(7);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_GET_USB_DIAG);
+        assert_eq!(buf[2], 7);
+        assert_eq!(buf[3], 0);
+        for b in &buf[4..16] {
+            assert_eq!(*b, 0);
+        }
+        assert_eq!(buf[16], crc8(&buf[..16]));
+    }
+
+    #[test]
+    fn usb_diag_roundtrip() {
+        let diag = UsbDiag {
+            seq: 9,
+            flags: 0,
+            version: USB_DIAG_VERSION,
+            usb_flags: USB_DIAG_FLAG_MOUNTED,
+            activity_flags: USB_DIAG_ACTIVITY_SENT | USB_DIAG_ACTIVITY_OUT,
+            last_out_len: 8,
+            now_ms: 1000,
+            last_bridge_packet_ms: 900,
+            mount_count: 1,
+            umount_count: 2,
+            suspend_count: 3,
+            resume_count: 4,
+            device_desc_count: 5,
+            config_desc_count: 6,
+            xinput_in_queued_count: 7,
+            xinput_in_sent_count: 8,
+            xinput_out_count: 9,
+            last_mount_ms: 10,
+            last_umount_ms: 11,
+            last_in_queued_ms: 12,
+            last_in_sent_ms: 13,
+            last_out_ms: 14,
+            last_out_byte0: 0x01,
+            last_out_byte1: 0x08,
+        };
+        let buf = diag.encode();
+        assert_eq!(buf.len(), USB_DIAG_WIRE_SIZE);
+        assert_eq!(buf[1], TYPE_USB_DIAG);
+        let back = UsbDiag::decode(&buf).unwrap();
+        assert_eq!(back, diag);
+        assert!(back.mounted());
+        assert!(back.xinput_report_sent());
+        assert!(back.xinput_out_seen());
+        assert_eq!(back.age_ms(990), Some(10));
+    }
+
+    #[test]
+    fn usb_diag_bad_crc_rejected() {
+        let mut buf = UsbDiag {
+            seq: 0,
+            flags: 0,
+            version: USB_DIAG_VERSION,
+            usb_flags: 0,
+            activity_flags: 0,
+            last_out_len: 0,
+            now_ms: 0,
+            last_bridge_packet_ms: 0,
+            mount_count: 0,
+            umount_count: 0,
+            suspend_count: 0,
+            resume_count: 0,
+            device_desc_count: 0,
+            config_desc_count: 0,
+            xinput_in_queued_count: 0,
+            xinput_in_sent_count: 0,
+            xinput_out_count: 0,
+            last_mount_ms: 0,
+            last_umount_ms: 0,
+            last_in_queued_ms: 0,
+            last_in_sent_ms: 0,
+            last_out_ms: 0,
+            last_out_byte0: 0,
+            last_out_byte1: 0,
+        }
+        .encode();
+        buf[10] ^= 0xFF;
+        match UsbDiag::decode(&buf) {
+            Err(UsbDiagDecodeError::BadCrc { .. }) => (),
+            other => panic!("expected BadCrc, got {other:?}"),
+        }
     }
 
     fn make_chunk(idx: u8, flags: u8, total: u8, lost: u32, payload: &[u8]) -> LogChunk {

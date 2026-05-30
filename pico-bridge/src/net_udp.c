@@ -10,6 +10,7 @@
 
 #include "diag_log.h"
 #include "gamepad_state.h"
+#include "usb_diag.h"
 #include "version.h"
 
 // Translate an lwIP err_t to a short name. Without this every
@@ -50,14 +51,28 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_DISCOVER           0x03
 #define TYPE_ACK                0x04
 #define TYPE_GET_LOG            0x05
+#define TYPE_GET_USB_DIAG       0x06
 #define TYPE_LOG_CHUNK          0x85
+#define TYPE_USB_DIAG           0x86
 
 #define FLAG_PARSEC_CONNECTED        0x01
 // Capability bit set in ACK[3] (the flags byte, formerly always zero)
-// so the bridge can detect that this firmware understands TYPE_GET_LOG
-// without the protocol version bumping. Keeps old bridges compatible:
-// they decode the flags byte but ignore unrecognised bits.
+// so the bridge can detect optional diagnostic request support without
+// the protocol version bumping. Keeps old bridges compatible: they
+// decode the flags byte but ignore unrecognised bits.
 #define ACK_FLAG_LOG_CHUNK_SUPPORTED 0x01
+#define ACK_FLAG_USB_DIAG_SUPPORTED  0x02
+
+#define USB_DIAG_WIRE_SIZE 78
+#define USB_DIAG_VERSION   1
+
+#define USB_DIAG_FLAG_MOUNTED     0x01
+#define USB_DIAG_FLAG_SUSPENDED   0x02
+#define USB_DIAG_ACTIVITY_QUEUED  0x01
+#define USB_DIAG_ACTIVITY_SENT    0x02
+#define USB_DIAG_ACTIVITY_OUT     0x04
+#define USB_DIAG_ACTIVITY_PEER    0x08
+#define USB_DIAG_ACTIVITY_PARSEC  0x10
 
 // LogChunk layout (matches bridge protocol.rs):
 //   header (12 bytes) + payload (<= 256 bytes) + crc16 (2 bytes)
@@ -104,6 +119,13 @@ static uint16_t crc16_ccitt_false(const uint8_t *data, size_t n) {
     return c;
 }
 
+static void put_u32_le(uint8_t *buf, size_t offset, uint32_t value) {
+    buf[offset + 0] = (uint8_t)(value & 0xFFu);
+    buf[offset + 1] = (uint8_t)((value >> 8) & 0xFFu);
+    buf[offset + 2] = (uint8_t)((value >> 16) & 0xFFu);
+    buf[offset + 3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
 static void build_state_fields(uint8_t *buf, uint8_t type, uint8_t seq) {
     buf[0] = MAGIC;
     buf[1] = type;
@@ -123,7 +145,7 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     // Advertise the LogChunk capability in the flags byte. Old bridges
     // decode the flags field but ignore unknown bits; new bridges gate
     // their CMD_GET_LOG attempt on this bit being set.
-    buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED;
+    buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED | ACK_FLAG_USB_DIAG_SUPPORTED;
     // body[0..11]
     buf[4]  = PICO_BRIDGE_UDP_PROTO_VERSION;
     buf[5]  = PICO_BRIDGE_FW_WIRE_MAJOR;
@@ -235,6 +257,78 @@ static void send_log_chunks(const ip_addr_t *to_addr, u16_t to_port,
     }
 }
 
+static void send_usb_diag(const ip_addr_t *to_addr, u16_t to_port,
+                          uint8_t in_seq) {
+    usb_diag_snapshot_t snap;
+    usb_diag_snapshot(&snap);
+
+    uint8_t usb_flags = 0;
+    if (snap.mounted) usb_flags |= USB_DIAG_FLAG_MOUNTED;
+    if (snap.suspended) usb_flags |= USB_DIAG_FLAG_SUSPENDED;
+
+    uint8_t activity_flags = 0;
+    if (snap.xinput_in_queued_count > 0) activity_flags |= USB_DIAG_ACTIVITY_QUEUED;
+    if (snap.xinput_in_sent_count > 0) activity_flags |= USB_DIAG_ACTIVITY_SENT;
+    if (snap.xinput_out_count > 0) activity_flags |= USB_DIAG_ACTIVITY_OUT;
+    if (have_peer) activity_flags |= USB_DIAG_ACTIVITY_PEER;
+    if (g_parsec_connected) activity_flags |= USB_DIAG_ACTIVITY_PARSEC;
+
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, USB_DIAG_WIRE_SIZE, PBUF_RAM);
+    if (!p) {
+        diag_log_msg("net_udp: usb_diag pbuf_alloc failed (ERR_MEM)");
+        return;
+    }
+    uint8_t *buf = (uint8_t *)p->payload;
+    memset(buf, 0, USB_DIAG_WIRE_SIZE);
+    buf[0] = MAGIC;
+    buf[1] = TYPE_USB_DIAG;
+    buf[2] = in_seq;
+    buf[3] = 0;
+    buf[4] = USB_DIAG_VERSION;
+    buf[5] = usb_flags;
+    buf[6] = activity_flags;
+    buf[7] = snap.last_out_len;
+    put_u32_le(buf, 8,  snap.now_ms);
+    put_u32_le(buf, 12, g_last_packet_ms);
+    put_u32_le(buf, 16, snap.mount_count);
+    put_u32_le(buf, 20, snap.umount_count);
+    put_u32_le(buf, 24, snap.suspend_count);
+    put_u32_le(buf, 28, snap.resume_count);
+    put_u32_le(buf, 32, snap.device_desc_count);
+    put_u32_le(buf, 36, snap.config_desc_count);
+    put_u32_le(buf, 40, snap.xinput_in_queued_count);
+    put_u32_le(buf, 44, snap.xinput_in_sent_count);
+    put_u32_le(buf, 48, snap.xinput_out_count);
+    put_u32_le(buf, 52, snap.last_mount_ms);
+    put_u32_le(buf, 56, snap.last_umount_ms);
+    put_u32_le(buf, 60, snap.last_in_queued_ms);
+    put_u32_le(buf, 64, snap.last_in_sent_ms);
+    put_u32_le(buf, 68, snap.last_out_ms);
+    buf[72] = snap.last_out_byte0;
+    buf[73] = snap.last_out_byte1;
+    uint16_t crc = crc16_ccitt_false(buf, USB_DIAG_WIRE_SIZE - 2);
+    buf[USB_DIAG_WIRE_SIZE - 2] = (uint8_t)(crc & 0xFFu);
+    buf[USB_DIAG_WIRE_SIZE - 1] = (uint8_t)((crc >> 8) & 0xFFu);
+
+    err_t e = udp_sendto(pcb, p, to_addr, to_port);
+    pbuf_free(p);
+    if (e != ERR_OK) {
+        diag_log_printf("net_udp: usb_diag send err=%d (%s)",
+                        (int)e, lwip_err_name(e));
+    } else {
+        tx_count++;
+        diag_log_printf("net_udp: usb_diag -> %u.%u.%u.%u:%u mounted=%d sent=%u out=%u",
+                        ip4_addr1(ip_2_ip4(to_addr)),
+                        ip4_addr2(ip_2_ip4(to_addr)),
+                        ip4_addr3(ip_2_ip4(to_addr)),
+                        ip4_addr4(ip_2_ip4(to_addr)),
+                        (unsigned)to_port,
+                        (int)snap.mounted,
+                        (unsigned)snap.xinput_in_sent_count,
+                        (unsigned)snap.xinput_out_count);
+    }
+}
+
 static void apply_state_body(const uint8_t *body, uint8_t flags) {
     g_gamepad_state.buttons       = (uint16_t)body[0] | ((uint16_t)body[1] << 8);
     g_gamepad_state.left_trigger  = body[2];
@@ -279,6 +373,8 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p,
         // and this lets `couchlink bundle` work even when discovery is
         // racing the latch.
         send_log_chunks(addr, port, seq);
+    } else if (type == TYPE_GET_USB_DIAG) {
+        send_usb_diag(addr, port, seq);
     } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT) {
         if (!have_peer
             || !ip_addr_cmp(&peer_addr, addr)

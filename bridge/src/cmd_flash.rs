@@ -334,7 +334,7 @@ async fn reboot_setup_picos_to_bootsel(all: bool) -> Result<usize> {
             "no setup-mode Pico found (looking for VID 0x{:04X} PID 0x{:04X}). \
              No-button flashing only works when CouchLink setup-mode firmware is visible over USB. \
              If the Pico is already in run mode, use `couchlink flash --all` and put it in BOOTSEL, \
-             or run `couchlink` and choose Flash or update Pico firmware for the guided path.",
+             or run `couchlink` and choose Update Pico firmware for the guided path.",
             cdc::SETUP_VID,
             cdc::SETUP_PID,
         );

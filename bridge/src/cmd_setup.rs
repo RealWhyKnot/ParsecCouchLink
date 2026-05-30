@@ -65,7 +65,7 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
     println!(
         "If discovery fails later, enter this IP manually or run `couchlink run --pico {peer_ip}`."
     );
-    println!("Have the remote player connect via Parsec, then run `couchlink` and choose controller routing.");
+    println!("Have the remote player connect via Parsec, then run `couchlink` and choose `Start streaming`.");
     Ok(())
 }
 

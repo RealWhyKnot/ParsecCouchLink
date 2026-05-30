@@ -38,7 +38,7 @@ The script explains each step before it starts. In short:
 8. Setup waits for the Pico to join Wi-Fi and answer discovery.
 9. Accept the Startup shortcut if you want the bridge to run at every logon.
 
-No controller is needed during setup. Controller detection and routing happen later, when you choose **Start or route controllers** from the guided menu or run `couchlink.exe run`.
+No controller is needed during setup. Controller detection and routing happen later, when you choose **Start streaming** from the guided menu or run `couchlink.exe run`.
 
 ## What Success Looks Like
 
@@ -49,7 +49,7 @@ Setup is complete. From now on, couchlink runs at logon.
 Confirmed Pico IP: 192.168.50.4
 ```
 
-Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose **Start or route controllers**.
+Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose **Start streaming**.
 
 If automatic Wi-Fi discovery fails later, choose **Enter Pico IP manually** in the guided menu and enter the confirmed IP from setup.
 
@@ -67,7 +67,7 @@ The guided menu can:
 - Pick one Pico or all detected Picos.
 - Route Controller 1, 2, 3, or 4 to the Pico you choose.
 - Update Pico firmware with one guided path.
-- Run diagnostics.
+- Fix a problem with health checks, Pico USB adapter checks, logs, and support bundles.
 
 When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
 
@@ -89,6 +89,7 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\configure-wifi.ps1    # re-send Wi-Fi credentials (Pico must be in setup mode)
 .\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
 .\couchlink.exe run --route 1=07D37EB6  # route Controller 1 to a specific Pico UID
+.\couchlink.exe test usb --all  # check whether the USB adapter is polling the Pico
 .\couchlink.exe test <name>  # run one diagnostic check by name
 ```
 

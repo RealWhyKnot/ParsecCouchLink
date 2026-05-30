@@ -31,7 +31,9 @@
 
 #include "boot_mode.h"
 #include "diag_log.h"
+#include "usb_diag.h"
 #include "version.h"
+#include "xinput.h"
 
 // bcdDevice is keyed by Windows usbflags / driver-binding cache. It is
 // intentionally independent from product firmware version and protocol
@@ -80,6 +82,7 @@ static const tusb_desc_device_t desc_device_xinput = {
 
 uint8_t const *tud_descriptor_device_cb(void) {
     static volatile bool logged = false;
+    usb_diag_note_device_descriptor();
     if (!logged) {
         logged = true;
         diag_log_msg("usb_init: first GET_DESCRIPTOR(DEVICE) reply sent");
@@ -155,6 +158,7 @@ static const uint8_t desc_configuration_xinput[] = {
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
     static bool logged = false;
+    usb_diag_note_configuration_descriptor();
     if (!logged) {
         diag_log_msg("usb: host requested configuration descriptor (enum step 2)");
         logged = true;
@@ -245,10 +249,16 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
 // The OUT endpoint receives Microsoft rumble + LED-ring messages we
 // don't currently act on. Drain them to keep TinyUSB happy.
 void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
-    (void)itf; (void)buffer; (void)bufsize;
+    (void)itf;
+    usb_diag_note_xinput_out(buffer, bufsize);
     // Discarded: rumble (msg 0x00, len 8) and LED (msg 0x01, len 3).
     // Acked via the read.
     tud_vendor_read_flush();
+}
+
+void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes) {
+    (void)itf;
+    usb_diag_note_xinput_in_sent(sent_bytes);
 }
 
 // -------- diag vendor-class glue (setup mode only) ---------------------
@@ -377,18 +387,24 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 // firmware-didn't-boot).
 
 void tud_mount_cb(void) {
+    usb_diag_note_mount();
+    xinput_note_usb_reset();
     diag_log_msg("usb_init: tud_mount_cb -- enumeration complete");
 }
 
 void tud_umount_cb(void) {
+    usb_diag_note_umount();
+    xinput_note_usb_reset();
     diag_log_msg("usb: unmounted (host disconnected or bus reset)");
 }
 
 void tud_suspend_cb(bool remote_wakeup_en) {
+    usb_diag_note_suspend();
     diag_log_printf("usb: suspended (remote_wakeup=%d)", (int)remote_wakeup_en);
 }
 
 void tud_resume_cb(void) {
+    usb_diag_note_resume();
     diag_log_msg("usb: resumed");
 }
 

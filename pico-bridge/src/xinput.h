@@ -7,3 +7,4 @@
 // loop; cooperates with TinyUSB's internal scheduling.
 void xinput_init(void);
 void xinput_task(void);
+void xinput_note_usb_reset(void);

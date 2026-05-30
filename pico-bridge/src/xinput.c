@@ -5,6 +5,7 @@
 #include "tusb.h"
 
 #include "gamepad_state.h"
+#include "usb_diag.h"
 
 // 20-byte XInput IN report layout matches the Microsoft wired Xbox 360
 // pad exactly. The bitmask layout of XINPUT_GAMEPAD.wButtons is also
@@ -36,6 +37,10 @@ void xinput_init(void) {
     have_last_sent = false;
 }
 
+void xinput_note_usb_reset(void) {
+    have_last_sent = false;
+}
+
 static void build_report(xinput_report_t *out) {
     out->rid          = 0x00;
     out->rsize        = 0x14;
@@ -51,7 +56,7 @@ static void build_report(xinput_report_t *out) {
 
 void xinput_task(void) {
     if (!tud_mounted()) return;
-    if (!tud_vendor_write_available()) return;
+    if (tud_vendor_write_available() < sizeof(xinput_report_t)) return;
 
     xinput_report_t rep;
     build_report(&rep);
@@ -63,6 +68,7 @@ void xinput_task(void) {
     }
     uint32_t wrote = tud_vendor_write(&rep, sizeof(rep));
     if (wrote == sizeof(rep)) {
+        usb_diag_note_xinput_in_queued(wrote);
         tud_vendor_write_flush();
         last_sent = rep;
         have_last_sent = true;

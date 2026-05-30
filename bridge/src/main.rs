@@ -8,6 +8,7 @@ mod cmd_logs;
 mod cmd_run;
 mod cmd_setup;
 mod cmd_test;
+mod cmd_usb_diag;
 mod config;
 mod diag_usb;
 mod discovery;
@@ -107,7 +108,7 @@ enum Command {
     ConfigureWifi,
     /// Run a single diagnostic test by name.
     ///
-    /// Names: xinput, paths, firewall, startup, discover, cdc, ack-identity
+    /// Names: xinput, paths, firewall, startup, discover, cdc, usb
     Test {
         which: String,
 
@@ -119,7 +120,7 @@ enum Command {
         #[arg(long)]
         reboot_to_run: bool,
 
-        /// For `test discover`, probe a Pico by manual IP address.
+        /// For `test discover` and `test usb`, probe a Pico by manual IP address.
         #[arg(long = "ip")]
         ips: Vec<String>,
     },

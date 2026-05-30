@@ -23,6 +23,7 @@
 #include "heartbeat.h"
 #include "net_udp.h"
 #include "reset_reason.h"
+#include "usb_diag.h"
 #include "version.h"
 #include "watchdog.h"
 #include "wifi.h"
@@ -258,6 +259,7 @@ static void setup_mode_main_loop(void) {
 int main(void) {
     stdio_init_all();
     diag_log_init();
+    usb_diag_init();
 
     // Classify the reset cause before anything else touches scratch
     // or runs code that might fault. The output goes into diag_log

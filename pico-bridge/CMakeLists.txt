@@ -93,6 +93,7 @@ add_executable(pico_bridge
     src/heartbeat.c
     src/net_udp.c
     src/reset_reason.c
+    src/usb_diag.c
     src/usb_descriptors.c
     src/watchdog.c
     src/wifi.c

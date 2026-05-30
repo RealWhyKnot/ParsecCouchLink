@@ -10,7 +10,7 @@ Parsec CouchLink has two small protocols:
 ## Runtime UDP
 
 - Port: UDP 4242.
-- Packet size: 17 bytes.
+- Packet size: controller, heartbeat, discovery, and diagnostic request packets are 17 bytes. Diagnostic replies can be larger.
 - Addressing: the bridge broadcasts discovery, then sends unicast to the Pico.
 - Watchdog: if the Pico has not received a valid packet for 100 ms, it outputs a neutral controller state.
 
@@ -23,11 +23,13 @@ Packet types:
 | `0x03` | Discovery broadcast from the bridge. |
 | `0x04` | Pico ack with firmware and board identity. |
 | `0x05` | `GET_LOG` -- bridge requests the firmware diagnostic ring. Same 17-byte shape as the others; body is reserved. |
+| `0x06` | `GET_USB_DIAG` -- bridge requests current run-mode USB/XInput status. Same 17-byte request shape as the others; body is reserved. |
 | `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
+| `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, XInput IN/OUT counters, recent timestamps, and CRC-16. |
 
 The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body.
 
-Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump -- bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to a `GET_LOG` request. Older firmware leaves the flag clear, and the bridge gates its diag pull accordingly.
+Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`. Older firmware leaves these flags clear, and the bridge gates diagnostic pulls accordingly.
 
 ## USB-CDC Setup
 
@@ -78,3 +80,5 @@ The bridge's `couchlink bundle` tries CDC, vendor control, and UDP in order; the
 ## USB Runtime Persona
 
 In run mode, the Pico presents itself as a wired Xbox 360 controller. Setup mode and run mode use different USB IDs so Windows does not reuse the wrong driver binding across modes.
+
+Run-mode firmware also tracks what the USB host did after the Pico joined Wi-Fi. `couchlink test usb --all` asks the Pico over UDP whether the USB host completed configuration, whether the XInput IN endpoint has accepted reports, and whether any host OUT traffic such as rumble or LED commands has arrived. The Pico cannot read the adapter's UI or driver name, but these counters distinguish the useful cases: no USB traffic, enumeration started but not configured, configured but not polling, polling XInput, and polling plus OUT traffic.

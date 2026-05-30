@@ -154,7 +154,28 @@ If streaming starts but the console does not react, run the guided menu again:
 .\couchlink.exe
 ```
 
-Choose **Start or route controllers** and verify that the right Controller 1-4 source is mapped to the right Pico. While streaming, the terminal should show outbound packet counts increasing and recent Pico replies. If the source says `waiting for source`, Windows does not currently see that XInput slot.
+Choose **Start streaming**. If you need a specific controller layout, choose **Change controller routing** and verify that the right Controller 1-4 source is mapped to the right Pico. While streaming, the terminal should show outbound packet counts increasing and recent Pico replies. If the source says `waiting for source`, Windows does not currently see that XInput slot.
+
+## USB Adapter Does Not See The Pico
+
+If the Pico is on Wi-Fi but the console adapter or a test PC does not see it as a controller, run:
+
+```powershell
+.\couchlink.exe test usb --all
+```
+
+Or, if discovery misses the Pico but you know its IP:
+
+```powershell
+.\couchlink.exe test usb --ip 192.168.50.4
+```
+
+The result tells you where USB stopped:
+
+- `Pico sees no USB host enumeration traffic`: check cable, adapter power, and port.
+- `started enumeration but did not configure`: the host read descriptors but did not accept the device.
+- `configured, but the host has not accepted an XInput report`: unplug and replug the Pico, then update firmware if it repeats.
+- `host is polling the XInput endpoint`: the adapter accepted the Pico as a controller. Some adapters do not send rumble or LED OUT traffic until a game starts.
 
 ## Logs
 

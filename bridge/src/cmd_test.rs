@@ -10,7 +10,7 @@ use crate::cmd_doctor::{
     check_24ghz_warning, check_cdc, check_discover, check_firewall, check_paths,
     check_startup_shortcut, check_xinput, CheckResult,
 };
-use crate::{cmd_run, discovery, support};
+use crate::{cmd_run, cmd_usb_diag, discovery, support};
 
 pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) -> Result<()> {
     if reboot_to_run && which != "cdc" {
@@ -19,9 +19,12 @@ pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) 
         ));
     }
     if !ips.is_empty() {
+        if which == "usb" || which == "adapter" {
+            return cmd_usb_diag::run(true, ips).await;
+        }
         if which != "discover" {
             return Err(anyhow!(
-                "--ip is only supported for `couchlink test discover`"
+                "--ip is only supported for `couchlink test discover` and `couchlink test usb`"
             ));
         }
         if all {
@@ -35,8 +38,9 @@ pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) 
         return match which {
             "cdc" => run_cdc_all(reboot_to_run).await,
             "discover" => run_discover_all().await,
+            "usb" | "adapter" => cmd_usb_diag::run(true, Vec::new()).await,
             _ => Err(anyhow!(
-                "--all is only supported for `couchlink test cdc` and `couchlink test discover`"
+                "--all is only supported for `couchlink test cdc`, `couchlink test discover`, and `couchlink test usb`"
             )),
         };
     }
@@ -52,9 +56,10 @@ pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) 
         "wifi-band" | "wifi" => check_24ghz_warning().await,
         "cdc" => check_cdc().await,
         "discover" => check_discover().await,
+        "usb" | "adapter" => return cmd_usb_diag::run(false, Vec::new()).await,
         other => {
             return Err(anyhow!(
-                "unknown test: {other}. Available: paths, xinput, startup, firewall, wifi-band, cdc, discover"
+                "unknown test: {other}. Available: paths, xinput, startup, firewall, wifi-band, cdc, discover, usb"
             ));
         }
     };

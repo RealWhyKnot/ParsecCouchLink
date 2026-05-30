@@ -58,7 +58,7 @@ If the Pico is already running CouchLink setup mode, the app can ask it to reboo
 From the guided menu:
 
 1. Run `.\couchlink.exe`.
-2. Choose **Flash or update Pico firmware**.
+2. Choose **Update Pico firmware**.
 3. Choose **Update firmware (recommended)**.
 
 The guided path tries setup-mode USB first. If that is not available, it switches to BOOTSEL flashing instructions.

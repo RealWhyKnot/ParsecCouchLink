@@ -19,7 +19,7 @@ The ZIP contains:
 - Recent bridge log files
 - Setup transcripts from `%LOCALAPPDATA%\ParsecCouchLink\data\logs\`
 - Crash files, if any
-- `pico-diag.txt` -- firmware diagnostics, if the Pico is currently in setup mode
+- `pico-diag.txt` -- firmware diagnostics, if the Pico is reachable by USB setup mode or run-mode Wi-Fi
 
 The bundle does NOT contain your Wi-Fi password or SSID.
 
@@ -30,7 +30,7 @@ The bundle does NOT contain your Wi-Fi password or SSID.
 - Bridge log files (recent)
 - Setup transcripts
 - Crash files (if present)
-- `pico-diag.txt` (if Pico is in USB setup mode at time of bundle)
+- `pico-diag.txt` (if firmware diagnostics are reachable)
 
 ## Where to send it
 

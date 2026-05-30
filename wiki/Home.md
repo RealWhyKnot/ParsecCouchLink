@@ -50,6 +50,6 @@ Console player 2
 4. When prompted, hold BOOTSEL, plug in the Pico, then release BOOTSEL as soon as Windows shows the `RPI-RP2` or `RP2350` drive. Do not press BOOTSEL again during the reboot that follows.
 5. Enter the 2.4 GHz Wi-Fi credentials.
 6. Let setup add the Startup shortcut.
-7. Run `couchlink.exe`, choose the Pico and controller routing, then start a Parsec session and play.
+7. Run `couchlink.exe`, choose **Start streaming**, then start a Parsec session and play.
 
 The Wi-Fi password is sent to the Pico over USB setup mode. It is not saved on the PC.

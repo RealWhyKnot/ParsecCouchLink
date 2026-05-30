@@ -30,7 +30,7 @@ The Windows host reads the Parsec virtual Xbox controller, sends the button stat
 
 5. Follow the prompts. The script flashes the Pico, provisions Wi-Fi, checks that the PC can find it, and can add `couchlink.exe` to Windows startup. No controller is needed for setup.
 
-After setup, have the remote player join through Parsec, run `couchlink.exe`, and choose controller routing. The bridge sends their gamepad to the Pico, and the console sees the Pico as a wired controller.
+After setup, have the remote player join through Parsec, run `couchlink.exe`, and choose **Start streaming**. The bridge sends their gamepad to the Pico, and the console sees the Pico as a wired controller.
 
 ## Release Contents
 
@@ -57,6 +57,7 @@ Useful commands:
 .\couchlink.exe logs --tail
 .\couchlink.exe configure-wifi
 .\couchlink.exe test discover --ip 192.168.50.4
+.\couchlink.exe test usb --all
 .\couchlink.exe bundle
 ```
 
@@ -68,8 +69,8 @@ If something went wrong, the fastest path is:
 2. Open an issue at <https://github.com/RealWhyKnot/ParsecCouchLink/issues>
 3. Fill in the form and drag the generated ZIP into the comment box.
 
-The bundle contains logs, doctor output, and (if the Pico is in setup
-mode) firmware diagnostics. It does NOT contain your Wi-Fi password.
+The bundle contains logs, doctor output, and firmware diagnostics when
+the Pico is reachable. It does NOT contain your Wi-Fi password.
 
 If the bridge won't run at all, the setup transcript at
 `%LOCALAPPDATA%\ParsecCouchLink\data\logs\setup-*.log` is the next-best

@@ -6,28 +6,19 @@ Run:
 .\couchlink.exe
 ```
 
-Choose **Start or route controllers**. The app searches for every Pico that is running on Wi-Fi, shows the controllers Windows can currently see, then asks how to route them.
+Choose **Start streaming**. The app searches for every Pico that is running on Wi-Fi, shows the controllers Windows can currently see, then offers the best streaming layout first.
 
 ## Common Layouts
 
-For one Pico:
+For one Pico, the recommended option maps Controller 1 to that Pico.
 
-1. Choose **Route one controller to one Pico**.
-2. Pick the Pico.
-3. Pick Controller 1, 2, 3, or 4.
-4. Start streaming.
+For two or more Picos, the recommended option maps Controller 1 to the first Pico, Controller 2 to the second Pico, and so on.
 
-For two or more Picos:
+If you need something else:
 
-1. Choose **Auto-route controllers to every detected Pico**.
-2. Controller 1 goes to the first Pico, Controller 2 to the second Pico, and so on.
+1. Choose **Change controller routing**.
+2. Choose **Use one controller**, **Use one controller per Pico**, or **Choose each controller manually**.
 3. Start streaming.
-
-For a custom layout:
-
-1. Choose **Custom routing**.
-2. Pick the Picos that should receive input.
-3. Pick the source controller for each Pico.
 
 The app saves the layout. After that, `couchlink.exe run` uses the saved layout without asking again, which is what the Startup shortcut uses.
 
