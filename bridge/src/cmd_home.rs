@@ -211,6 +211,7 @@ async fn stream(routes: Vec<cmd_run::StreamRoute>, save: bool) -> Result<()> {
 async fn flash_menu() -> Result<()> {
     println!();
     println!("Firmware update");
+    println!("Flashing does not require a controller. Controller routing is tested when streaming starts.");
     println!(
         "Use setup-mode USB for no-button reflashing when the Pico firmware is already running setup mode."
     );

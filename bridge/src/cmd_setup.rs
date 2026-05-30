@@ -1,9 +1,9 @@
 //! `couchlink setup` -- end-to-end first-run wizard.
 //!
 //! Walks the operator through: hardware confirmation, BOOTSEL flash,
-//! Wi-Fi provisioning over CDC, run-mode reboot, LAN discovery, XInput
-//! smoke test, and Startup-folder shortcut install. Each stage is
-//! re-entrant: re-running setup is safe.
+//! Wi-Fi provisioning over CDC, run-mode reboot, LAN discovery, and
+//! Startup-folder shortcut install. Each stage is re-entrant:
+//! re-running setup is safe.
 //!
 //! All `dialoguer` calls live on a blocking task so they don't stall the
 //! Tokio runtime.
@@ -17,6 +17,15 @@ use tokio::net::UdpSocket;
 use zeroize::Zeroize;
 
 use crate::{cdc, config, diag_usb, journal, protocol};
+
+const SETUP_STAGE_NAMES: [&str; 6] = [
+    "Pre-flight",
+    "Pico firmware (.uf2)",
+    "Flash the Pico",
+    "Wi-Fi provisioning over USB-CDC",
+    "LAN discovery",
+    "Autostart on logon",
+];
 
 pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
     journal!("setup", "wizard started");
@@ -35,7 +44,6 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
     stage_flash(uf2).await?;
     stage_wifi_provisioning().await?;
     let (peer_ip, identity) = stage_lan_discovery().await?;
-    stage_smoke_test().await?;
     stage_install_autostart().await?;
 
     let mut cfg = config::load().unwrap_or_default();
@@ -53,14 +61,14 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
 
     println!();
     println!("Setup is complete. From now on, couchlink runs at logon.");
-    println!("Have the remote player connect via Parsec to start using the bridge.");
+    println!("Have the remote player connect via Parsec, then run `couchlink` and choose controller routing.");
     Ok(())
 }
 
 async fn stage_preflight() -> Result<()> {
-    println!("[1/7] Pre-flight");
-    tracing::info!("setup: stage 1/7 -- pre-flight");
-    journal!("setup", "stage 1/7 pre-flight");
+    print_stage(0);
+    tracing::info!("setup: stage 1/6 -- pre-flight");
+    journal!("setup", "stage 1/6 pre-flight");
     config::ensure_dirs().context("creating config/log dirs")?;
     println!("  config dir: {}", config::config_dir()?.display());
     println!("  log dir:    {}", config::log_dir()?.display());
@@ -83,8 +91,8 @@ async fn stage_preflight() -> Result<()> {
 
 async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<Option<PathBuf>> {
     println!();
-    println!("[2/7] Pico firmware (.uf2)");
-    tracing::info!("setup: stage 2/7 -- pick UF2");
+    print_stage(1);
+    tracing::info!("setup: stage 2/6 -- pick UF2");
 
     if let Some(p) = uf2_override {
         if !p.exists() {
@@ -114,8 +122,8 @@ async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<Option<PathBuf>
 
 async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     println!();
-    println!("[3/7] Flash the Pico");
-    tracing::info!("setup: stage 3/7 -- flash");
+    print_stage(2);
+    tracing::info!("setup: stage 3/6 -- flash");
     println!("  How to put the Pico into BOOTSEL (flashing) mode:");
     println!();
     println!("    1. Unplug the Pico if it is currently connected.");
@@ -140,15 +148,15 @@ async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     crate::cmd_flash::run(uf2, false, false).await?;
     println!("  Flash complete. The Pico is rebooting into setup mode --");
     println!("  leave the BOOTSEL button alone during this reboot.");
-    tracing::info!("setup: stage 3/7 complete -- Pico rebooting into setup mode");
+    tracing::info!("setup: stage 3/6 complete -- Pico rebooting into setup mode");
     Ok(())
 }
 
 async fn stage_wifi_provisioning() -> Result<()> {
     println!();
-    println!("[4/7] Wi-Fi provisioning over USB-CDC");
-    tracing::info!("setup: stage 4/7 -- Wi-Fi provisioning");
-    journal!("setup", "stage 4/7 Wi-Fi provisioning over USB-CDC");
+    print_stage(3);
+    tracing::info!("setup: stage 4/6 -- Wi-Fi provisioning");
+    journal!("setup", "stage 4/6 Wi-Fi provisioning over USB-CDC");
     println!(
         "  Wait a few seconds for the Pico to come back as a USB serial device, \
          then continue."
@@ -222,8 +230,8 @@ async fn stage_wifi_provisioning() -> Result<()> {
 
 async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
     println!();
-    println!("[5/7] LAN discovery");
-    tracing::info!("setup: stage 5/7 -- LAN discovery");
+    print_stage(4);
+    tracing::info!("setup: stage 5/6 -- LAN discovery");
     println!("  Waiting for the Pico to join your Wi-Fi and answer a discover broadcast...");
     let socket = UdpSocket::bind("0.0.0.0:0").await?;
     socket.set_broadcast(true)?;
@@ -428,36 +436,10 @@ fn print_lan_timeout_walkthrough() {
     println!("  5. Run `couchlink bundle` and attach the resulting zip to a bug report.");
 }
 
-async fn stage_smoke_test() -> Result<()> {
-    println!();
-    println!("[6/7] Smoke test");
-    tracing::info!("setup: stage 6/7 -- XInput smoke test");
-    println!(
-        "  Plug a controller into your PC (or have someone join your Parsec with \
-         their gamepad). Then press a button."
-    );
-    println!(
-        "  This step doesn't actually move bytes through the Pico; it just \
-         verifies XInput sees a controller. End-to-end input/output is exercised \
-         the first time you press a button after run mode starts."
-    );
-
-    // XInput one-shot: wait up to 30 s for any state change.
-    let ok = wait_for_xinput_input(Duration::from_secs(30)).await;
-    if ok {
-        println!("  XInput input observed. Looks good.");
-    } else {
-        println!(
-            "  No XInput change in 30 s -- skipping. You can re-run `couchlink test xinput` later."
-        );
-    }
-    Ok(())
-}
-
 async fn stage_install_autostart() -> Result<()> {
     println!();
-    println!("[7/7] Autostart on logon");
-    tracing::info!("setup: stage 7/7 -- autostart shortcut");
+    print_stage(5);
+    tracing::info!("setup: stage 6/6 -- autostart shortcut");
 
     let install = ask_yes_no(
         "Install a Startup-folder shortcut so couchlink runs at every logon?",
@@ -488,6 +470,15 @@ async fn stage_install_autostart() -> Result<()> {
         println!("  (non-Windows -- autostart install is unsupported here)");
     }
     Ok(())
+}
+
+fn print_stage(index: usize) {
+    println!(
+        "[{}/{}] {}",
+        index + 1,
+        SETUP_STAGE_NAMES.len(),
+        SETUP_STAGE_NAMES[index]
+    );
 }
 
 async fn ask_yes_no(prompt: &str, default: bool) -> Result<bool> {
@@ -588,36 +579,16 @@ async fn wait_for_setup_cdc(timeout: Duration) -> Result<String> {
     }
 }
 
-async fn wait_for_xinput_input(timeout: Duration) -> bool {
-    #[cfg(windows)]
-    {
-        use windows::Win32::UI::Input::XboxController::{
-            XInputGetState, XINPUT_STATE, XUSER_MAX_COUNT,
-        };
-        let deadline = std::time::Instant::now() + timeout;
-        let mut baseline: [u32; 4] = [u32::MAX; 4];
-        for s in 0..XUSER_MAX_COUNT {
-            let mut state = XINPUT_STATE::default();
-            if unsafe { XInputGetState(s, &mut state) } == 0 {
-                baseline[s as usize] = state.dwPacketNumber;
-            }
-        }
-        while std::time::Instant::now() < deadline {
-            for s in 0..XUSER_MAX_COUNT {
-                let mut state = XINPUT_STATE::default();
-                if unsafe { XInputGetState(s, &mut state) } == 0
-                    && state.dwPacketNumber != baseline[s as usize]
-                {
-                    return true;
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        false
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = timeout;
-        false
+#[cfg(test)]
+mod tests {
+    use super::SETUP_STAGE_NAMES;
+
+    #[test]
+    fn first_run_setup_does_not_require_controller_input() {
+        let joined = SETUP_STAGE_NAMES.join(" ").to_ascii_lowercase();
+        assert_eq!(SETUP_STAGE_NAMES.len(), 6);
+        assert!(!joined.contains("xinput"));
+        assert!(!joined.contains("controller"));
+        assert!(!joined.contains("smoke"));
     }
 }

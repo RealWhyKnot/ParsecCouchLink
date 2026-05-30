@@ -10,10 +10,11 @@
 4. Detects the Pico in BOOTSEL mode and copies the matching UF2 onto it.
 5. Sends Wi-Fi credentials over USB setup mode.
 6. Waits for the Pico on the LAN.
-7. Runs a simple XInput smoke test.
-8. Offers to create a Windows Startup shortcut.
+7. Offers to create a Windows Startup shortcut.
 
 The Wi-Fi password is held only long enough to send it to the Pico. It is not written to disk on the PC.
+
+Setup and firmware flashing do not require a controller. Controller checks belong to the routing/streaming path after the Pico is online.
 
 ## Supported Boards
 

@@ -36,8 +36,9 @@ The script explains each step before it starts. In short:
 6. The Pico comes back as a USB serial setup device.
 7. Enter the 2.4 GHz Wi-Fi credentials when prompted.
 8. Setup waits for the Pico to join Wi-Fi and answer discovery.
-9. Press a button on the Parsec gamepad or a local Xbox controller for the smoke test.
-10. Accept the Startup shortcut if you want the bridge to run at every logon.
+9. Accept the Startup shortcut if you want the bridge to run at every logon.
+
+No controller is needed during setup. Controller detection and routing happen later, when you choose **Start or route controllers** from the guided menu or run `couchlink.exe run`.
 
 ## What Success Looks Like
 
@@ -47,7 +48,7 @@ Setup ends with:
 Setup is complete. From now on, couchlink runs at logon.
 ```
 
-Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, and leave `couchlink.exe` running on the Windows host.
+Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose **Start or route controllers**.
 
 ## Daily Use
 

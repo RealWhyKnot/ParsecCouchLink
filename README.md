@@ -28,9 +28,9 @@ The Windows host reads the Parsec virtual Xbox controller, sends the button stat
    powershell -ExecutionPolicy Bypass -File .\setup.ps1
    ```
 
-5. Follow the prompts. The script flashes the Pico, provisions Wi-Fi, checks that the PC can find it, and can add `couchlink.exe` to Windows startup.
+5. Follow the prompts. The script flashes the Pico, provisions Wi-Fi, checks that the PC can find it, and can add `couchlink.exe` to Windows startup. No controller is needed for setup.
 
-After setup, have the remote player join through Parsec. The bridge sends their gamepad to the Pico, and the console sees the Pico as a wired controller.
+After setup, have the remote player join through Parsec, run `couchlink.exe`, and choose controller routing. The bridge sends their gamepad to the Pico, and the console sees the Pico as a wired controller.
 
 ## Release Contents
 

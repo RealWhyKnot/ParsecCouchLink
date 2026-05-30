@@ -76,7 +76,7 @@ enum Command {
         #[arg(long)]
         quiet: bool,
     },
-    /// First-time setup wizard: flash the Pico, provision Wi-Fi, smoke test.
+    /// First-time setup wizard: flash the Pico, provision Wi-Fi, and check LAN discovery.
     Setup {
         /// Path to the .uf2 firmware to flash.
         #[arg(long)]

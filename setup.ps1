@@ -59,6 +59,7 @@ if (-not $SkipIntro) {
     Write-Host "Parsec CouchLink setup" -ForegroundColor Green
     Write-Host ""
     Write-Host "This will flash your Pico, put your Wi-Fi on it, test that the PC can find it, and offer to add the bridge to Windows startup."
+    Write-Host "You do not need a controller for setup; controller routing is tested when you start streaming."
     Write-Host ""
     Write-Host "Have these ready:"
     Write-Host "  - Windows 10/11 PC running Parsec"
