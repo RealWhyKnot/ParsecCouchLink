@@ -73,25 +73,22 @@ Direct command:
 
 This only works when the Pico is visible as a setup-mode USB serial device. If the Pico is already in run mode, or if Windows cannot see setup mode, use BOOTSEL flashing instead.
 
-## Recovery
+## Wi-Fi Change Recovery
 
-If the Pico has bad Wi-Fi credentials saved, it reboots into run mode (an XInput controller, not a serial device) on every plug-in, so `configure-wifi` cannot reach it. The firmware provides a credential-wipe trigger on the BOOTSEL button. The **timing is different from BOOTSEL flashing** -- this is the most common source of confusion.
+If the Pico already has saved Wi-Fi, a firmware update may reboot straight
+into run mode as an Xbox controller instead of setup-mode USB. That is OK when
+the Wi-Fi is still correct.
 
-For BOOTSEL flashing you press the button **before** plugging in. For a credential wipe you press it **after** plugging in:
-
-1. Unplug the Pico.
-2. Plug the Pico back in **without** pressing BOOTSEL. Wait roughly one second.
-3. Within the first three seconds after plug-in, press and **hold** the BOOTSEL button.
-4. Keep holding for at least three full seconds.
-5. Release BOOTSEL.
-
-The firmware reads the BOOTSEL pin three seconds into its boot. If the button is held at that moment, it clears saved Wi-Fi and reboots into setup mode. Then run:
+To change Wi-Fi:
 
 ```powershell
 .\couchlink.exe configure-wifi
 ```
 
-If the Pico instead appears as a removable drive named `RPI-RP2` or `RP2350`, you held BOOTSEL during plug-in by mistake -- that puts the Pico into the boot ROM's flashing mode, not the firmware's credential-wipe path. Unplug, wait a second, and try the recovery steps again without holding BOOTSEL while you plug in.
+If CouchLink finds the Pico running on Wi-Fi, it can ask the Pico to reboot
+into setup-mode USB and then continue. If Wi-Fi is wrong and the Pico cannot
+join the router, leave it powered for about 30 seconds; firmware with saved but
+failing credentials bounces back to setup mode so `configure-wifi` can reach it.
 
 ## Manual Flash
 

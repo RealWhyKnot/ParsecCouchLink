@@ -321,8 +321,9 @@ async fn guided_firmware_update() -> Result<()> {
 
     println!();
     println!("Firmware update complete.");
-    println!("If this Pico is new or Wi-Fi was changed, set Wi-Fi before routing controllers.");
-    if confirm("Set up or change Wi-Fi now?", true).await? {
+    println!("If the Pico already had working Wi-Fi, keep it and start streaming.");
+    println!("If this Pico is new or the Wi-Fi changed, set Wi-Fi before routing controllers.");
+    if confirm("Do you need to set up or change Wi-Fi now?", false).await? {
         cmd_configure_wifi::run().await?;
     } else {
         println!("Next: choose `Start streaming` from the main menu.");

@@ -273,7 +273,7 @@ fn handle_recv(
         Ok((n, peer)) => match Packet::decode(&buf[..n]) {
             Ok(pkt) => {
                 if let PacketKind::Ack(info) = pkt.kind {
-                    tracing::info!("discovery: ack received via {src_label} from {peer}");
+                    tracing::trace!("discovery: ack received via {src_label} from {peer}");
                     Some((peer, info))
                 } else {
                     tracing::debug!("discovery({src_label}): non-ack packet from {peer}, ignoring");
@@ -315,6 +315,81 @@ async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::{Arc, Mutex};
+
+    use tracing_subscriber::fmt::MakeWriter;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::Layer;
+
+    use super::*;
+
+    #[test]
+    fn ack_receive_trace_is_hidden_at_default_info_level() {
+        let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let writer = SharedBufWriter(buf.clone());
+        let filter = tracing_subscriber::EnvFilter::new("couchlink=info");
+        let layer = tracing_subscriber::fmt::layer()
+            .with_target(false)
+            .with_writer(writer)
+            .with_filter(filter);
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        let packet = Packet::ack(
+            1,
+            AckInfo {
+                proto_version: 1,
+                fw_major: 26,
+                fw_minor: 5,
+                fw_patch: 30,
+                board_type: protocol::BOARD_PICO_2_W,
+                uptime_seconds: 12,
+                unique_id_short: 0x1234ABCD,
+            },
+        )
+        .encode();
+        let mut rx_buf = [0u8; 64];
+        rx_buf[..packet.len()].copy_from_slice(&packet);
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3)), protocol::PORT);
+
+        let reply = tracing::subscriber::with_default(subscriber, || {
+            handle_recv("main", Ok((packet.len(), peer)), &rx_buf)
+        });
+
+        assert!(reply.is_some());
+        let captured = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(
+            !captured.contains("ack received"),
+            "per-packet discovery ACKs should not print at the default info level: {captured:?}",
+        );
+    }
+
+    #[derive(Clone)]
+    struct SharedBufWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> MakeWriter<'a> for SharedBufWriter {
+        type Writer = SharedBufWriterGuard;
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedBufWriterGuard(self.0.clone())
+        }
+    }
+
+    struct SharedBufWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedBufWriterGuard {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 }
 
 #[cfg(not(windows))]

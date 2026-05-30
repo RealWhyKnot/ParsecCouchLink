@@ -61,6 +61,11 @@ Useful commands:
 .\couchlink.exe bundle
 ```
 
+If `configure-wifi` finds a Pico already running on Wi-Fi, it can reboot that
+Pico into setup-mode USB before asking for new credentials. If the existing
+Wi-Fi is still correct after a firmware update, keep the current Wi-Fi and
+start streaming.
+
 ## Reporting bugs
 
 If something went wrong, the fastest path is:

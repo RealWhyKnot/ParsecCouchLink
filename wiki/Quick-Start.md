@@ -86,7 +86,7 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\logs.ps1 --tail       # follow the active log file
 .\bundle.ps1            # produce a support-bundle ZIP for bug reports
 .\flash.ps1             # re-flash without re-running setup
-.\configure-wifi.ps1    # re-send Wi-Fi credentials (Pico must be in setup mode)
+.\configure-wifi.ps1    # re-send Wi-Fi credentials
 .\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
 .\couchlink.exe run --route 1=07D37EB6  # route Controller 1 to a specific Pico UID
 .\couchlink.exe test usb --all  # check whether the USB adapter is polling the Pico
@@ -107,4 +107,6 @@ If the router or Wi-Fi password changes:
 
 After the Pico rejoins Wi-Fi, the command prints the confirmed Pico IP.
 
-If the Pico cannot enter setup mode, follow [[Setup and Flashing]].
+If the Pico is already running on Wi-Fi, the command can ask it to reboot into
+setup-mode USB and then continue. If the Pico already has the correct Wi-Fi,
+choose **Use current Wi-Fi and stop**.

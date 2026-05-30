@@ -24,12 +24,13 @@ Packet types:
 | `0x04` | Pico ack with firmware and board identity. |
 | `0x05` | `GET_LOG` -- bridge requests the firmware diagnostic ring. Same 17-byte shape as the others; body is reserved. |
 | `0x06` | `GET_USB_DIAG` -- bridge requests current run-mode USB/XInput status. Same 17-byte request shape as the others; body is reserved. |
+| `0x07` | `REBOOT_TO_SETUP` -- bridge asks run-mode firmware to reboot into setup-mode USB-CDC so Wi-Fi can be changed. Same 17-byte request shape as the others; body is reserved. |
 | `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
 | `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, XInput IN/OUT counters, recent timestamps, and CRC-16. |
 
 The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body.
 
-Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`. Older firmware leaves these flags clear, and the bridge gates diagnostic pulls accordingly.
+Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`; bit 2 (`REBOOT_TO_SETUP_SUPPORTED`) means it accepts `REBOOT_TO_SETUP`. Older firmware leaves these flags clear, and the bridge gates diagnostic pulls accordingly.
 
 ## USB-CDC Setup
 

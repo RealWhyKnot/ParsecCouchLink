@@ -2,10 +2,13 @@
 
 #include <string.h>
 
+#include "pico/stdlib.h"
 #include "tusb.h"
 
 #include "gamepad_state.h"
 #include "usb_diag.h"
+
+#define XINPUT_IDLE_REPORT_INTERVAL_MS 8u
 
 // 20-byte XInput IN report layout matches the Microsoft wired Xbox 360
 // pad exactly. The bitmask layout of XINPUT_GAMEPAD.wButtons is also
@@ -29,16 +32,19 @@ _Static_assert(sizeof(xinput_report_t) == 20, "xinput_report_t must be 20 bytes"
 
 static xinput_report_t last_sent;
 static bool have_last_sent;
+static uint32_t last_report_ms;
 
 void xinput_init(void) {
     memset(&last_sent, 0, sizeof(last_sent));
     last_sent.rid = 0x00;
     last_sent.rsize = 0x14;
     have_last_sent = false;
+    last_report_ms = 0;
 }
 
 void xinput_note_usb_reset(void) {
     have_last_sent = false;
+    last_report_ms = 0;
 }
 
 static void build_report(xinput_report_t *out) {
@@ -61,9 +67,9 @@ void xinput_task(void) {
     xinput_report_t rep;
     build_report(&rep);
 
-    // Skip identical re-sends to reduce bus noise; the adapter will keep
-    // polling the same state anyway because the endpoint is interrupt-IN.
-    if (have_last_sent && memcmp(&rep, &last_sent, sizeof(rep)) == 0) {
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    bool changed = !have_last_sent || memcmp(&rep, &last_sent, sizeof(rep)) != 0;
+    if (!changed && (uint32_t)(now - last_report_ms) < XINPUT_IDLE_REPORT_INTERVAL_MS) {
         return;
     }
     uint32_t wrote = tud_vendor_write(&rep, sizeof(rep));
@@ -72,5 +78,6 @@ void xinput_task(void) {
         tud_vendor_write_flush();
         last_sent = rep;
         have_last_sent = true;
+        last_report_ms = now;
     }
 }

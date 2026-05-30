@@ -5,11 +5,13 @@
 #include "pico/cyw43_arch.h"
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
+#include "hardware/watchdog.h"
 #include "lwip/udp.h"
 #include "lwip/pbuf.h"
 
 #include "diag_log.h"
 #include "gamepad_state.h"
+#include "reset_reason.h"
 #include "usb_diag.h"
 #include "version.h"
 
@@ -52,6 +54,7 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_ACK                0x04
 #define TYPE_GET_LOG            0x05
 #define TYPE_GET_USB_DIAG       0x06
+#define TYPE_REBOOT_TO_SETUP    0x07
 #define TYPE_LOG_CHUNK          0x85
 #define TYPE_USB_DIAG           0x86
 
@@ -62,6 +65,7 @@ static const char *lwip_err_name(err_t e) {
 // decode the flags byte but ignore unrecognised bits.
 #define ACK_FLAG_LOG_CHUNK_SUPPORTED 0x01
 #define ACK_FLAG_USB_DIAG_SUPPORTED  0x02
+#define ACK_FLAG_REBOOT_SETUP_SUPPORTED 0x04
 
 #define USB_DIAG_WIRE_SIZE 78
 #define USB_DIAG_VERSION   1
@@ -92,6 +96,7 @@ static absolute_time_t next_keepalive;
 static uint32_t  uid_short;
 static uint32_t  tx_count;   // ack + keepalive + log-chunk datagrams sent
 static uint32_t  rx_count;   // received datagrams (including malformed)
+static bool      reboot_to_setup_pending;
 
 // CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
 static uint8_t crc8(const uint8_t *data, size_t n) {
@@ -145,7 +150,9 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     // Advertise the LogChunk capability in the flags byte. Old bridges
     // decode the flags field but ignore unknown bits; new bridges gate
     // their CMD_GET_LOG attempt on this bit being set.
-    buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED | ACK_FLAG_USB_DIAG_SUPPORTED;
+    buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED
+           | ACK_FLAG_USB_DIAG_SUPPORTED
+           | ACK_FLAG_REBOOT_SETUP_SUPPORTED;
     // body[0..11]
     buf[4]  = PICO_BRIDGE_UDP_PROTO_VERSION;
     buf[5]  = PICO_BRIDGE_FW_WIRE_MAJOR;
@@ -375,6 +382,15 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p,
         send_log_chunks(addr, port, seq);
     } else if (type == TYPE_GET_USB_DIAG) {
         send_usb_diag(addr, port, seq);
+    } else if (type == TYPE_REBOOT_TO_SETUP) {
+        send_ack(addr, port, seq);
+        reboot_to_setup_pending = true;
+        diag_log_printf("net_udp: reboot_to_setup requested by %u.%u.%u.%u:%u",
+                        ip4_addr1(ip_2_ip4(addr)),
+                        ip4_addr2(ip_2_ip4(addr)),
+                        ip4_addr3(ip_2_ip4(addr)),
+                        ip4_addr4(ip_2_ip4(addr)),
+                        (unsigned)port);
     } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT) {
         if (!have_peer
             || !ip_addr_cmp(&peer_addr, addr)
@@ -444,12 +460,19 @@ bool net_udp_init(void) {
               | ((uint32_t)id.id[3] << 24);
 
     have_peer = false;
+    reboot_to_setup_pending = false;
     next_keepalive = make_timeout_time_ms(1000);
     diag_log_msg("net_udp: listening on UDP/4242");
     return true;
 }
 
 void net_udp_task(void) {
+    if (reboot_to_setup_pending) {
+        diag_log_msg("net_udp: rebooting to setup mode");
+        reset_reason_request_setup_after_reboot();
+        watchdog_reboot(0, 0, 100);
+        for (;;) tight_loop_contents();
+    }
     if (!have_peer) return;
     if (absolute_time_diff_us(get_absolute_time(), next_keepalive) <= 0) {
         send_keepalive();

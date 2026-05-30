@@ -43,7 +43,12 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 This happens after flashing if the Pico did not boot the firmware setup mode.
 
-Try:
+If the Pico already had saved Wi-Fi, it may have booted straight into run mode
+as an Xbox controller. In the guided menu, choose **Use current Wi-Fi and stop**
+if you only updated firmware. If you need to change Wi-Fi, choose the option to
+reboot the running Pico into setup mode.
+
+If neither setup-mode USB nor Wi-Fi discovery appears, try:
 
 1. Unplug the Pico.
 2. Plug it back in normally, without holding BOOTSEL.

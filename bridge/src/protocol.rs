@@ -26,6 +26,8 @@ pub const TYPE_ACK: u8 = 0x04;
 pub const TYPE_GET_LOG: u8 = 0x05;
 /// Request for the firmware's current USB/XInput status over UDP.
 pub const TYPE_GET_USB_DIAG: u8 = 0x06;
+/// Request for run-mode firmware to reboot into setup-mode USB-CDC.
+pub const TYPE_REBOOT_TO_SETUP: u8 = 0x07;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
@@ -46,6 +48,9 @@ pub const ACK_FLAG_LOG_CHUNK_SUPPORTED: u8 = 1 << 0;
 /// Set in the ACK flags byte when the firmware supports
 /// `TYPE_GET_USB_DIAG` / `TYPE_USB_DIAG`.
 pub const ACK_FLAG_USB_DIAG_SUPPORTED: u8 = 1 << 1;
+/// Set in the ACK flags byte when the firmware supports
+/// `TYPE_REBOOT_TO_SETUP`.
+pub const ACK_FLAG_REBOOT_TO_SETUP_SUPPORTED: u8 = 1 << 2;
 
 pub const USB_DIAG_WIRE_SIZE: usize = 78;
 pub const USB_DIAG_VERSION: u8 = 1;
@@ -312,6 +317,18 @@ pub fn encode_get_usb_diag(seq: u8) -> [u8; PACKET_SIZE] {
     let mut buf = [0u8; PACKET_SIZE];
     buf[0] = MAGIC;
     buf[1] = TYPE_GET_USB_DIAG;
+    buf[2] = seq;
+    buf[3] = 0;
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+/// Build a `TYPE_REBOOT_TO_SETUP` request datagram. Same fixed shape as
+/// DISCOVER so run-mode firmware can accept it in the existing UDP path.
+pub fn encode_reboot_to_setup(seq: u8) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_REBOOT_TO_SETUP;
     buf[2] = seq;
     buf[3] = 0;
     buf[16] = crc8(&buf[..16]);
@@ -834,6 +851,24 @@ mod tests {
             assert_eq!(*b, 0);
         }
         assert_eq!(buf[16], crc8(&buf[..16]));
+    }
+
+    #[test]
+    fn reboot_to_setup_request_encode_shape() {
+        let buf = encode_reboot_to_setup(9);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_REBOOT_TO_SETUP);
+        assert_eq!(buf[2], 9);
+        assert_eq!(buf[3], 0);
+        for b in &buf[4..16] {
+            assert_eq!(*b, 0);
+        }
+        assert_eq!(buf[16], crc8(&buf[..16]));
+        assert_eq!(
+            Packet::decode(&buf),
+            Err(DecodeError::UnknownType(TYPE_REBOOT_TO_SETUP))
+        );
     }
 
     #[test]
