@@ -11,6 +11,7 @@
 //! extra UDP socket per interface, broadcast on each, and listen on
 //! each via a fan-in channel. The first reply on any socket wins.
 
+use std::collections::BTreeMap;
 #[cfg(windows)]
 use std::net::Ipv4Addr;
 use std::net::{SocketAddr, SocketAddrV4};
@@ -143,6 +144,90 @@ pub async fn run(socket: &UdpSocket) -> std::io::Result<(SocketAddr, AckInfo)> {
         let _ = t.await;
     }
     result
+}
+
+pub async fn collect(
+    socket: &UdpSocket,
+    duration: Duration,
+) -> std::io::Result<Vec<(SocketAddr, AckInfo)>> {
+    socket.set_broadcast(true)?;
+    let broadcast_addr = SocketAddr::V4(SocketAddrV4::new(
+        std::net::Ipv4Addr::BROADCAST,
+        protocol::PORT,
+    ));
+
+    let extra_sockets: Vec<Arc<UdpSocket>> = bind_per_interface_sockets()
+        .await
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+
+    let (rx_tx, mut rx_rx) = mpsc::channel::<(String, usize, SocketAddr, [u8; 64])>(8);
+    let mut iface_tasks = Vec::with_capacity(extra_sockets.len());
+    for s in &extra_sockets {
+        let s = Arc::clone(s);
+        let tx = rx_tx.clone();
+        let label = s
+            .local_addr()
+            .ok()
+            .map(|a| format!("iface={a}"))
+            .unwrap_or_else(|| "iface=?".to_string());
+        iface_tasks.push(tokio::spawn(async move {
+            let mut buf = [0u8; 64];
+            loop {
+                match s.recv_from(&mut buf).await {
+                    Ok((n, peer)) => {
+                        if tx.send((label.clone(), n, peer, buf)).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(_) => return,
+                }
+            }
+        }));
+    }
+    drop(rx_tx);
+
+    let mut found = BTreeMap::<u32, (SocketAddr, AckInfo)>::new();
+    let mut seq: u8 = 0;
+    let mut tick = interval(BROADCAST_INTERVAL);
+    let mut main_buf = [0u8; 64];
+    let deadline = tokio::time::sleep(duration);
+    tokio::pin!(deadline);
+
+    loop {
+        tokio::select! {
+            _ = tick.tick() => {
+                let pkt = Packet::discover(seq);
+                seq = seq.wrapping_add(1);
+                let bytes = pkt.encode();
+                let _ = socket.send_to(&bytes, broadcast_addr).await;
+                for s in &extra_sockets {
+                    let _ = s.send_to(&bytes, broadcast_addr).await;
+                }
+            }
+            r = socket.recv_from(&mut main_buf) => {
+                if let Some((peer, info)) = handle_recv("main", r, &main_buf) {
+                    found.entry(info.unique_id_short).or_insert((peer, info));
+                }
+            }
+            iface_msg = rx_rx.recv() => {
+                let Some((label, n, peer, buf)) = iface_msg else { continue };
+                if let Some((peer, info)) = handle_recv(&label, Ok((n, peer)), &buf) {
+                    found.entry(info.unique_id_short).or_insert((peer, info));
+                }
+            }
+            _ = &mut deadline => break,
+        }
+    }
+
+    drop(extra_sockets);
+    for t in iface_tasks {
+        t.abort();
+        let _ = t.await;
+    }
+
+    Ok(found.into_values().collect())
 }
 
 fn handle_recv(

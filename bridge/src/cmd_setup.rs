@@ -137,7 +137,7 @@ async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     println!();
     ask_press_enter("Press Enter once the RPI-RP2 or RP2350 drive has appeared in Windows.")
         .await?;
-    crate::cmd_flash::run(uf2).await?;
+    crate::cmd_flash::run(uf2, false, false).await?;
     println!("  Flash complete. The Pico is rebooting into setup mode --");
     println!("  leave the BOOTSEL button alone during this reboot.");
     tracing::info!("setup: stage 3/7 complete -- Pico rebooting into setup mode");
@@ -164,14 +164,14 @@ async fn stage_wifi_provisioning() -> Result<()> {
     let mut pico = cdc::PicoSetup::open_named(&port).context("opening CDC port for setup")?;
     let hello = pico.hello().context("CDC HELLO failed")?;
     println!(
-        "  Pico firmware v{}.{}.{} (proto v{}, board 0x{:02X})",
-        hello.fw_major, hello.fw_minor, hello.fw_patch, hello.proto_version, hello.board_type,
+        "  Pico firmware v{} (proto v{}, board 0x{:02X})",
+        hello.firmware_version(),
+        hello.proto_version,
+        hello.board_type,
     );
     tracing::info!(
-        "setup: HELLO ok -- fw v{}.{}.{} proto v{} board 0x{:02X} creds_present={}",
-        hello.fw_major,
-        hello.fw_minor,
-        hello.fw_patch,
+        "setup: HELLO ok -- fw v{} proto v{} board 0x{:02X} creds_present={}",
+        hello.firmware_version(),
         hello.proto_version,
         hello.board_type,
         hello.creds_present(),
@@ -256,19 +256,15 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
                 Ok(p) => {
                     if let protocol::PacketKind::Ack(info) = p.kind {
                         println!(
-                            "  Pico on the LAN: {from} fw v{}.{}.{} uid 0x{:08X} uptime {}s",
-                            info.fw_major,
-                            info.fw_minor,
-                            info.fw_patch,
+                            "  Pico on the LAN: {from} fw v{} uid 0x{:08X} uptime {}s",
+                            info.firmware_version(),
                             info.unique_id_short,
                             info.uptime_seconds,
                         );
                         tracing::info!(
-                            "setup: discovery ack from {from} fw v{}.{}.{} uid 0x{:08X} \
+                            "setup: discovery ack from {from} fw v{} uid 0x{:08X} \
                              uptime {}s after {} broadcasts",
-                            info.fw_major,
-                            info.fw_minor,
-                            info.fw_patch,
+                            info.firmware_version(),
                             info.unique_id_short,
                             info.uptime_seconds,
                             seq,

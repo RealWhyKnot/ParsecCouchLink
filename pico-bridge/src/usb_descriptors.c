@@ -33,15 +33,10 @@
 #include "diag_log.h"
 #include "version.h"
 
-// bcdDevice is keyed by Windows usbflags / driver-binding cache. Bumping
-// it on a CDC-protocol break forces Windows to re-bind usbser.sys after
-// a re-flash, sidestepping cached bindings from an older firmware that
-// exposed a different interface layout. The firmware-side semver macros
-// only bump on protocol breaks by definition, so deriving bcdDevice
-// from them gets the right invalidation for free.
-#define BCD8(n)  ((((n) / 10) << 4) | ((n) % 10))
-#define BCD_DEVICE_VERSION \
-    (((uint16_t)BCD8(PICO_BRIDGE_FW_MAJOR) << 8) | (uint16_t)BCD8(PICO_BRIDGE_FW_MINOR))
+// bcdDevice is keyed by Windows usbflags / driver-binding cache. It is
+// intentionally independent from product firmware version and protocol
+// version so a USB binding cache refresh can be made explicit.
+#define BCD_DEVICE_VERSION PICO_BRIDGE_USB_BCD_DEVICE
 
 // -------- common: device descriptors -----------------------------------
 
@@ -71,7 +66,7 @@ static const tusb_desc_device_t desc_device_xinput = {
     .bDeviceClass       = 0xFF,    // vendor-specific
     .bDeviceSubClass    = 0xFF,
     .bDeviceProtocol    = 0xFF,
-    .bMaxPacketSize0    = 8,       // wired Xbox 360 reports 8, not 64
+    .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
 
     .idVendor           = 0x045E,  // Microsoft
     .idProduct          = 0x028E,  // wired Xbox 360 controller

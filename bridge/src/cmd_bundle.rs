@@ -1740,8 +1740,12 @@ async fn build_system_info() -> String {
     match &cfg.last_pico {
         Some(p) => {
             out.push_str(&format!(
-                "last-pico  fw={}.{}.{} board=0x{:02X} unique-id-short=0x{:08X}\n",
-                p.fw_major, p.fw_minor, p.fw_patch, p.board_type, p.unique_id_short,
+                "last-pico  fw={} board=0x{:02X} unique-id-short=0x{:08X}\n",
+                crate::firmware_version::FirmwareVersion::from_triplet(
+                    p.fw_major, p.fw_minor, p.fw_patch,
+                ),
+                p.board_type,
+                p.unique_id_short,
             ));
             if let Some(ip) = p.last_ip.as_deref() {
                 out.push_str(&format!("           last-ip={ip}\n"));

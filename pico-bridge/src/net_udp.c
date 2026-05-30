@@ -126,9 +126,9 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED;
     // body[0..11]
     buf[4]  = PICO_BRIDGE_UDP_PROTO_VERSION;
-    buf[5]  = PICO_BRIDGE_FW_MAJOR;
-    buf[6]  = PICO_BRIDGE_FW_MINOR;
-    buf[7]  = PICO_BRIDGE_FW_PATCH;
+    buf[5]  = PICO_BRIDGE_FW_WIRE_MAJOR;
+    buf[6]  = PICO_BRIDGE_FW_WIRE_MINOR;
+    buf[7]  = PICO_BRIDGE_FW_WIRE_PATCH;
     buf[8]  = PICO_BRIDGE_BOARD_TYPE;
     uint32_t up = (uint32_t)(to_ms_since_boot(get_absolute_time()) / 1000);
     up &= 0x00FFFFFFu;

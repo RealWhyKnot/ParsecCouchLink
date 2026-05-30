@@ -28,8 +28,8 @@ $StageDir = Join-Path $DistRoot "ParsecCouchLink"
 $StateFile = Join-Path $RepoRoot ".local_build_state.json"
 
 if ($Version) {
-    if ($Version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4}|-beta)?$') {
-        throw "Invalid -Version '$Version'. Expected YYYY.M.D.N, YYYY.M.D.N-XXXX, or YYYY.M.D.N-beta."
+    if ($Version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$') {
+        throw "Invalid -Version '$Version'. Expected YYYY.M.D.N or YYYY.M.D.N-XXXX."
     }
     $FullVersion = $Version
 } else {
@@ -72,7 +72,7 @@ $FirmwarePicow     = Join-Path $PicoDistDir "couchlink-picow.uf2"
 if (-not $SkipPico) {
     Write-Host ""
     Write-Host "Building Pico firmware (both boards)..." -ForegroundColor Cyan
-    & (Join-Path $RepoRoot "pico-bridge\scripts\build.ps1") -Release
+    & (Join-Path $RepoRoot "pico-bridge\scripts\build.ps1") -Release -Version $FullVersion
     if ($LASTEXITCODE -ne 0) { throw "Pico firmware build failed" }
 }
 if (-not (Test-Path -LiteralPath $FirmwarePico2w)) {

@@ -10,6 +10,7 @@ mod cmd_test;
 mod config;
 mod diag_usb;
 mod discovery;
+mod firmware_version;
 mod journal;
 mod known_folders;
 mod logfile;
@@ -63,13 +64,31 @@ enum Command {
         /// Path to a .uf2 file, or a directory containing one. Optional.
         #[arg(short, long)]
         uf2: Option<PathBuf>,
+
+        /// Flash every Pico currently visible in BOOTSEL mode.
+        #[arg(long)]
+        all: bool,
+
+        /// Ask setup-mode USB-CDC firmware to reboot into BOOTSEL before flashing.
+        #[arg(long)]
+        from_usb: bool,
     },
     /// Re-push Wi-Fi credentials to a Pico in setup mode via USB-CDC.
     ConfigureWifi,
     /// Run a single diagnostic test by name.
     ///
     /// Names: xinput, paths, firewall, startup, discover, cdc, ack-identity
-    Test { which: String },
+    Test {
+        which: String,
+
+        /// For supported tests, probe every matching device instead of the first one.
+        #[arg(long)]
+        all: bool,
+
+        /// For `test cdc`, reboot setup-mode Pico(s) into Wi-Fi run mode after USB checks pass.
+        #[arg(long)]
+        reboot_to_run: bool,
+    },
     /// Print where logs live, or tail the active log file.
     Logs {
         /// Tail the current log file instead of printing its path.
@@ -114,9 +133,13 @@ fn main() {
             Command::Run => cmd_run::run().await,
             Command::Setup { uf2 } => cmd_setup::run(uf2).await,
             Command::Doctor => cmd_doctor::run().await,
-            Command::Flash { uf2 } => cmd_flash::run(uf2).await,
+            Command::Flash { uf2, all, from_usb } => cmd_flash::run(uf2, all, from_usb).await,
             Command::ConfigureWifi => cmd_configure_wifi::run().await,
-            Command::Test { which } => cmd_test::run(&which).await,
+            Command::Test {
+                which,
+                all,
+                reboot_to_run,
+            } => cmd_test::run(&which, all, reboot_to_run).await,
             Command::Logs { tail } => cmd_logs::run(tail).await,
             Command::Bundle { output } => cmd_bundle::run(output).await,
         }

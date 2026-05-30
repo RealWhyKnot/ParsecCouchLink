@@ -17,6 +17,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use serialport::{SerialPort, SerialPortType};
 use zeroize::Zeroize;
 
+use crate::firmware_version::FirmwareVersion;
+
 /// Pico setup-mode USB IDs. Distinct from the run-mode HID PID so Windows
 /// does not cache one driver binding across a descriptor change.
 pub const SETUP_VID: u16 = 0x2E8A;
@@ -39,6 +41,7 @@ pub const CMD_GET_DEVICE_NAME: u8 = 0x07;
 pub const CMD_SET_DEVICE_NAME: u8 = 0x08;
 pub const CMD_GET_UNIQUE_ID: u8 = 0x09;
 pub const CMD_GET_LOG_BUFFER: u8 = 0x0A;
+pub const CMD_REBOOT_TO_BOOTSEL: u8 = 0x0B;
 
 // Response opcodes
 pub const RSP_HELLO: u8 = 0x81;
@@ -50,6 +53,7 @@ pub const RSP_DEVICE_NAME: u8 = 0x87;
 pub const RSP_SET_DEVICE_NAME: u8 = 0x88;
 pub const RSP_UNIQUE_ID: u8 = 0x89;
 pub const RSP_LOG_BUFFER: u8 = 0x8A;
+pub const RSP_REBOOT_TO_BOOTSEL: u8 = 0x8B;
 pub const RSP_NACK: u8 = 0xFE;
 
 // Error codes (carried in the NACK payload).
@@ -350,6 +354,7 @@ impl PicoSetup {
             fw_patch: resp.payload[3],
             board_type: resp.payload[4],
             flags: resp.payload[5],
+            firmware_version: FirmwareVersion::from_hello_payload(&resp.payload),
         })
     }
 
@@ -436,6 +441,7 @@ impl PicoSetup {
                     fw_patch: resp.payload[3],
                     board_type: resp.payload[4],
                     flags: resp.payload[5],
+                    firmware_version: FirmwareVersion::from_hello_payload(&resp.payload),
                 };
                 HelloProbe {
                     port: self.port_name.clone(),
@@ -502,8 +508,20 @@ impl PicoSetup {
     }
 
     pub fn reboot_to_run(&mut self) -> Result<()> {
-        // After CMD_REBOOT_TO_RUN, three outcomes are all acceptable:
-        //   - the firmware replies RSP_REBOOT and then reboots (happy path),
+        self.reboot_with_ack(CMD_REBOOT_TO_RUN, RSP_REBOOT, "REBOOT_TO_RUN")
+    }
+
+    pub fn reboot_to_bootsel(&mut self) -> Result<()> {
+        self.reboot_with_ack(
+            CMD_REBOOT_TO_BOOTSEL,
+            RSP_REBOOT_TO_BOOTSEL,
+            "REBOOT_TO_BOOTSEL",
+        )
+    }
+
+    fn reboot_with_ack(&mut self, command: u8, response: u8, label: &str) -> Result<()> {
+        // After a reboot command, three outcomes are all acceptable:
+        //   - the firmware replies with the expected ACK and then reboots,
         //   - the host sees a read/write error because the device disconnected
         //     before the reply made it across (race; firmware always reboots
         //     after handling, so the operation succeeded),
@@ -513,16 +531,16 @@ impl PicoSetup {
         // error, masking successful reboots as failures in the wizard.
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
-        let frame = encode(CMD_REBOOT_TO_RUN, seq, &[]);
+        let frame = encode(command, seq, &[]);
         if let Err(e) = self.port.write_all(&frame) {
             if e.kind() != std::io::ErrorKind::TimedOut {
                 tracing::info!(
-                    "reboot: write returned {:?} -- treating as success (Pico rebooted)",
+                    "reboot: {label} write returned {:?} -- treating as success (Pico rebooted)",
                     e.kind(),
                 );
                 return Ok(());
             }
-            return Err(e).context("writing REBOOT_TO_RUN frame");
+            return Err(e).with_context(|| format!("writing {label} frame"));
         }
         if let Err(e) = self.port.flush() {
             tracing::debug!("cdc: flush after write returned {e:?}");
@@ -538,15 +556,15 @@ impl PicoSetup {
                 Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     if Instant::now() >= deadline {
                         tracing::warn!(
-                            "reboot: no RSP and port still open after 750 ms ({} bytes buffered)",
+                            "reboot: {label} no RSP and port still open after 750 ms ({} bytes buffered)",
                             buf.len(),
                         );
-                        bail!("REBOOT_TO_RUN: no response and port still open after 750 ms");
+                        bail!("{label}: no response and port still open after 750 ms");
                     }
                 }
                 Err(e) => {
                     tracing::info!(
-                        "reboot: read returned {:?} -- treating as success (Pico rebooted)",
+                        "reboot: {label} read returned {:?} -- treating as success (Pico rebooted)",
                         e.kind(),
                     );
                     return Ok(());
@@ -557,27 +575,41 @@ impl PicoSetup {
                     buf.drain(..start);
                 }
                 if let Ok((frame, _consumed)) = try_decode(&buf) {
-                    if frame.command == RSP_REBOOT {
-                        tracing::info!("reboot: got RSP_REBOOT (0x85)");
+                    if frame.command == response {
+                        tracing::info!(
+                            "reboot: got expected response 0x{:02X} for {label}",
+                            response
+                        );
                         return Ok(());
                     }
                     if frame.command == RSP_NACK {
                         let code = frame.payload.first().copied().unwrap_or(ERR_INTERNAL);
                         let detail = frame.payload.get(1).copied().unwrap_or(0);
                         return Err(anyhow!(
-                            "Pico rejected REBOOT_TO_RUN: {} (code 0x{:02X}, detail 0x{:02X})",
+                            "Pico rejected {label}: {} (code 0x{:02X}, detail 0x{:02X})",
                             err_name(code),
                             code,
                             detail,
                         ));
                     }
-                    bail!(
-                        "unexpected response 0x{:02X} to REBOOT_TO_RUN",
-                        frame.command,
-                    );
+                    bail!("unexpected response 0x{:02X} to {label}", frame.command,);
                 }
             }
         }
+    }
+
+    pub fn self_test(&mut self) -> Result<SelfTestAck> {
+        let resp = self.exchange_named("SELF_TEST", CMD_SELF_TEST, &[])?;
+        if resp.command != RSP_SELF_TEST {
+            bail!("unexpected response 0x{:02X} to SELF_TEST", resp.command);
+        }
+        if resp.payload.is_empty() {
+            bail!("SELF_TEST response truncated (0 bytes)");
+        }
+        Ok(SelfTestAck {
+            passed: resp.payload[0] == 0,
+            message: String::from_utf8_lossy(&resp.payload[1..]).into_owned(),
+        })
     }
 
     /// Fetch the firmware's in-RAM diagnostic ring buffer. Returns the
@@ -622,12 +654,23 @@ pub struct HelloAck {
     pub fw_patch: u8,
     pub board_type: u8,
     pub flags: u8,
+    pub firmware_version: FirmwareVersion,
 }
 
 impl HelloAck {
     pub fn creds_present(&self) -> bool {
         self.flags & 0x01 != 0
     }
+
+    pub fn firmware_version(&self) -> FirmwareVersion {
+        self.firmware_version
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SelfTestAck {
+    pub passed: bool,
+    pub message: String,
 }
 
 /// Outcome of a single HELLO wire exchange, with enough detail for the
@@ -759,20 +802,29 @@ fn open_and_assert(port_name: &str) -> Result<PicoSetup> {
 }
 
 pub fn find_setup_port() -> Result<String> {
+    let ports = find_setup_ports()?;
+    ports.into_iter().next().ok_or_else(|| {
+        anyhow!(
+            "no Pico in setup mode found (looking for VID 0x{:04X} PID 0x{:04X}). \
+             Make sure the Pico has just-flashed firmware and is plugged in.",
+            SETUP_VID,
+            SETUP_PID,
+        )
+    })
+}
+
+pub fn find_setup_ports() -> Result<Vec<String>> {
     let ports = serialport::available_ports().context("enumerating serial ports")?;
+    let mut hits = Vec::new();
     for p in ports {
         if let SerialPortType::UsbPort(info) = &p.port_type {
             if info.vid == SETUP_VID && info.pid == SETUP_PID {
-                return Ok(p.port_name);
+                hits.push(p.port_name);
             }
         }
     }
-    Err(anyhow!(
-        "no Pico in setup mode found (looking for VID 0x{:04X} PID 0x{:04X}). \
-         Make sure the Pico has just-flashed firmware and is plugged in.",
-        SETUP_VID,
-        SETUP_PID,
-    ))
+    hits.sort();
+    Ok(hits)
 }
 
 #[cfg(test)]

@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+use crate::cdc;
+
 // BOOTSEL USB IDs are documented here for support-bundle annotations
 // and operator messaging. The actual detection below matches on volume
 // label (RPI-RP2 / RP2350), which is more reliable than USB enumeration
@@ -134,6 +136,7 @@ pub struct FlashOutcome {
 ///
 /// `uf2` is the file to copy -- already resolved by the caller.
 /// `wait_timeout` bounds the BOOTSEL-drive scan.
+#[allow(dead_code)]
 pub async fn flash_uf2_to_bootsel(uf2: &Path, wait_timeout: Duration) -> Result<FlashOutcome> {
     tracing::info!("flash: waiting for BOOTSEL drive (RPI-RP2 or RP2350)...");
     let start = Instant::now();
@@ -153,6 +156,15 @@ pub async fn flash_uf2_to_bootsel(uf2: &Path, wait_timeout: Duration) -> Result<
         wait_seconds,
     );
 
+    flash_uf2_to_mount(uf2, mount, board, wait_seconds).await
+}
+
+async fn flash_uf2_to_mount(
+    uf2: &Path,
+    mount: PathBuf,
+    board: BootselBoard,
+    wait_seconds: u64,
+) -> Result<FlashOutcome> {
     // Pre-flight: peek the UF2 header and refuse to write if the family
     // ID does not match the BOOTSEL board. The bootloader silently
     // discards wrong-family blocks and remounts as BOOTSEL with no
@@ -249,52 +261,119 @@ pub async fn flash_uf2_to_bootsel(uf2: &Path, wait_timeout: Duration) -> Result<
     })
 }
 
-pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
+pub async fn run(uf2: Option<PathBuf>, all: bool, from_usb: bool) -> Result<()> {
+    let expected = if from_usb {
+        reboot_setup_picos_to_bootsel(all)
+            .await
+            .context("asking setup-mode Pico(s) to enter BOOTSEL")?
+    } else {
+        print_manual_bootsel_hint();
+        1
+    };
+
+    if all {
+        flash_all_visible_bootsel(uf2.as_deref(), expected).await?;
+    } else {
+        flash_one_visible_bootsel(uf2.as_deref()).await?;
+    }
+    Ok(())
+}
+
+fn print_manual_bootsel_hint() {
     println!("Looking for a Pico in BOOTSEL mode (RPI-RP2 or RP2350 drive, 60 s timeout)...");
     println!("If your Pico is not in BOOTSEL yet: hold the BOOTSEL button, plug the Pico");
     println!("into this PC with a micro-USB data cable, then release BOOTSEL as soon as");
     println!("the RPI-RP2 or RP2350 drive appears in File Explorer.");
+}
 
-    // CLI surface needs to know the board before resolving the UF2 path,
-    // which means doing the BOOTSEL wait twice if we route through the
-    // factored core. Cheaper: detect once here, then call a small helper
-    // that skips the wait. But we'd rather keep the duplication low; the
-    // factored core's wait_for_bootsel_mount is bounded and idempotent
-    // once the drive is mounted, so calling it after we already know
-    // the drive is up just returns the same answer cheaply.
-    let preview_start = Instant::now();
-    let (preview_mount, preview_board) = wait_for_bootsel_mount(Duration::from_secs(60)).await?;
-    let _ = preview_start; // wait_seconds gets recomputed inside the core.
-    println!(
-        "Detected {} at {}",
-        preview_board.label(),
-        preview_mount.display()
-    );
-
-    let uf2_path =
-        resolve_uf2_path(uf2.as_deref(), preview_board).context("resolving which UF2 to flash")?;
+async fn flash_one_visible_bootsel(uf2: Option<&Path>) -> Result<FlashOutcome> {
+    let start = Instant::now();
+    let (mount, board) = wait_for_bootsel_mount(Duration::from_secs(60)).await?;
+    let wait_seconds = start.elapsed().as_secs();
+    println!("Detected {} at {}", board.label(), mount.display());
+    let uf2_path = resolve_uf2_path(uf2, board).context("resolving which UF2 to flash")?;
     println!("Using firmware: {}", uf2_path.display());
-    tracing::info!(
-        "flash: using UF2 path={} source={}",
-        uf2_path.display(),
-        if uf2.is_some() {
-            "override"
-        } else {
-            "auto-pick"
-        },
-    );
+    println!("Copying {} -> {} ...", uf2_path.display(), mount.display());
+    let outcome = flash_uf2_to_mount(&uf2_path, mount, board, wait_seconds).await?;
+    print_outcome(&outcome);
+    Ok(outcome)
+}
+
+async fn flash_all_visible_bootsel(
+    uf2: Option<&Path>,
+    expected_min: usize,
+) -> Result<Vec<FlashOutcome>> {
+    let start = Instant::now();
+    let mounts = wait_for_bootsel_mounts(
+        Duration::from_secs(60),
+        expected_min,
+        Duration::from_millis(1200),
+    )
+    .await?;
+    let wait_seconds = start.elapsed().as_secs();
+    println!("Detected {} BOOTSEL drive(s).", mounts.len());
+
+    let mut outcomes = Vec::with_capacity(mounts.len());
+    for (mount, board) in mounts {
+        println!("Detected {} at {}", board.label(), mount.display());
+        let uf2_path = resolve_uf2_path(uf2, board).context("resolving which UF2 to flash")?;
+        println!("Using firmware: {}", uf2_path.display());
+        println!("Copying {} -> {} ...", uf2_path.display(), mount.display());
+        let outcome = flash_uf2_to_mount(&uf2_path, mount, board, wait_seconds).await?;
+        print_outcome(&outcome);
+        outcomes.push(outcome);
+    }
+
+    Ok(outcomes)
+}
+
+async fn reboot_setup_picos_to_bootsel(all: bool) -> Result<usize> {
+    let mut ports = cdc::find_setup_ports()?;
+    if ports.is_empty() {
+        bail!(
+            "no setup-mode Pico found (looking for VID 0x{:04X} PID 0x{:04X})",
+            cdc::SETUP_VID,
+            cdc::SETUP_PID,
+        );
+    }
+    if !all && ports.len() > 1 {
+        tracing::warn!(
+            "flash: multiple setup-mode Pico ports present {:?} -- picking the first one. \
+             Pass --all to reboot and flash all of them.",
+            ports
+        );
+        ports.truncate(1);
+    }
+
     println!(
-        "Copying {} -> {} ...",
-        uf2_path.display(),
-        preview_mount.display()
+        "Asking {} setup-mode Pico(s) to enter BOOTSEL...",
+        ports.len()
     );
+    for port in &ports {
+        let port_for_task = port.clone();
+        let hello = tokio::task::spawn_blocking(move || -> Result<cdc::HelloAck> {
+            let mut pico = cdc::PicoSetup::open_named(&port_for_task)?;
+            let hello = pico.hello()?;
+            pico.reboot_to_bootsel()?;
+            Ok(hello)
+        })
+        .await
+        .context("CDC reboot task failed")??;
+        println!(
+            "  {} fw v{} board=0x{:02X} -> BOOTSEL",
+            port,
+            hello.firmware_version(),
+            hello.board_type
+        );
+    }
 
-    let outcome = flash_uf2_to_bootsel(&uf2_path, Duration::from_secs(60)).await?;
+    Ok(ports.len())
+}
 
+fn print_outcome(outcome: &FlashOutcome) {
     if outcome.rebooted_during_copy {
         println!(
-            "Pico rebooted mid-write (this is normal). Approximately {} bytes transferred \
-             before reboot.",
+            "Pico rebooted mid-write (this is normal). Approximately {} bytes transferred before reboot.",
             outcome.bytes_written,
         );
     } else {
@@ -303,7 +382,6 @@ pub async fn run(uf2: Option<PathBuf>) -> Result<()> {
             outcome.bytes_written,
         );
     }
-    Ok(())
 }
 
 /// Resolve which UF2 file to flash, given an optional user override and
@@ -418,16 +496,43 @@ async fn read_uf2_family_id(path: &Path) -> Result<Option<u32>> {
 }
 
 pub async fn wait_for_bootsel_mount(timeout: Duration) -> Result<(PathBuf, BootselBoard)> {
+    let mut mounts = wait_for_bootsel_mounts(timeout, 1, Duration::from_millis(0)).await?;
+    Ok(mounts.remove(0))
+}
+
+pub async fn wait_for_bootsel_mounts(
+    timeout: Duration,
+    expected_min: usize,
+    settle: Duration,
+) -> Result<Vec<(PathBuf, BootselBoard)>> {
     let deadline = Instant::now() + timeout;
+    let min_count = expected_min.max(1);
+    let mut stable_since: Option<Instant> = None;
+    let mut stable_count = 0usize;
     loop {
-        if let Some((p, b)) = find_bootsel_mount() {
-            return Ok((p, b));
+        let mounts = find_bootsel_mounts();
+        if mounts.len() >= min_count {
+            if settle.is_zero() {
+                return Ok(mounts);
+            }
+            let now = Instant::now();
+            if stable_since.is_none() || stable_count != mounts.len() {
+                stable_since = Some(now);
+                stable_count = mounts.len();
+            }
+            if stable_since
+                .map(|seen| now.duration_since(seen) >= settle)
+                .unwrap_or(false)
+            {
+                return Ok(mounts);
+            }
         }
         if Instant::now() >= deadline {
             bail!(
-                "timeout: no BOOTSEL drive (RPI-RP2 or RP2350) appeared in {} s. \
-                 Make sure you're holding BOOTSEL when you plug in.",
-                timeout.as_secs(),
+                "timeout: saw {} BOOTSEL drive(s), expected at least {} within {} s.",
+                mounts.len(),
+                min_count,
+                timeout.as_secs()
             );
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -435,7 +540,7 @@ pub async fn wait_for_bootsel_mount(timeout: Duration) -> Result<(PathBuf, Boots
 }
 
 #[cfg(windows)]
-fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
+fn find_bootsel_mounts() -> Vec<(PathBuf, BootselBoard)> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
@@ -464,7 +569,7 @@ fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
             err
         );
         unsafe { SetErrorMode(prev_mode) };
-        return None;
+        return Vec::new();
     }
 
     let mut roots = Vec::new();
@@ -560,21 +665,14 @@ fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
     unsafe { SetErrorMode(prev_mode) };
 
     if hits.is_empty() {
-        return None;
+        return Vec::new();
     }
     if hits.len() > 1 {
-        // Deterministic pick: sorted ascending by drive letter so the
-        // operator can predict which one will be flashed. Logging the
-        // alternatives gives them a chance to unplug the wrong board.
         hits.sort_by(|a, b| a.0.cmp(&b.0));
-        let names: Vec<&str> = hits.iter().map(|(r, _, _)| r.as_str()).collect();
-        tracing::warn!(
-            "flash: multiple BOOTSEL drives present {names:?} -- picking the first one alphabetically. \
-             Unplug the others if this is the wrong one."
-        );
     }
-    let (root, board, _) = hits.into_iter().next().unwrap();
-    Some((PathBuf::from(root), board))
+    hits.into_iter()
+        .map(|(root, board, _)| (PathBuf::from(root), board))
+        .collect()
 }
 
 #[cfg(windows)]
@@ -604,8 +702,8 @@ fn parse_info_uf2(path: &str) -> Option<BootselBoard> {
 }
 
 #[cfg(not(windows))]
-fn find_bootsel_mount() -> Option<(PathBuf, BootselBoard)> {
-    None
+fn find_bootsel_mounts() -> Vec<(PathBuf, BootselBoard)> {
+    Vec::new()
 }
 
 #[cfg(test)]

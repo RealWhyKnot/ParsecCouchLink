@@ -10,6 +10,7 @@
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "pico/unique_id.h"
+#include "pico/bootrom.h"
 #include "hardware/watchdog.h"
 #include "tusb.h"
 
@@ -107,9 +108,8 @@ static void log_reset_reason(const reset_reason_info_t *info) {
 static void log_board_identity(void) {
     char id[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1];
     pico_get_unique_board_id_string(id, sizeof(id));
-    diag_log_printf("boot: couchlink-pico fw=%d.%d.%d board=0x%02X unique-id=%s",
-                    PICO_BRIDGE_FW_MAJOR, PICO_BRIDGE_FW_MINOR,
-                    PICO_BRIDGE_FW_PATCH, PICO_BRIDGE_BOARD_TYPE, id);
+    diag_log_printf("boot: couchlink-pico fw=%s board=0x%02X unique-id=%s",
+                    PICO_BRIDGE_FW_VERSION_STRING, PICO_BRIDGE_BOARD_TYPE, id);
 }
 
 // Inline state-name helper for the assoc watchdog log line. The
@@ -240,6 +240,11 @@ static void setup_mode_main_loop(void) {
         boot_mode_post_enum_bootsel_poll();
         cdc_handlers_poll();
         heartbeat_setup_mode_task();
+        if (cdc_handlers_bootsel_pending()) {
+            diag_log_msg("setup: REBOOT_TO_BOOTSEL acknowledged, resetting to BOOTSEL");
+            sleep_ms(50);
+            reset_usb_boot(0, 0);
+        }
         if (cdc_handlers_reboot_pending()) {
             diag_log_msg("setup: REBOOT_TO_RUN acknowledged, resetting");
             sleep_ms(50);

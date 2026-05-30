@@ -29,6 +29,7 @@
 #define CDC_CMD_SET_DEVICE_NAME    0x08
 #define CDC_CMD_GET_UNIQUE_ID      0x09
 #define CDC_CMD_GET_LOG_BUFFER     0x0A
+#define CDC_CMD_REBOOT_TO_BOOTSEL  0x0B
 
 // Response opcodes (high bit set).
 #define CDC_RSP_HELLO              0x81
@@ -40,6 +41,7 @@
 #define CDC_RSP_SET_DEVICE_NAME    0x88
 #define CDC_RSP_UNIQUE_ID          0x89
 #define CDC_RSP_LOG_BUFFER         0x8A
+#define CDC_RSP_REBOOT_TO_BOOTSEL  0x8B
 #define CDC_RSP_NACK               0xFE
 
 // Error codes carried in a NACK payload (first byte; second byte is detail).

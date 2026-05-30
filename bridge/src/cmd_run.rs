@@ -59,20 +59,16 @@ async fn supervisor_loop(
         silence_warn.abort();
         let (peer, info) = disc_result?;
         tracing::info!(
-            "run: discovered Pico {} fw v{}.{}.{} uid 0x{:08X} (found after {} s)",
+            "run: discovered Pico {} fw v{} uid 0x{:08X} (found after {} s)",
             peer,
-            info.fw_major,
-            info.fw_minor,
-            info.fw_patch,
+            info.firmware_version(),
             info.unique_id_short,
             disc_start.elapsed().as_secs(),
         );
         journal!(
             "run",
-            "discovered Pico {peer} fw v{}.{}.{} uid 0x{:08X} after {}s",
-            info.fw_major,
-            info.fw_minor,
-            info.fw_patch,
+            "discovered Pico {peer} fw v{} uid 0x{:08X} after {}s",
+            info.firmware_version(),
             info.unique_id_short,
             disc_start.elapsed().as_secs()
         );

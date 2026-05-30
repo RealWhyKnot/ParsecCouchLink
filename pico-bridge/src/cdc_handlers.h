@@ -17,3 +17,7 @@ void cdc_handlers_init(void);
 // Returns true if a REBOOT_TO_RUN was queued; once the TX queue drains,
 // the caller is expected to perform the reboot.
 bool cdc_handlers_reboot_pending(void);
+
+// Returns true if a REBOOT_TO_BOOTSEL was queued; once the TX queue
+// drains, the caller is expected to enter the ROM bootloader.
+bool cdc_handlers_bootsel_pending(void);

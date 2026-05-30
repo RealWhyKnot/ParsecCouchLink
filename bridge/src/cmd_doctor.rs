@@ -236,11 +236,9 @@ pub async fn check_cdc() -> CheckResult {
     .await;
     match probe {
         Ok(Ok(ack)) => CheckResult::Pass(format!(
-            "HELLO ok proto v{} fw v{}.{}.{} board=0x{:02X} creds={}",
+            "HELLO ok proto v{} fw v{} board=0x{:02X} creds={}",
             ack.proto_version,
-            ack.fw_major,
-            ack.fw_minor,
-            ack.fw_patch,
+            ack.firmware_version(),
             ack.board_type,
             if ack.creds_present() {
                 "present"
@@ -300,26 +298,26 @@ pub async fn check_discover() -> CheckResult {
     let recv = tokio::time::timeout(Duration::from_secs(3), socket.recv_from(&mut buf)).await;
     match recv {
         Ok(Ok((n, from))) => match protocol::Packet::decode(&buf[..n]) {
-            Ok(pkt) => {
-                match pkt.kind {
-                    protocol::PacketKind::Ack(info) => CheckResult::Pass(format!(
-                    "ack from {from} proto v{} fw v{}.{}.{} board=0x{:02X} uid=0x{:08X} uptime={}s",
+            Ok(pkt) => match pkt.kind {
+                protocol::PacketKind::Ack(info) => CheckResult::Pass(format!(
+                    "ack from {from} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s",
                     info.proto_version,
-                    info.fw_major, info.fw_minor, info.fw_patch,
-                    info.board_type, info.unique_id_short, info.uptime_seconds,
+                    info.firmware_version(),
+                    info.board_type,
+                    info.unique_id_short,
+                    info.uptime_seconds,
                 )),
-                    other => {
-                        let head: Vec<u8> = buf[..n.min(16)].to_vec();
-                        tracing::debug!(
+                other => {
+                    let head: Vec<u8> = buf[..n.min(16)].to_vec();
+                    tracing::debug!(
                         "doctor: discovery got non-ack packet from {from}: kind={:?} first {} bytes = {:02X?}",
                         other,
                         head.len(),
                         head,
                     );
-                        CheckResult::Warn(format!("got non-ack packet from {from}: {other:?}"))
-                    }
+                    CheckResult::Warn(format!("got non-ack packet from {from}: {other:?}"))
                 }
-            }
+            },
             Err(e) => {
                 let head: Vec<u8> = buf[..n.min(32)].to_vec();
                 tracing::debug!(

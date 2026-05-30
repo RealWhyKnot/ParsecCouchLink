@@ -31,8 +31,10 @@ pub async fn run() -> Result<()> {
     let mut pico = cdc::PicoSetup::open_named(&port).context("opening CDC port for setup")?;
     let hello = pico.hello().context("CDC HELLO failed")?;
     println!(
-        "  -> Pico firmware v{}.{}.{} (proto v{}, board 0x{:02X})",
-        hello.fw_major, hello.fw_minor, hello.fw_patch, hello.proto_version, hello.board_type,
+        "  -> Pico firmware v{} (proto v{}, board 0x{:02X})",
+        hello.firmware_version(),
+        hello.proto_version,
+        hello.board_type,
     );
     if hello.proto_version != cdc::PROTO_VERSION {
         bail!(

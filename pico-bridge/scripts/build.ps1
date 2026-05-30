@@ -18,6 +18,7 @@ param(
     [ValidateSet("all", "pico2_w", "pico_w")]
     [string]$Board = "all",
     [string]$SdkPath = "",
+    [string]$Version = "",
     [switch]$Clean,
     [switch]$Release
 )
@@ -26,7 +27,9 @@ $ErrorActionPreference = "Stop"
 
 # Project root = parent of scripts/, regardless of caller cwd.
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$RepoRoot    = Split-Path -Parent $ProjectRoot
 $DistDir     = Join-Path $ProjectRoot "dist"
+$StateFile   = Join-Path $RepoRoot ".local_build_state.json"
 
 # Board -> per-board build dir + canonical output filename.
 $BoardInfo = @{
@@ -35,6 +38,30 @@ $BoardInfo = @{
 }
 
 $BoardsToBuild = if ($Board -eq "all") { @("pico2_w", "pico_w") } else { @($Board) }
+
+if ($Version -ne "") {
+    if ($Version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$') {
+        Write-Host "Invalid -Version '$Version'. Expected YYYY.M.D.N or YYYY.M.D.N-XXXX." -ForegroundColor Red
+        exit 1
+    }
+    $FirmwareVersion = $Version
+} else {
+    $Today = Get-Date -Format "yyyy.M.d"
+    $BuildCount = 0
+    if (Test-Path -LiteralPath $StateFile) {
+        $State = Get-Content -LiteralPath $StateFile -Raw | ConvertFrom-Json
+        if ($State.Date -eq $Today) {
+            $BuildCount = [int]$State.Count + 1
+        }
+    }
+    $Suffix = [Guid]::NewGuid().ToString("N").Substring(0, 4).ToUpperInvariant()
+    $FirmwareVersion = "$Today.$BuildCount-$Suffix"
+    @{ Date = $Today; Count = $BuildCount } |
+        ConvertTo-Json |
+        Set-Content -LiteralPath $StateFile -Encoding UTF8
+}
+
+Write-Host "Firmware version: $FirmwareVersion" -ForegroundColor Magenta
 
 # Toolchain pre-flight.
 $Missing = @()
@@ -56,6 +83,14 @@ if ($Missing.Count -gt 0) {
 
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 
+if ($Clean) {
+    $SdkSubbuild = Join-Path $ProjectRoot "build-_pico_sdk\pico_sdk-subbuild"
+    if (Test-Path -LiteralPath $SdkSubbuild) {
+        Write-Host "Removing stale SDK subbuild $SdkSubbuild"
+        Remove-Item -LiteralPath $SdkSubbuild -Recurse -Force
+    }
+}
+
 foreach ($b in $BoardsToBuild) {
     $info     = $BoardInfo[$b]
     $buildDir = Join-Path $ProjectRoot $info.BuildDir
@@ -74,7 +109,8 @@ foreach ($b in $BoardsToBuild) {
         "-S", $ProjectRoot,
         "-B", $buildDir,
         "-G", "Ninja",
-        "-DPICO_BOARD=$b"
+        "-DPICO_BOARD=$b",
+        "-DPICO_BRIDGE_FW_VERSION=$FirmwareVersion"
     )
     if ($Release) {
         $ConfigureArgs += "-DCMAKE_BUILD_TYPE=Release"

@@ -48,6 +48,13 @@ Commands:
 | `REBOOT_TO_RUN` | Reboot into runtime mode. |
 | `SELF_TEST` | Firmware-side setup checks. |
 | `GET_LOG_BUFFER` | Read the Pico diagnostic ring buffer. |
+| `REBOOT_TO_BOOTSEL` | Reboot into the ROM BOOTSEL USB bootloader for reflashing. |
+
+`HELLO_ACK` keeps the first six legacy identity bytes for older hosts:
+protocol version, compact firmware date fields, board type, and flags. Newer
+firmware appends `year`, `month`, `day`, `revision`, and an optional
+four-character development suffix. Development builds report versions such as
+`2026.5.29.7-D69A`; release builds report `2026.5.29.0`.
 
 ## USB Vendor Diag (setup mode)
 

@@ -11,8 +11,8 @@ typedef enum {
 
 // Decide which mode to boot into. Reads reset context from `rr`
 // (including force-setup bounces and RP2350 UF2 reflash detection),
-// samples BOOTSEL once at t=0 (non-blocking), and checks stored
-// credentials. Call exactly once, early in main, BEFORE
+// samples BOOTSEL once when reset context does not already force the
+// answer, and checks stored credentials. Call exactly once, early in main, BEFORE
 // tusb_init() -- the D+ pull-up must not be asserted until this
 // returns so the host sees a single clean connect event with the
 // correct descriptor persona.
@@ -30,6 +30,6 @@ bool boot_mode_bootsel_at_boot(void);
 // since boot_mode_decide() returned. When BOOTSEL was held at t=0 AND
 // has been continuously held for >= 3 seconds, wipes credentials and
 // reboots into setup mode (same net effect as the old blocking wait,
-// but the USB enumeration is not disrupted). After 3 seconds have
-// elapsed this becomes a no-op -- the wipe-or-not decision is settled.
+// but the USB enumeration is not disrupted). Once BOOTSEL is released
+// or the wipe fires this becomes a no-op -- the wipe-or-not decision is settled.
 void boot_mode_post_enum_bootsel_poll(void);

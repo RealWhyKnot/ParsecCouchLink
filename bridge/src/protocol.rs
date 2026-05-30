@@ -9,6 +9,8 @@
 
 #![allow(dead_code)]
 
+use crate::firmware_version::FirmwareVersion;
+
 pub const PORT: u16 = 4242;
 pub const PACKET_SIZE: usize = 17;
 pub const MAGIC: u8 = 0xA5;
@@ -79,6 +81,12 @@ pub struct AckInfo {
     pub board_type: u8,
     pub uptime_seconds: u32, // wire is u24 LE; high byte must be zero
     pub unique_id_short: u32,
+}
+
+impl AckInfo {
+    pub fn firmware_version(&self) -> FirmwareVersion {
+        FirmwareVersion::from_triplet(self.fw_major, self.fw_minor, self.fw_patch)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
