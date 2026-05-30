@@ -5,7 +5,7 @@ Parsec CouchLink turns a remote Parsec gamepad into a real controller input for 
 ```
 Remote player
    |
-   | Parsec virtual Xbox controller
+   | Parsec virtual Xbox controller(s)
    v
 Windows host running couchlink.exe
    |
@@ -24,6 +24,7 @@ Console player 2
 ## Start Here
 
 - [[Quick Start]] - install from a release zip and run the setup script.
+- [[Controller Routing]] - choose which controller goes to which Pico.
 - [[Setup and Flashing]] - what the script does and how to recover a Pico.
 - [[Troubleshooting]] - what to run when setup or discovery fails.
 - [[Reporting-Bugs]] - how to make a bundle and what to include in an issue.
@@ -36,7 +37,7 @@ Console player 2
 | File | Purpose |
 |---|---|
 | `setup.ps1` | The first-run setup script. |
-| `couchlink.exe` | Windows app that reads the Parsec gamepad and sends state to the Pico. |
+| `couchlink.exe` | Windows app that guides setup, routing, flashing, diagnostics, and streaming. |
 | `couchlink-pico2w.uf2` | Firmware for Pico 2 W. |
 | `couchlink-picow.uf2` | Firmware for Pico W / Pico WH. |
 | `README.txt` | Short copy of the release-folder instructions. |
@@ -49,6 +50,6 @@ Console player 2
 4. When prompted, hold BOOTSEL, plug in the Pico, then release BOOTSEL as soon as Windows shows the `RPI-RP2` or `RP2350` drive. Do not press BOOTSEL again during the reboot that follows.
 5. Enter the 2.4 GHz Wi-Fi credentials.
 6. Let setup add the Startup shortcut.
-7. Start a Parsec session and play.
+7. Run `couchlink.exe`, choose the Pico and controller routing, then start a Parsec session and play.
 
 The Wi-Fi password is sent to the Pico over USB setup mode. It is not saved on the PC.

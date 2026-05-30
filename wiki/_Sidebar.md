@@ -1,5 +1,6 @@
 - [Home](Home)
 - [Quick Start](Quick-Start)
+- [Controller Routing](Controller-Routing)
 - [Setup and Flashing](Setup-and-Flashing)
 - [Troubleshooting](Troubleshooting)
 - [Build](Build)

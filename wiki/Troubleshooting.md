@@ -123,6 +123,14 @@ Run:
 
 Parsec must expose the remote controller as an XInput gamepad on the host. A local wired Xbox controller is also enough for bench testing.
 
+If streaming starts but the console does not react, run the guided menu again:
+
+```powershell
+.\couchlink.exe
+```
+
+Choose **Start or route controllers** and verify that the right Controller 1-4 source is mapped to the right Pico. While streaming, the terminal should show outbound packet counts increasing and recent Pico replies. If the source says `waiting for source`, Windows does not currently see that XInput slot.
+
 ## Logs
 
 Log location is printed by:

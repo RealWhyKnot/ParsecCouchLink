@@ -3,6 +3,7 @@ mod cmd_bundle;
 mod cmd_configure_wifi;
 mod cmd_doctor;
 mod cmd_flash;
+mod cmd_home;
 mod cmd_logs;
 mod cmd_run;
 mod cmd_setup;
@@ -14,7 +15,6 @@ mod firmware_version;
 mod journal;
 mod known_folders;
 mod logfile;
-mod network;
 mod protocol;
 mod support;
 mod xinput;
@@ -27,7 +27,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "couchlink",
     version,
-    about = "Parsec to retro-console bridge. Run with no arguments to stream. \
+    about = "Parsec to retro-console bridge. Run with no arguments for the guided menu. \
              Run `couchlink setup` to walk through first-time setup. \
              Run `couchlink doctor` to diagnose problems."
 )]
@@ -46,8 +46,36 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the bridge. This is the default.
-    Run,
+    /// Run the bridge directly. With no saved layout, this streams one controller to one Pico.
+    Run {
+        /// Discover every running Pico and map Controller 1, 2, ... in order.
+        #[arg(long)]
+        all: bool,
+
+        /// Select one Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Explicit route in the form 1=07D37EB6 or 2=192.168.50.4. Repeat for more routes.
+        #[arg(long = "route")]
+        routes: Vec<String>,
+
+        /// Use the routing layout saved by the guided menu.
+        #[arg(long)]
+        use_saved: bool,
+
+        /// Seconds between visible traffic status updates.
+        #[arg(long, default_value_t = 2)]
+        status_seconds: u64,
+
+        /// Seconds to collect Pico discovery replies before routing.
+        #[arg(long, default_value_t = 5)]
+        discover_seconds: u64,
+
+        /// Suppress live traffic status output.
+        #[arg(long)]
+        quiet: bool,
+    },
     /// First-time setup wizard: flash the Pico, provision Wi-Fi, smoke test.
     Setup {
         /// Path to the .uf2 firmware to flash.
@@ -129,19 +157,39 @@ fn main() {
     };
 
     let result: anyhow::Result<()> = rt.block_on(async move {
-        match cli.command.unwrap_or(Command::Run) {
-            Command::Run => cmd_run::run().await,
-            Command::Setup { uf2 } => cmd_setup::run(uf2).await,
-            Command::Doctor => cmd_doctor::run().await,
-            Command::Flash { uf2, all, from_usb } => cmd_flash::run(uf2, all, from_usb).await,
-            Command::ConfigureWifi => cmd_configure_wifi::run().await,
-            Command::Test {
+        match cli.command {
+            None => cmd_home::run().await,
+            Some(Command::Run {
+                all,
+                picos,
+                routes,
+                use_saved,
+                status_seconds,
+                discover_seconds,
+                quiet,
+            }) => {
+                cmd_run::run(cmd_run::RunOptions {
+                    all,
+                    picos,
+                    routes,
+                    use_saved,
+                    status_seconds,
+                    discover_seconds,
+                    quiet,
+                })
+                .await
+            }
+            Some(Command::Setup { uf2 }) => cmd_setup::run(uf2).await,
+            Some(Command::Doctor) => cmd_doctor::run().await,
+            Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,
+            Some(Command::ConfigureWifi) => cmd_configure_wifi::run().await,
+            Some(Command::Test {
                 which,
                 all,
                 reboot_to_run,
-            } => cmd_test::run(&which, all, reboot_to_run).await,
-            Command::Logs { tail } => cmd_logs::run(tail).await,
-            Command::Bundle { output } => cmd_bundle::run(output).await,
+            }) => cmd_test::run(&which, all, reboot_to_run).await,
+            Some(Command::Logs { tail }) => cmd_logs::run(tail).await,
+            Some(Command::Bundle { output }) => cmd_bundle::run(output).await,
         }
     });
 

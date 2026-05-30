@@ -49,6 +49,24 @@ After flashing, the Pico should reboot as a USB serial setup device. The setup w
 
 Then the Pico joins Wi-Fi and starts listening for the bridge on UDP port 4242.
 
+## No-Button Reflash
+
+If the Pico is already running CouchLink setup mode, the app can ask it to reboot into BOOTSEL. You do not need to press the BOOTSEL button for that path.
+
+From the guided menu:
+
+1. Run `.\couchlink.exe`.
+2. Choose **Flash or update Pico firmware**.
+3. Choose **Update setup-mode Pico(s) without BOOTSEL**.
+
+Direct command:
+
+```powershell
+.\couchlink.exe flash --from-usb --all
+```
+
+This only works when the Pico is visible as a setup-mode USB serial device. If the Pico is already in run mode, or if Windows cannot see setup mode, use BOOTSEL flashing instead.
+
 ## Recovery
 
 If the Pico has bad Wi-Fi credentials saved, it reboots into run mode (an XInput controller, not a serial device) on every plug-in, so `configure-wifi` cannot reach it. The firmware provides a credential-wipe trigger on the BOOTSEL button. The **timing is different from BOOTSEL flashing** -- this is the most common source of confusion.

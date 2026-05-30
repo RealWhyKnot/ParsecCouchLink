@@ -51,6 +51,11 @@ pub struct Config {
     /// Set after setup finishes successfully. Bridge run mode warns if
     /// this is false to nudge the user toward `couchlink setup`.
     pub setup_complete: bool,
+    /// Saved controller-to-Pico layout from the guided runner. The
+    /// Startup shortcut uses `couchlink run`, so this lets a multi-Pico
+    /// layout start without asking questions every logon.
+    #[serde(default)]
+    pub routes: Vec<RouteConfig>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,6 +67,15 @@ pub struct PicoIdentity {
     pub fw_patch: u8,
     pub last_ip: Option<String>,
     pub device_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RouteConfig {
+    /// XInput slot, zero-based internally. The UI displays this as
+    /// controller 1 through 4.
+    pub source_slot: u32,
+    pub pico_uid: u32,
+    pub label: Option<String>,
 }
 
 pub fn load() -> Result<Config> {

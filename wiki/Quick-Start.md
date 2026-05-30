@@ -51,11 +51,29 @@ Then plug the Pico into the USB-to-console adapter. Start the console, have the 
 
 ## Daily Use
 
-If the Startup shortcut was added, Windows starts the bridge at logon. If not, run:
+Run the app from the release folder:
 
 ```powershell
 .\couchlink.exe
 ```
+
+The guided menu can:
+
+- Start streaming.
+- Pick one Pico or all detected Picos.
+- Route Controller 1, 2, 3, or 4 to the Pico you choose.
+- Reflash setup-mode Picos over USB without pressing BOOTSEL.
+- Run diagnostics.
+
+When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
+
+If the Startup shortcut was added, Windows starts the direct streaming command at logon:
+
+```powershell
+.\couchlink.exe run
+```
+
+The direct command uses the saved routing layout from the guided menu. If no layout is saved yet, it uses the first Pico it finds.
 
 Each subcommand also has a one-shot PowerShell wrapper in the release folder. Right-click and "Run with PowerShell", or call from an existing PowerShell prompt:
 
@@ -65,6 +83,8 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\bundle.ps1            # produce a support-bundle ZIP for bug reports
 .\flash.ps1             # re-flash without re-running setup
 .\configure-wifi.ps1    # re-send Wi-Fi credentials (Pico must be in setup mode)
+.\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
+.\couchlink.exe run --route 1=07D37EB6  # route Controller 1 to a specific Pico UID
 .\couchlink.exe test <name>  # run one diagnostic check by name
 ```
 
