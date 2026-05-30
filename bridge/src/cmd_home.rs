@@ -255,28 +255,61 @@ async fn flash_menu() -> Result<()> {
     println!();
     println!("Firmware update");
     println!("Flashing does not require a controller. Controller routing is tested when streaming starts.");
-    println!(
-        "Use setup-mode USB for no-button reflashing when the Pico firmware is already running setup mode."
-    );
     let choices = vec![
-        "Update setup-mode Pico(s) without BOOTSEL",
-        "Flash Pico(s) already in BOOTSEL",
-        "First-time setup wizard",
+        "Update firmware (recommended)",
+        "Advanced flash options",
         "Back",
     ];
-    match select("Flash path", &choices, 0).await? {
-        0 => {
-            let result = cmd_flash::run(None, true, true).await;
-            if let Err(e) = result {
-                println!();
-                println!("No-button flash did not complete:");
-                println!("  {e:#}");
-                if confirm("Try BOOTSEL-drive flashing instead?", true).await? {
-                    cmd_flash::run(None, true, false).await?;
-                }
-            }
-            Ok(())
+    match select("Firmware update", &choices, 0).await? {
+        0 => guided_firmware_update().await,
+        1 => advanced_flash_menu().await,
+        _ => Ok(()),
+    }
+}
+
+async fn guided_firmware_update() -> Result<()> {
+    println!();
+    println!("CouchLink will update the Pico firmware.");
+    println!("If the Pico is already in setup mode, this can happen without pressing BOOTSEL.");
+    println!("If not, the app will walk you through BOOTSEL flashing.");
+    println!();
+
+    let result = cmd_flash::run(None, true, true).await;
+    if let Err(e) = result {
+        println!();
+        println!("Automatic USB update did not complete:");
+        println!("  {e:#}");
+        println!();
+        println!("Next step: put the Pico in BOOTSEL when prompted.");
+        if !confirm("Continue with guided BOOTSEL flashing?", true).await? {
+            return Ok(());
         }
+        cmd_flash::run(None, true, false).await?;
+    }
+
+    println!();
+    println!("Firmware update complete.");
+    println!("If this Pico is new or Wi-Fi was changed, set Wi-Fi before routing controllers.");
+    if confirm("Set or change Wi-Fi now?", true).await? {
+        cmd_configure_wifi::run().await?;
+    } else {
+        println!("Next: choose `Start or route controllers` from the main menu.");
+    }
+    Ok(())
+}
+
+async fn advanced_flash_menu() -> Result<()> {
+    println!();
+    println!("Advanced flash options");
+    println!("Use these only when you already know which USB state the Pico is in.");
+    let choices = vec![
+        "No-button update from setup-mode USB",
+        "Flash BOOTSEL drive",
+        "Run full first-time setup",
+        "Back",
+    ];
+    match select("Advanced flash path", &choices, 0).await? {
+        0 => cmd_flash::run(None, true, true).await,
         1 => cmd_flash::run(None, true, false).await,
         2 => cmd_setup::run(None).await,
         _ => Ok(()),

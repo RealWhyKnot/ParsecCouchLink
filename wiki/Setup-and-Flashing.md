@@ -59,7 +59,11 @@ From the guided menu:
 
 1. Run `.\couchlink.exe`.
 2. Choose **Flash or update Pico firmware**.
-3. Choose **Update setup-mode Pico(s) without BOOTSEL**.
+3. Choose **Update firmware (recommended)**.
+
+The guided path tries setup-mode USB first. If that is not available, it switches to BOOTSEL flashing instructions.
+
+Advanced flash choices are still available under **Advanced flash options**, but most users should not need them.
 
 Direct command:
 

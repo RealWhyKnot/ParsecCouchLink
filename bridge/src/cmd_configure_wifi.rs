@@ -6,7 +6,7 @@
 //! `String` only as long as needed, and zeroized on `Drop` via the helper
 //! in `cdc.rs`. Neither SSID nor password ever hits disk.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Input, Password};
@@ -23,7 +23,8 @@ pub async fn run() -> Result<()> {
         cdc::SETUP_PID
     );
 
-    let port = cdc::find_setup_port()
+    let port = wait_for_setup_port(Duration::from_secs(60))
+        .await
         .context("no Pico in setup mode. Hold BOOTSEL and re-flash, or run `couchlink setup`.")?;
     println!("Found Pico on {port}");
 
@@ -65,6 +66,30 @@ pub async fn run() -> Result<()> {
     println!("Pico will reboot. Waiting up to 60 s for a Wi-Fi reply...");
     print_discovered_pico_ips().await?;
     Ok(())
+}
+
+async fn wait_for_setup_port(timeout: Duration) -> Result<String> {
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut next_beat = started + Duration::from_secs(10);
+    loop {
+        if let Ok(port) = cdc::find_setup_port() {
+            return Ok(port);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return cdc::find_setup_port();
+        }
+        if now >= next_beat {
+            let elapsed = now.duration_since(started).as_secs();
+            println!(
+                "  ... still waiting for setup-mode USB ({elapsed}s/{})",
+                timeout.as_secs()
+            );
+            next_beat = now + Duration::from_secs(10);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 async fn print_discovered_pico_ips() -> Result<()> {

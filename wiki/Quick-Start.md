@@ -66,7 +66,7 @@ The guided menu can:
 - Start streaming.
 - Pick one Pico or all detected Picos.
 - Route Controller 1, 2, 3, or 4 to the Pico you choose.
-- Reflash setup-mode Picos over USB without pressing BOOTSEL.
+- Update Pico firmware with one guided path.
 - Run diagnostics.
 
 When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
