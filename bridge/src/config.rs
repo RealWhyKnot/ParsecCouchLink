@@ -184,6 +184,31 @@ mod tests {
     }
 
     #[test]
+    fn config_survives_toml_round_trip() {
+        let mut cfg = Config {
+            last_uf2: Some(PathBuf::from("couchlink-pico2w.uf2")),
+            setup_complete: true,
+            ..Config::default()
+        };
+        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.226")));
+        cfg.remember_pico(pico(0x523861E6, None));
+        cfg.routes.push(RouteConfig {
+            source_slot: 2,
+            pico_uid: 0x523861E6,
+            label: Some("Pico W".to_string()),
+        });
+
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        let restored: Config = toml::from_str(&serialized).unwrap();
+
+        assert_eq!(restored.picos, cfg.picos);
+        assert_eq!(restored.routes, cfg.routes);
+        assert_eq!(restored.last_pico, cfg.last_pico);
+        assert_eq!(restored.setup_complete, cfg.setup_complete);
+        assert_eq!(restored.last_uf2, cfg.last_uf2);
+    }
+
+    #[test]
     fn forget_pico_removes_routes_and_last_pico() {
         let mut cfg = Config::default();
         cfg.remember_pico(pico(0x07D37EB6, None));

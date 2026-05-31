@@ -139,4 +139,47 @@ mod tests {
             "1.2.3"
         );
     }
+
+    #[test]
+    fn from_triplet_gates_release_vs_legacy() {
+        // An in-range date triplet is shown as a YYYY.M.D.0 release.
+        assert_eq!(
+            FirmwareVersion::from_triplet(26, 5, 30).to_string(),
+            "2026.5.30.0"
+        );
+        // Out-of-range fields stay a legacy triplet (year < 2020, bad month, bad day).
+        assert_eq!(
+            FirmwareVersion::from_triplet(19, 5, 30).to_string(),
+            "19.5.30"
+        );
+        assert_eq!(
+            FirmwareVersion::from_triplet(26, 13, 1).to_string(),
+            "26.13.1"
+        );
+        assert_eq!(
+            FirmwareVersion::from_triplet(26, 5, 32).to_string(),
+            "26.5.32"
+        );
+    }
+
+    #[test]
+    fn release_display_includes_revision_and_suffix() {
+        let v = FirmwareVersion::Release {
+            year: 2026,
+            month: 5,
+            day: 30,
+            revision: 7,
+            suffix: Some(*b"D69A"),
+        };
+        assert_eq!(v.to_string(), "2026.5.30.7-D69A");
+
+        let no_suffix = FirmwareVersion::Release {
+            year: 2026,
+            month: 5,
+            day: 30,
+            revision: 0,
+            suffix: None,
+        };
+        assert_eq!(no_suffix.to_string(), "2026.5.30.0");
+    }
 }
