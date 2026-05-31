@@ -61,6 +61,9 @@ Run the app from the release folder:
 .\couchlink.exe
 ```
 
+Each menu choice includes a short hint, so most users can stay in the guided
+flow instead of copying commands.
+
 The guided menu can:
 
 - Start streaming.

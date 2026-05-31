@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Guided menus now include short inline hints for each choice, and the advanced command page is grouped by setup, streaming, recovery, and diagnostics.
 - `couchlink debug` adds a guided Pico recovery menu and direct mode-switch commands for Wi-Fi/controller mode, USB debug mode, and BOOTSEL firmware mode. `couchlink bootsel` is the fast direct command for moving a setup-mode USB Pico into BOOTSEL.
 - `couchlink test usb` asks run-mode firmware over Wi-Fi for USB/XInput status, including mount/configuration state, descriptor counters, accepted IN reports, and host OUT traffic. The guided **Fix a problem** menu exposes the same check for console-adapter troubleshooting.
 - Release packaging describes only the current CouchLink setup, streaming, diagnostic, flashing, and Wi-Fi configuration tools. Protocol docs list the active setup and runtime commands.

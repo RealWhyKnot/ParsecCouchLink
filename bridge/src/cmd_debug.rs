@@ -82,14 +82,32 @@ async fn run_interactive() -> Result<()> {
         print_status().await?;
 
         let choices = vec![
-            "Switch Wi-Fi Pico to USB debug mode",
-            "Switch USB debug Pico to Wi-Fi/controller mode",
-            "Switch USB debug Pico to BOOTSEL firmware mode",
-            "Read USB debug log",
-            "Check controller USB side over Wi-Fi",
-            "Set up or change Wi-Fi",
-            "Refresh status",
-            "Back",
+            menu_item(
+                "Switch Wi-Fi Pico to USB debug mode",
+                "use this before changing Wi-Fi or reading setup logs",
+            ),
+            menu_item(
+                "Switch USB debug Pico to Wi-Fi/controller mode",
+                "return to normal bridge/controller operation",
+            ),
+            menu_item(
+                "Switch USB debug Pico to BOOTSEL firmware mode",
+                "prepare for firmware flashing without pressing BOOTSEL",
+            ),
+            menu_item(
+                "Read USB debug log",
+                "show recent firmware boot, Wi-Fi, and USB messages",
+            ),
+            menu_item(
+                "Check controller USB side over Wi-Fi",
+                "verify the console adapter accepted the Pico as XInput",
+            ),
+            menu_item(
+                "Set up or change Wi-Fi",
+                "send SSID and password while the Pico is in USB debug mode",
+            ),
+            menu_item("Refresh status", "scan USB debug, Wi-Fi, and BOOTSEL again"),
+            menu_item("Back", "return to the previous menu"),
         ];
         let action = select("Debug action", &choices, 0).await?;
         let result = match action {
@@ -303,9 +321,9 @@ async fn choose_wifi_target() -> Result<Option<cmd_run::PicoTarget>> {
         if picos.is_empty() {
             support::print_no_pico_wifi_help(DISCOVER_TIMEOUT.as_secs());
             let choices = vec![
-                "Try Wi-Fi discovery again",
-                "Enter Pico IP manually",
-                "Back",
+                menu_item("Try Wi-Fi discovery again", "repeat broadcast discovery"),
+                menu_item("Enter Pico IP manually", "use the IP shown by your router"),
+                menu_item("Back", "return to Pico debug"),
             ];
             match select("Wi-Fi Pico", &choices, 0).await? {
                 0 => continue,
@@ -314,9 +332,15 @@ async fn choose_wifi_target() -> Result<Option<cmd_run::PicoTarget>> {
             }
         }
 
-        let mut items: Vec<String> = picos.iter().map(|p| p.detail_label()).collect();
-        items.push("Enter Pico IP manually".to_string());
-        items.push("Back".to_string());
+        let mut items: Vec<String> = picos
+            .iter()
+            .map(|p| menu_item(&p.detail_label(), "switch this Pico to USB debug"))
+            .collect();
+        items.push(menu_item(
+            "Enter Pico IP manually",
+            "use the IP shown by your router",
+        ));
+        items.push(menu_item("Back", "return to Pico debug"));
         let idx = select("Wi-Fi Pico", &items, 0).await?;
         if idx < picos.len() {
             return Ok(Some(picos[idx].clone()));
@@ -706,6 +730,10 @@ async fn input_text(prompt: &str) -> Result<String> {
     })
     .await?
     .context("reading input")
+}
+
+fn menu_item(label: &str, help: &str) -> String {
+    format!("{label:<48} {help}")
 }
 
 async fn select(prompt: &str, items: &[impl ToString], default: usize) -> Result<usize> {

@@ -16,12 +16,21 @@ pub async fn run() -> Result<()> {
     loop {
         print_header();
         let choices = vec![
-            "Start streaming",
-            "Update Pico firmware",
-            "Set up or change Wi-Fi",
-            "Fix a problem",
-            "Advanced commands",
-            "Quit",
+            menu_item("Start streaming", "send controller input to the Pico"),
+            menu_item("Update Pico firmware", "guided flash/update path"),
+            menu_item(
+                "Set up or change Wi-Fi",
+                "send 2.4 GHz Wi-Fi credentials over USB",
+            ),
+            menu_item(
+                "Fix a problem",
+                "health checks, recovery, logs, support bundle",
+            ),
+            menu_item(
+                "Advanced commands",
+                "copyable commands for scripts and power users",
+            ),
+            menu_item("Quit", "close this menu"),
         ];
         match select("What do you want to do?", &choices, 0).await? {
             0 => start_routing().await?,
@@ -48,12 +57,12 @@ async fn start_routing() -> Result<()> {
         if picos.is_empty() {
             support::print_no_pico_wifi_help(5);
             let choices = vec![
-                "Try discovery again",
-                "Enter Pico IP manually",
-                "Set up or change Wi-Fi",
-                "Fix a problem",
-                "Update firmware",
-                "Back",
+                menu_item("Try discovery again", "repeat Wi-Fi broadcast discovery"),
+                menu_item("Enter Pico IP manually", "use the IP shown by your router"),
+                menu_item("Set up or change Wi-Fi", "re-send Wi-Fi credentials"),
+                menu_item("Fix a problem", "open guided diagnostics and recovery"),
+                menu_item("Update firmware", "flash the Pico firmware"),
+                menu_item("Back", "return to the main menu"),
             ];
             match select("Next step", &choices, 0).await? {
                 0 => continue,
@@ -81,9 +90,15 @@ async fn start_routing() -> Result<()> {
         let saved = config::load().unwrap_or_default().routes;
         let recommended = recommended_routes(&picos, &saved);
         let choices = vec![
-            recommended_route_label(&recommended),
-            "Change controller routing".to_string(),
-            "Back".to_string(),
+            menu_item(
+                &recommended_route_label(&recommended),
+                "recommended for most sessions",
+            ),
+            menu_item(
+                "Change controller routing",
+                "choose which controller feeds which Pico",
+            ),
+            menu_item("Back", "return to the main menu"),
         ];
         match select("Streaming setup", &choices, 0).await? {
             0 => match recommended {
@@ -159,10 +174,19 @@ async fn routing_options(picos: Vec<cmd_run::PicoTarget>) -> Result<()> {
     println!("Controller routing");
     println!("Most players should use the recommended streaming option. Change routing only when you need a specific layout.");
     let choices = vec![
-        "Use one controller",
-        "Use one controller per Pico",
-        "Choose each controller manually",
-        "Back",
+        menu_item(
+            "Use one controller",
+            "send one Windows controller to one Pico",
+        ),
+        menu_item(
+            "Use one controller per Pico",
+            "Controller 1 -> Pico 1, Controller 2 -> Pico 2",
+        ),
+        menu_item(
+            "Choose each controller manually",
+            "build a custom controller-to-Pico layout",
+        ),
+        menu_item("Back", "return to streaming setup"),
     ];
     match select("Routing option", &choices, 0).await? {
         0 => route_one(picos).await,
@@ -288,9 +312,15 @@ async fn flash_menu() -> Result<()> {
     println!("Firmware update");
     println!("Flashing does not require a controller. Controller routing is tested when streaming starts.");
     let choices = vec![
-        "Update firmware (recommended)",
-        "Advanced flash options",
-        "Back",
+        menu_item(
+            "Update firmware (recommended)",
+            "tries USB no-button update, then guides BOOTSEL if needed",
+        ),
+        menu_item(
+            "Advanced flash options",
+            "choose setup USB, BOOTSEL, or full setup directly",
+        ),
+        menu_item("Back", "return to the main menu"),
     ];
     match select("Firmware update", &choices, 0).await? {
         0 => guided_firmware_update().await,
@@ -336,10 +366,16 @@ async fn advanced_flash_menu() -> Result<()> {
     println!("Advanced flash options");
     println!("Use these only when you already know which USB state the Pico is in.");
     let choices = vec![
-        "No-button update from setup-mode USB",
-        "Flash BOOTSEL drive",
-        "Run full first-time setup",
-        "Back",
+        menu_item(
+            "No-button update from setup-mode USB",
+            "ask visible USB setup firmware to enter BOOTSEL",
+        ),
+        menu_item("Flash BOOTSEL drive", "copy firmware to RPI-RP2 or RP2350"),
+        menu_item(
+            "Run full first-time setup",
+            "flash firmware, send Wi-Fi, and check discovery",
+        ),
+        menu_item("Back", "return to firmware update"),
     ];
     match select("Advanced flash path", &choices, 0).await? {
         0 => cmd_flash::run(None, true, true).await,
@@ -354,13 +390,25 @@ async fn support_menu() -> Result<()> {
         println!();
         println!("Fix a problem");
         let choices = vec![
-            "Run health check",
-            "Pico debug and recovery",
-            "Check Pico USB adapter",
-            "Create support bundle",
-            "Show log folder",
-            "Follow live log",
-            "Back",
+            menu_item(
+                "Run health check",
+                "check paths, controllers, firewall, Wi-Fi, Pico",
+            ),
+            menu_item(
+                "Pico debug and recovery",
+                "see mode status and switch Wi-Fi/USB/BOOTSEL",
+            ),
+            menu_item(
+                "Check Pico USB adapter",
+                "ask the Pico whether the console adapter accepted XInput",
+            ),
+            menu_item(
+                "Create support bundle",
+                "zip logs and diagnostics for a bug report",
+            ),
+            menu_item("Show log folder", "print where logs are stored"),
+            menu_item("Follow live log", "tail the active log file"),
+            menu_item("Back", "return to the main menu"),
         ];
         match select("Support option", &choices, 0).await? {
             0 => {
@@ -385,26 +433,78 @@ async fn support_menu() -> Result<()> {
 async fn show_direct_commands() -> Result<()> {
     println!();
     println!("Advanced commands");
-    println!("  couchlink                         guided menu");
-    println!("  couchlink setup                   first-time setup wizard");
-    println!("  couchlink debug                   Pico USB/Wi-Fi recovery menu");
-    println!("  couchlink debug --status          show USB debug, Wi-Fi, and BOOTSEL state");
-    println!("  couchlink debug --to-usb-debug    switch a Wi-Fi Pico to USB debug mode");
-    println!("  couchlink debug --to-wifi --port COM3  switch USB debug mode back to Wi-Fi mode");
-    println!("  couchlink bootsel --port COM3     switch USB debug mode to BOOTSEL mode");
-    println!("  couchlink flash --from-usb --all  no-button reflash for setup-mode Picos");
-    println!("  couchlink flash --all             flash every BOOTSEL drive");
-    println!("  couchlink run                     stream using the saved layout, or one Pico if no layout is saved");
-    println!(
-        "  couchlink run --all               map Controller 1, 2, ... to every discovered Pico"
+    println!("Use the guided menu for normal use. These commands stay available for scripts, shortcuts, and power users.");
+    println!();
+    println!("Guided setup");
+    print_command("couchlink", "open this menu");
+    print_command("couchlink setup", "first-time setup wizard");
+    println!();
+    println!("Streaming");
+    print_command(
+        "couchlink run",
+        "stream using the saved layout, or one Pico if no layout is saved",
     );
-    println!("  couchlink run --route 1=UID       route Controller 1 to a specific Pico UID");
-    println!("  couchlink run --pico 192.168.50.4 route to a Pico by manual IP");
-    println!("  couchlink test discover --ip 192.168.50.4  probe a Pico by manual IP");
-    println!("  couchlink test discover --all     show every Pico answering on Wi-Fi");
-    println!("  couchlink test usb --all          check Pico USB/XInput host status over Wi-Fi");
-    println!("  couchlink test usb --ip 192.168.50.4  check one Pico by manual IP");
-    println!("  couchlink test cdc --all          show every setup-mode Pico over USB");
+    print_command(
+        "couchlink run --all",
+        "map Controller 1, 2, ... to every discovered Pico",
+    );
+    print_command(
+        "couchlink run --route 1=UID",
+        "route Controller 1 to a specific Pico UID",
+    );
+    print_command(
+        "couchlink run --pico 192.168.50.4",
+        "route to a Pico by manual IP",
+    );
+    println!();
+    println!("Pico recovery");
+    print_command("couchlink debug", "Pico USB/Wi-Fi recovery menu");
+    print_command(
+        "couchlink debug --status",
+        "show USB debug, Wi-Fi, and BOOTSEL state",
+    );
+    print_command(
+        "couchlink debug --to-usb-debug",
+        "switch a Wi-Fi Pico to USB debug mode",
+    );
+    print_command(
+        "couchlink debug --to-wifi --port COM3",
+        "switch USB debug mode back to Wi-Fi mode",
+    );
+    print_command(
+        "couchlink bootsel --port COM3",
+        "switch USB debug mode to BOOTSEL mode",
+    );
+    print_command(
+        "couchlink flash --from-usb --all",
+        "no-button reflash for setup-mode Picos",
+    );
+    print_command("couchlink flash --all", "flash every BOOTSEL drive");
+    println!();
+    println!("Diagnostics");
+    print_command(
+        "couchlink test discover --all",
+        "show every Pico answering on Wi-Fi",
+    );
+    print_command(
+        "couchlink test discover --ip 192.168.50.4",
+        "probe a Pico by manual IP",
+    );
+    print_command(
+        "couchlink test usb --all",
+        "check Pico USB/XInput host status over Wi-Fi",
+    );
+    print_command(
+        "couchlink test usb --ip 192.168.50.4",
+        "check one Pico by manual IP",
+    );
+    print_command(
+        "couchlink test cdc --all",
+        "show every setup-mode Pico over USB",
+    );
+    print_command("couchlink doctor", "run the full health check");
+    print_command("couchlink bundle", "create a support bundle");
+    print_command("couchlink logs --tail", "follow the live log");
     println!();
     println!("Detected Pico UID examples:");
     match cmd_run::discover_picos(Duration::from_secs(3)).await {
@@ -429,6 +529,14 @@ async fn input_text(prompt: &str) -> Result<String> {
     })
     .await?
     .context("reading input")
+}
+
+fn menu_item(label: &str, help: &str) -> String {
+    format!("{label:<36} {help}")
+}
+
+fn print_command(command: &str, help: &str) {
+    println!("  {command:<42} {help}");
 }
 
 async fn select(prompt: &str, items: &[impl ToString], default: usize) -> Result<usize> {
