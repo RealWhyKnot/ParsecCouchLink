@@ -759,8 +759,11 @@ fn recommended_routes(
                 })
             })
             .collect::<Result<Vec<_>>>();
-        if routes.is_ok() {
-            return routes;
+        match routes {
+            Ok(routes) => return Ok(routes),
+            Err(_) => println!(
+                "Saved controller layout points to a Pico that isn't on Wi-Fi right now -- using auto-detect instead."
+            ),
         }
     }
     if picos.len() == 1 {
