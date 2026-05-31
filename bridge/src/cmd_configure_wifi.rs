@@ -10,9 +10,10 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
-use dialoguer::{theme::ColorfulTheme, Input, Password, Select};
+use dialoguer::{theme::ColorfulTheme, Input, Password};
 use zeroize::Zeroize;
 
+use crate::tui::select;
 use crate::{cdc, cmd_run, pico_mode};
 
 pub async fn run() -> Result<()> {
@@ -298,18 +299,4 @@ fn prompt_credentials() -> Result<Credentials> {
         })
         .interact()?;
     Ok(Credentials { ssid, password })
-}
-
-async fn select(prompt: &str, items: &[impl ToString], default: usize) -> Result<usize> {
-    let prompt = prompt.to_string();
-    let items: Vec<String> = items.iter().map(ToString::to_string).collect();
-    tokio::task::spawn_blocking(move || {
-        Select::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .items(&items)
-            .default(default.min(items.len().saturating_sub(1)))
-            .interact()
-    })
-    .await?
-    .context("reading menu selection")
 }

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use tokio::time::interval;
 
+use crate::tui::{input_text, select};
 use crate::{cmd_run, protocol, support};
 
 const DISCOVER_TIMEOUT: Duration = Duration::from_secs(5);
@@ -236,32 +237,6 @@ fn yes_no(value: bool) -> &'static str {
     } else {
         "no"
     }
-}
-
-async fn input_text(prompt: &str) -> Result<String> {
-    let prompt = prompt.to_string();
-    tokio::task::spawn_blocking(move || {
-        dialoguer::Input::<String>::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt(prompt)
-            .allow_empty(true)
-            .interact_text()
-    })
-    .await?
-    .context("reading input")
-}
-
-async fn select(prompt: &str, items: &[impl ToString], default: usize) -> Result<usize> {
-    let prompt = prompt.to_string();
-    let items: Vec<String> = items.iter().map(ToString::to_string).collect();
-    tokio::task::spawn_blocking(move || {
-        dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt(prompt)
-            .items(&items)
-            .default(default.min(items.len().saturating_sub(1)))
-            .interact()
-    })
-    .await?
-    .context("reading menu selection")
 }
 
 #[cfg(test)]
