@@ -108,6 +108,16 @@ enum Command {
     },
     /// Re-push Wi-Fi credentials to a Pico in setup mode via USB-CDC.
     ConfigureWifi,
+    /// Reboot a setup-mode USB Pico into BOOTSEL firmware mode.
+    Bootsel {
+        /// Reboot every setup-mode USB Pico into BOOTSEL.
+        #[arg(long)]
+        all: bool,
+
+        /// Select a setup-mode USB Pico by COM port. Repeat for more than one.
+        #[arg(long = "port")]
+        ports: Vec<String>,
+    },
     /// Guided Pico debug/recovery menu. Can also switch between Wi-Fi, USB debug, and BOOTSEL modes.
     Debug {
         /// Show current Pico mode status and exit.
@@ -226,6 +236,15 @@ fn main() {
             Some(Command::Doctor) => cmd_doctor::run().await,
             Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,
             Some(Command::ConfigureWifi) => cmd_configure_wifi::run().await,
+            Some(Command::Bootsel { all, ports }) => {
+                cmd_debug::run(cmd_debug::DebugOptions {
+                    to_bootsel: true,
+                    all,
+                    ports,
+                    ..cmd_debug::DebugOptions::default()
+                })
+                .await
+            }
             Some(Command::Debug {
                 status,
                 to_usb_debug,

@@ -391,6 +391,7 @@ async fn show_direct_commands() -> Result<()> {
     println!("  couchlink debug --status          show USB debug, Wi-Fi, and BOOTSEL state");
     println!("  couchlink debug --to-usb-debug    switch a Wi-Fi Pico to USB debug mode");
     println!("  couchlink debug --to-wifi --port COM3  switch USB debug mode back to Wi-Fi mode");
+    println!("  couchlink bootsel --port COM3     switch USB debug mode to BOOTSEL mode");
     println!("  couchlink flash --from-usb --all  no-button reflash for setup-mode Picos");
     println!("  couchlink flash --all             flash every BOOTSEL drive");
     println!("  couchlink run                     stream using the saved layout, or one Pico if no layout is saved");

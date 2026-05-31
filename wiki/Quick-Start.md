@@ -86,6 +86,7 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\logs.ps1 --tail       # follow the active log file
 .\bundle.ps1            # produce a support-bundle ZIP for bug reports
 .\flash.ps1             # re-flash without re-running setup
+.\bootsel.ps1           # switch setup-mode USB Pico to BOOTSEL
 .\debug.ps1             # open Pico debug and recovery
 .\configure-wifi.ps1    # re-send Wi-Fi credentials
 .\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
@@ -93,6 +94,7 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\couchlink.exe test usb --all  # check whether the USB adapter is polling the Pico
 .\couchlink.exe debug --status  # show whether the Pico is on Wi-Fi, USB debug, or BOOTSEL
 .\couchlink.exe debug --to-wifi --port COM3  # switch one USB debug Pico back to Wi-Fi
+.\couchlink.exe bootsel --port COM3  # switch one USB debug Pico to BOOTSEL
 .\couchlink.exe test <name>  # run one diagnostic check by name
 ```
 

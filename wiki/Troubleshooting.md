@@ -45,6 +45,7 @@ Useful direct commands:
 .\couchlink.exe debug --to-usb-debug
 .\couchlink.exe debug --to-wifi --port COM3
 .\couchlink.exe debug --to-bootsel
+.\couchlink.exe bootsel --port COM3
 .\couchlink.exe debug --logs
 ```
 

@@ -40,7 +40,7 @@ After setup, have the remote player join through Parsec, run `couchlink.exe`, an
 | `couchlink.exe` | Windows bridge. Runs at logon or manually. |
 | `couchlink-pico2w.uf2` | Firmware for the Pico 2 W (RP2350). |
 | `couchlink-picow.uf2` | Firmware for the Pico W / Pico WH (RP2040). |
-| `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `debug.ps1`, `configure-wifi.ps1` | Convenience wrappers for common support and maintenance commands. |
+| `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `bootsel.ps1`, `debug.ps1`, `configure-wifi.ps1` | Convenience wrappers for common support and maintenance commands. |
 | `README.txt` | Short release-folder instructions. |
 | `LICENSE` / `NOTICE` | License text and release archive notes. |
 
@@ -58,6 +58,7 @@ Useful commands:
 .\couchlink.exe configure-wifi
 .\couchlink.exe debug --status
 .\couchlink.exe debug --to-wifi --port COM3
+.\couchlink.exe bootsel --port COM3
 .\couchlink.exe test discover --ip 192.168.50.4
 .\couchlink.exe test usb --all
 .\couchlink.exe bundle
@@ -91,7 +92,7 @@ page for the full version.
 - `bridge/` - Rust Windows bridge and setup wizard.
 - `pico-bridge/` - Pico firmware.
 - `setup.ps1` - release entrypoint for first-run setup.
-- `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `debug.ps1`, `configure-wifi.ps1` - release-folder command wrappers.
+- `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `bootsel.ps1`, `debug.ps1`, `configure-wifi.ps1` - release-folder command wrappers.
 - `build.ps1` - local build and release zip staging.
 - `wiki/` - source-controlled GitHub Wiki pages.
 

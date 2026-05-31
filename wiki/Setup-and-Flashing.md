@@ -74,7 +74,12 @@ Direct commands are available for scripts:
 .\couchlink.exe debug --to-usb-debug
 .\couchlink.exe debug --to-wifi --port COM3
 .\couchlink.exe debug --to-bootsel
+.\couchlink.exe bootsel --port COM3
 ```
+
+Use `.\couchlink.exe bootsel --all` when every visible USB debug Pico should
+enter BOOTSEL. The command only targets setup-mode USB devices; it does not
+flash firmware by itself.
 
 ## No-Button Reflash
 
