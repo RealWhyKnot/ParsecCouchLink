@@ -56,6 +56,26 @@ pub const RSP_LOG_BUFFER: u8 = 0x8A;
 pub const RSP_REBOOT_TO_BOOTSEL: u8 = 0x8B;
 pub const RSP_NACK: u8 = 0xFE;
 
+/// Short human label for a response opcode, used in the rare "unexpected
+/// response" errors so a protocol mismatch reads as a name rather than a
+/// bare hex byte.
+fn response_name(command: u8) -> &'static str {
+    match command {
+        RSP_HELLO => "HELLO_ACK",
+        RSP_STATUS => "STATUS",
+        RSP_SET_WIFI => "SET_WIFI_ACK",
+        RSP_REBOOT => "REBOOT_ACK",
+        RSP_SELF_TEST => "SELF_TEST_ACK",
+        RSP_DEVICE_NAME => "DEVICE_NAME",
+        RSP_SET_DEVICE_NAME => "SET_DEVICE_NAME_ACK",
+        RSP_UNIQUE_ID => "UNIQUE_ID",
+        RSP_LOG_BUFFER => "LOG_BUFFER",
+        RSP_REBOOT_TO_BOOTSEL => "REBOOT_TO_BOOTSEL_ACK",
+        RSP_NACK => "NACK",
+        _ => "unknown",
+    }
+}
+
 // Error codes (carried in the NACK payload).
 pub const ERR_BAD_CRC: u8 = 0x01;
 pub const ERR_BAD_VERSION: u8 = 0x02;
@@ -342,7 +362,11 @@ impl PicoSetup {
     pub fn hello(&mut self) -> Result<HelloAck> {
         let resp = self.exchange_named("HELLO", CMD_HELLO, &[])?;
         if resp.command != RSP_HELLO {
-            bail!("unexpected response 0x{:02X} to HELLO", resp.command);
+            bail!(
+                "unexpected response 0x{:02X} ({}) to HELLO",
+                resp.command,
+                response_name(resp.command)
+            );
         }
         if resp.payload.len() < 6 {
             bail!("HELLO_ACK truncated ({} bytes)", resp.payload.len());
@@ -417,7 +441,11 @@ impl PicoSetup {
                             &resp.payload.iter().take(32).copied().collect::<Vec<u8>>(),
                         ),
                         elapsed_ms: started.elapsed().as_millis(),
-                        result: Err(format!("unexpected response 0x{:02X}", resp.command)),
+                        result: Err(format!(
+                            "unexpected response 0x{:02X} ({})",
+                            resp.command,
+                            response_name(resp.command)
+                        )),
                     };
                 }
                 if resp.payload.len() < 6 {
@@ -502,7 +530,11 @@ impl PicoSetup {
             ));
         }
         if resp.command != RSP_SET_WIFI {
-            bail!("unexpected response 0x{:02X} to SET_WIFI", resp.command);
+            bail!(
+                "unexpected response 0x{:02X} ({}) to SET_WIFI",
+                resp.command,
+                response_name(resp.command)
+            );
         }
         Ok(())
     }
@@ -592,7 +624,11 @@ impl PicoSetup {
                             detail,
                         ));
                     }
-                    bail!("unexpected response 0x{:02X} to {label}", frame.command,);
+                    bail!(
+                        "unexpected response 0x{:02X} ({}) to {label}",
+                        frame.command,
+                        response_name(frame.command)
+                    );
                 }
             }
         }
@@ -601,7 +637,11 @@ impl PicoSetup {
     pub fn self_test(&mut self) -> Result<SelfTestAck> {
         let resp = self.exchange_named("SELF_TEST", CMD_SELF_TEST, &[])?;
         if resp.command != RSP_SELF_TEST {
-            bail!("unexpected response 0x{:02X} to SELF_TEST", resp.command);
+            bail!(
+                "unexpected response 0x{:02X} ({}) to SELF_TEST",
+                resp.command,
+                response_name(resp.command)
+            );
         }
         if resp.payload.is_empty() {
             bail!("SELF_TEST response truncated (0 bytes)");
@@ -616,8 +656,9 @@ impl PicoSetup {
         let resp = self.exchange_named("GET_UNIQUE_ID", CMD_GET_UNIQUE_ID, &[])?;
         if resp.command != RSP_UNIQUE_ID {
             bail!(
-                "unexpected response 0x{:02X} to GET_UNIQUE_ID",
-                resp.command
+                "unexpected response 0x{:02X} ({}) to GET_UNIQUE_ID",
+                resp.command,
+                response_name(resp.command)
             );
         }
         short_unique_id_from_payload(&resp.payload)
@@ -637,8 +678,9 @@ impl PicoSetup {
         let resp = self.exchange_named("GET_LOG_BUFFER", CMD_GET_LOG_BUFFER, &[])?;
         if resp.command != RSP_LOG_BUFFER {
             bail!(
-                "unexpected response 0x{:02X} to GET_LOG_BUFFER",
-                resp.command
+                "unexpected response 0x{:02X} ({}) to GET_LOG_BUFFER",
+                resp.command,
+                response_name(resp.command)
             );
         }
         if resp.payload.len() >= 4 {
