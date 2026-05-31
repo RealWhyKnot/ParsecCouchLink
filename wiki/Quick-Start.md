@@ -61,17 +61,22 @@ Run the app from the release folder:
 .\couchlink.exe
 ```
 
-Each menu choice includes a short hint, so most users can stay in the guided
-flow instead of copying commands.
+The app opens in **Simple mode**. It shows **My Picos** first, like a saved
+device list, with each saved Pico's current state when it can be detected.
+Use **Add new Pico** for a fresh install, or **Add existing Pico** to scan
+Wi-Fi, setup USB, and BOOTSEL for a Pico you already have.
 
 The guided menu can:
 
 - Start streaming.
+- Show saved Pico state: Wi-Fi ready, USB debug, or not seen.
+- Show connected BOOTSEL drives separately when firmware flashing is needed.
+- Add a new Pico by walking through flashing, Wi-Fi setup, and saving.
+- Add an existing Pico by scanning the network and USB.
 - Automatically recover a Pico left in USB debug mode when it already has saved Wi-Fi.
 - Pick one Pico or all detected Picos.
 - Route Controller 1, 2, 3, or 4 to the Pico you choose.
-- Update Pico firmware with one guided path.
-- Open **Tools and diagnostics** for a status dashboard, Wi-Fi finder, controller check, Pico debug/recovery, USB adapter checks, logs, and support bundles.
+- Open **Advanced tools** for firmware updates, status, Wi-Fi finder, controller check, Pico debug/recovery, USB adapter checks, logs, and support bundles.
 
 When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
 

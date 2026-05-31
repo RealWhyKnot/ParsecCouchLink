@@ -11,6 +11,8 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
+use crate::protocol;
+
 const QUALIFIER: &str = "";
 const ORGANIZATION: &str = "";
 const APPLICATION: &str = "ParsecCouchLink";
@@ -51,11 +53,44 @@ pub struct Config {
     /// Set after setup finishes successfully. Bridge run mode warns if
     /// this is false to nudge the user toward `couchlink setup`.
     pub setup_complete: bool,
+    /// Saved Pico inventory shown by the guided home screen. This is
+    /// intentionally just device identity and last-known network info;
+    /// Wi-Fi credentials remain only on the Pico.
+    #[serde(default)]
+    pub picos: Vec<PicoIdentity>,
     /// Saved controller-to-Pico layout from the guided runner. The
     /// Startup shortcut uses `couchlink run`, so this lets a multi-Pico
     /// layout start without asking questions every logon.
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
+}
+
+impl Config {
+    pub fn remember_pico(&mut self, pico: PicoIdentity) {
+        if let Some(existing) = self
+            .picos
+            .iter_mut()
+            .find(|p| p.unique_id_short == pico.unique_id_short)
+        {
+            *existing = pico.clone();
+        } else {
+            self.picos.push(pico.clone());
+        }
+        self.last_pico = Some(pico);
+    }
+
+    pub fn forget_pico(&mut self, unique_id_short: u32) {
+        self.picos.retain(|p| p.unique_id_short != unique_id_short);
+        self.routes.retain(|r| r.pico_uid != unique_id_short);
+        if self
+            .last_pico
+            .as_ref()
+            .map(|p| p.unique_id_short == unique_id_short)
+            .unwrap_or(false)
+        {
+            self.last_pico = self.picos.first().cloned();
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,6 +102,24 @@ pub struct PicoIdentity {
     pub fw_patch: u8,
     pub last_ip: Option<String>,
     pub device_name: Option<String>,
+}
+
+impl PicoIdentity {
+    pub fn uid_hex(&self) -> String {
+        format!("{:08X}", self.unique_id_short)
+    }
+
+    pub fn board_label(&self) -> &'static str {
+        match self.board_type {
+            protocol::BOARD_PICO_2_W => "Pico 2 W",
+            protocol::BOARD_PICO_W_RP2040 => "Pico W",
+            _ => "Pico",
+        }
+    }
+
+    pub fn firmware_version(&self) -> String {
+        format!("{}.{}.{}", self.fw_major, self.fw_minor, self.fw_patch)
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -101,4 +154,49 @@ pub fn ensure_dirs() -> Result<()> {
     fs::create_dir_all(d.data_local_dir())?;
     fs::create_dir_all(log_dir()?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pico(uid: u32, ip: Option<&str>) -> PicoIdentity {
+        PicoIdentity {
+            unique_id_short: uid,
+            board_type: protocol::BOARD_PICO_2_W,
+            fw_major: 26,
+            fw_minor: 5,
+            fw_patch: 30,
+            last_ip: ip.map(|s| s.to_string()),
+            device_name: None,
+        }
+    }
+
+    #[test]
+    fn remember_pico_upserts_by_uid() {
+        let mut cfg = Config::default();
+        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.226")));
+        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.227")));
+
+        assert_eq!(cfg.picos.len(), 1);
+        assert_eq!(cfg.picos[0].last_ip.as_deref(), Some("192.168.50.227"));
+        assert_eq!(cfg.last_pico.as_ref().unwrap().unique_id_short, 0x07D37EB6);
+    }
+
+    #[test]
+    fn forget_pico_removes_routes_and_last_pico() {
+        let mut cfg = Config::default();
+        cfg.remember_pico(pico(0x07D37EB6, None));
+        cfg.routes.push(RouteConfig {
+            source_slot: 0,
+            pico_uid: 0x07D37EB6,
+            label: None,
+        });
+
+        cfg.forget_pico(0x07D37EB6);
+
+        assert!(cfg.picos.is_empty());
+        assert!(cfg.routes.is_empty());
+        assert!(cfg.last_pico.is_none());
+    }
 }

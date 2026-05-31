@@ -48,7 +48,7 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
 
     let mut cfg = config::load().unwrap_or_default();
     cfg.setup_complete = true;
-    cfg.last_pico = Some(config::PicoIdentity {
+    cfg.remember_pico(config::PicoIdentity {
         unique_id_short: identity.unique_id_short,
         board_type: identity.board_type,
         fw_major: identity.fw_major,

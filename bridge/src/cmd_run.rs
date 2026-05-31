@@ -109,6 +109,18 @@ impl StreamRoute {
     }
 }
 
+pub fn identity_from_target(pico: &PicoTarget) -> config::PicoIdentity {
+    config::PicoIdentity {
+        unique_id_short: pico.info.unique_id_short,
+        board_type: pico.info.board_type,
+        fw_major: pico.info.fw_major,
+        fw_minor: pico.info.fw_minor,
+        fw_patch: pico.info.fw_patch,
+        last_ip: Some(pico.peer.ip().to_string()),
+        device_name: Some(pico.board_label().to_string()),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StreamOptions {
     pub status_seconds: u64,
@@ -731,16 +743,8 @@ fn save_routes(routes: &[StreamRoute]) -> Result<()> {
             label: Some(route.pico.board_label().to_string()),
         })
         .collect();
-    if let Some(first) = routes.first() {
-        cfg.last_pico = Some(config::PicoIdentity {
-            unique_id_short: first.pico.info.unique_id_short,
-            board_type: first.pico.info.board_type,
-            fw_major: first.pico.info.fw_major,
-            fw_minor: first.pico.info.fw_minor,
-            fw_patch: first.pico.info.fw_patch,
-            last_ip: Some(first.pico.peer.ip().to_string()),
-            device_name: Some(first.pico.board_label().to_string()),
-        });
+    for route in routes {
+        cfg.remember_pico(identity_from_target(&route.pico));
     }
     config::save(&cfg)
 }

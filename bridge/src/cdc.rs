@@ -612,6 +612,17 @@ impl PicoSetup {
         })
     }
 
+    pub fn unique_id_short(&mut self) -> Result<u32> {
+        let resp = self.exchange_named("GET_UNIQUE_ID", CMD_GET_UNIQUE_ID, &[])?;
+        if resp.command != RSP_UNIQUE_ID {
+            bail!(
+                "unexpected response 0x{:02X} to GET_UNIQUE_ID",
+                resp.command
+            );
+        }
+        short_unique_id_from_payload(&resp.payload)
+    }
+
     /// Fetch the firmware's in-RAM diagnostic ring buffer. Returns the
     /// captured bytes as UTF-8 (lossy on invalid sequences) plus a count
     /// of how many older bytes were dropped from the ring due to overflow.
@@ -725,6 +736,15 @@ fn format_hex(bytes: &[u8]) -> String {
         s.push_str(&format!("{b:02X}"));
     }
     s
+}
+
+fn short_unique_id_from_payload(payload: &[u8]) -> Result<u32> {
+    if payload.len() < 4 {
+        bail!("GET_UNIQUE_ID response truncated ({} bytes)", payload.len());
+    }
+    Ok(u32::from_le_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]))
 }
 
 /// Returns Some(human-readable cause) when the underlying serial I/O
@@ -854,5 +874,12 @@ mod tests {
         let last = buf.len() - 1;
         buf[last] ^= 0xFF;
         assert!(try_decode(&buf).is_err());
+    }
+
+    #[test]
+    fn short_unique_id_uses_first_four_bytes_little_endian() {
+        let payload = [0xB6, 0x7E, 0xD3, 0x07, 0xAA, 0xBB, 0xCC, 0xDD];
+        assert_eq!(short_unique_id_from_payload(&payload).unwrap(), 0x07D37EB6);
+        assert!(short_unique_id_from_payload(&payload[..3]).is_err());
     }
 }

@@ -10,6 +10,15 @@ Start with:
 .\couchlink.exe doctor
 ```
 
+For the normal guided view, run:
+
+```powershell
+.\couchlink.exe
+```
+
+The **My Picos** section shows saved Picos and whether each one is currently
+ready on Wi-Fi, visible in USB debug mode, or not seen.
+
 For a live log view:
 
 ```powershell

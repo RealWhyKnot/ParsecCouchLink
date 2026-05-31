@@ -1,6 +1,7 @@
 //! Guided no-argument entrypoint. Direct subcommands remain available
 //! for scripts, startup shortcuts, and third-party launchers.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -8,23 +9,43 @@ use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, MultiSelect, Select};
 
 use crate::{
-    cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_logs, cmd_run, cmd_setup,
-    cmd_usb_diag, config, support, xinput,
+    cdc, cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_logs, cmd_run,
+    cmd_setup, cmd_usb_diag, config, protocol, support, xinput,
 };
+
+const HOME_SCAN_SECONDS: u64 = 3;
 
 pub async fn run() -> Result<()> {
     loop {
         print_header();
+        let inventory = scan_pico_inventory().await?;
+        let mut cfg = config::load().unwrap_or_default();
+        let mut changed = seed_saved_picos_from_legacy_last(&mut cfg);
+        if refresh_saved_observations(&mut cfg, &inventory) {
+            changed = true;
+        }
+        if changed {
+            config::save(&cfg)?;
+        }
+        print_simple_home(&cfg, &inventory);
+
         let choices = vec![
-            menu_item("Start streaming", "send controller input to the Pico"),
-            menu_item("Update Pico firmware", "guided flash/update path"),
             menu_item(
-                "Set up or change Wi-Fi",
-                "send 2.4 GHz Wi-Fi credentials over USB",
+                "Start streaming",
+                "use saved routing or pick a controller layout",
+            ),
+            menu_item("Add new Pico", "flash firmware, set Wi-Fi, and save it"),
+            menu_item(
+                "Add existing Pico",
+                "scan Wi-Fi, USB, and BOOTSEL to save a Pico",
             ),
             menu_item(
-                "Tools and diagnostics",
-                "status dashboard, recovery, checks, logs",
+                "Manage saved Picos",
+                "view saved devices, Wi-Fi setup, or remove one",
+            ),
+            menu_item(
+                "Advanced tools",
+                "diagnostics, recovery, firmware update, logs",
             ),
             menu_item(
                 "Advanced commands",
@@ -32,12 +53,13 @@ pub async fn run() -> Result<()> {
             ),
             menu_item("Quit", "close this menu"),
         ];
-        match select("What do you want to do?", &choices, 0).await? {
+        match select("Simple mode", &choices, 0).await? {
             0 => start_routing().await?,
-            1 => flash_menu().await?,
-            2 => cmd_configure_wifi::run().await?,
-            3 => tools_menu().await?,
-            4 => show_direct_commands().await?,
+            1 => add_new_pico().await?,
+            2 => add_existing_pico().await?,
+            3 => manage_saved_picos().await?,
+            4 => tools_menu().await?,
+            5 => show_direct_commands().await?,
             _ => return Ok(()),
         }
     }
@@ -48,6 +70,234 @@ fn print_header() {
     println!("Parsec CouchLink");
     println!("Remote Parsec controllers -> Wi-Fi -> Pico -> console adapter");
     println!();
+}
+
+#[derive(Clone, Debug, Default)]
+struct PicoInventory {
+    wifi: Vec<cmd_run::PicoTarget>,
+    usb: Vec<SetupUsbPico>,
+    usb_errors: Vec<(String, String)>,
+    bootsel: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug)]
+struct SetupUsbPico {
+    port: String,
+    unique_id_short: Option<u32>,
+    board_type: u8,
+    firmware: String,
+    fw_major: u8,
+    fw_minor: u8,
+    fw_patch: u8,
+    creds_present: bool,
+    self_test_passed: bool,
+    self_test_message: String,
+}
+
+async fn scan_pico_inventory() -> Result<PicoInventory> {
+    let wifi = cmd_run::discover_picos(Duration::from_secs(HOME_SCAN_SECONDS)).await?;
+    let (usb, usb_errors) = scan_setup_usb_picos().await?;
+    let bootsel = cmd_flash::visible_bootsel_mounts()
+        .into_iter()
+        .map(|(path, board)| (path.display().to_string(), board.label().to_string()))
+        .collect();
+    Ok(PicoInventory {
+        wifi,
+        usb,
+        usb_errors,
+        bootsel,
+    })
+}
+
+async fn scan_setup_usb_picos() -> Result<(Vec<SetupUsbPico>, Vec<(String, String)>)> {
+    let ports = cdc::find_setup_ports()?;
+    let mut found = Vec::new();
+    let mut errors = Vec::new();
+    for port in ports {
+        match setup_usb_info(port.clone()).await {
+            Ok(info) => found.push(info),
+            Err(e) => errors.push((port, format!("{e:#}"))),
+        }
+    }
+    Ok((found, errors))
+}
+
+async fn setup_usb_info(port: String) -> Result<SetupUsbPico> {
+    tokio::task::spawn_blocking(move || -> Result<SetupUsbPico> {
+        let mut pico = cdc::PicoSetup::open_named(&port)?;
+        let hello = pico.hello()?;
+        let self_test = pico.self_test()?;
+        let unique_id_short = pico.unique_id_short().ok();
+        Ok(SetupUsbPico {
+            port,
+            unique_id_short,
+            board_type: hello.board_type,
+            firmware: hello.firmware_version().to_string(),
+            fw_major: hello.fw_major,
+            fw_minor: hello.fw_minor,
+            fw_patch: hello.fw_patch,
+            creds_present: hello.creds_present(),
+            self_test_passed: self_test.passed,
+            self_test_message: self_test.message,
+        })
+    })
+    .await?
+}
+
+fn print_simple_home(cfg: &config::Config, inventory: &PicoInventory) {
+    println!("Simple mode");
+    println!("This view treats each Pico like a saved device.");
+    println!();
+
+    if cfg.picos.is_empty() {
+        println!("My Picos");
+        println!("  No saved Pico yet. Choose `Add new Pico` or `Add existing Pico`.");
+    } else {
+        println!("My Picos");
+        for pico in &cfg.picos {
+            println!("  {}", saved_pico_status_line(pico, inventory));
+        }
+    }
+
+    let unsaved = unsaved_connected_summary(cfg, inventory);
+    if !unsaved.is_empty() {
+        println!();
+        println!("Connected but not saved");
+        for line in unsaved {
+            println!("  {line}");
+        }
+    }
+    println!();
+}
+
+fn saved_pico_status_line(pico: &config::PicoIdentity, inventory: &PicoInventory) -> String {
+    if let Some(wifi) = inventory
+        .wifi
+        .iter()
+        .find(|p| p.info.unique_id_short == pico.unique_id_short)
+    {
+        return format!(
+            "{} {} - Wi-Fi ready at {} (fw v{})",
+            wifi.board_label(),
+            wifi.uid_hex(),
+            wifi.peer.ip(),
+            wifi.info.firmware_version()
+        );
+    }
+    if let Some(usb) = inventory
+        .usb
+        .iter()
+        .find(|p| p.unique_id_short == Some(pico.unique_id_short))
+    {
+        let creds = if usb.creds_present {
+            "saved Wi-Fi"
+        } else {
+            "no saved Wi-Fi"
+        };
+        return format!(
+            "{} {} - USB debug on {} ({creds}, fw v{})",
+            pico.board_label(),
+            pico.uid_hex(),
+            usb.port,
+            usb.firmware
+        );
+    }
+    if let Some(ip) = &pico.last_ip {
+        format!(
+            "{} {} - not seen right now (last IP {ip}, fw v{})",
+            pico.board_label(),
+            pico.uid_hex(),
+            pico.firmware_version()
+        )
+    } else {
+        format!(
+            "{} {} - not seen right now (fw v{})",
+            pico.board_label(),
+            pico.uid_hex(),
+            pico.firmware_version()
+        )
+    }
+}
+
+fn unsaved_connected_summary(cfg: &config::Config, inventory: &PicoInventory) -> Vec<String> {
+    let saved_ids: HashSet<u32> = cfg.picos.iter().map(|p| p.unique_id_short).collect();
+    let mut lines = Vec::new();
+    for pico in &inventory.wifi {
+        if !saved_ids.contains(&pico.info.unique_id_short) {
+            lines.push(format!(
+                "{} {} - Wi-Fi ready at {}",
+                pico.board_label(),
+                pico.uid_hex(),
+                pico.peer.ip()
+            ));
+        }
+    }
+    for pico in &inventory.usb {
+        if pico
+            .unique_id_short
+            .map(|uid| saved_ids.contains(&uid))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        lines.push(format!(
+            "{} - USB debug on {} ({}, SELF_TEST {})",
+            setup_board_label(pico.board_type),
+            pico.port,
+            if pico.creds_present {
+                "saved Wi-Fi"
+            } else {
+                "no saved Wi-Fi"
+            },
+            if pico.self_test_passed {
+                "PASS"
+            } else {
+                "FAIL"
+            }
+        ));
+    }
+    for (port, error) in &inventory.usb_errors {
+        lines.push(format!(
+            "{port} - setup USB detected, but status failed: {error}"
+        ));
+    }
+    for (mount, board) in &inventory.bootsel {
+        lines.push(format!("{board} - BOOTSEL drive at {mount}"));
+    }
+    lines
+}
+
+fn refresh_saved_observations(cfg: &mut config::Config, inventory: &PicoInventory) -> bool {
+    let saved_ids: HashSet<u32> = cfg.picos.iter().map(|p| p.unique_id_short).collect();
+    let mut changed = false;
+    for pico in &inventory.wifi {
+        if !saved_ids.contains(&pico.info.unique_id_short) {
+            continue;
+        }
+        let identity = cmd_run::identity_from_target(pico);
+        if cfg
+            .picos
+            .iter()
+            .find(|p| p.unique_id_short == identity.unique_id_short)
+            .map(|p| p != &identity)
+            .unwrap_or(false)
+        {
+            cfg.remember_pico(identity);
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn seed_saved_picos_from_legacy_last(cfg: &mut config::Config) -> bool {
+    if !cfg.picos.is_empty() {
+        return false;
+    }
+    let Some(last) = cfg.last_pico.clone() else {
+        return false;
+    };
+    cfg.remember_pico(last);
+    true
 }
 
 async fn start_routing() -> Result<()> {
@@ -61,7 +311,7 @@ async fn start_routing() -> Result<()> {
                 menu_item("Try discovery again", "repeat Wi-Fi broadcast discovery"),
                 menu_item("Enter Pico IP manually", "use the IP shown by your router"),
                 menu_item("Set up or change Wi-Fi", "re-send Wi-Fi credentials"),
-                menu_item("Tools and diagnostics", "open status, checks, and recovery"),
+                menu_item("Advanced tools", "open status, checks, and recovery"),
                 menu_item("Update firmware", "flash the Pico firmware"),
                 menu_item("Back", "return to the main menu"),
             ];
@@ -141,6 +391,288 @@ async fn prompt_manual_pico_ip() -> Result<Option<cmd_run::PicoTarget>> {
             println!("No Pico replied at {ip}: {e:#}");
             Ok(None)
         }
+    }
+}
+
+async fn add_new_pico() -> Result<()> {
+    println!();
+    println!("Add new Pico");
+    println!("Use this for a fresh Pico or a Pico you want to completely reinstall.");
+    println!("CouchLink will guide BOOTSEL flashing, Wi-Fi setup, discovery, and saving the Pico.");
+    if !confirm("Start the full new-Pico setup now?", true).await? {
+        return Ok(());
+    }
+    cmd_setup::run(None).await
+}
+
+async fn add_existing_pico() -> Result<()> {
+    loop {
+        println!();
+        println!("Add existing Pico");
+        println!("Scanning Wi-Fi, setup USB, and BOOTSEL...");
+        let inventory = scan_pico_inventory().await?;
+        print_existing_scan(&inventory);
+
+        let saveable = saveable_identities(&inventory);
+        let has_recoverable_usb = inventory.usb.iter().any(|p| p.creds_present);
+        let choices = vec![
+            menu_item(
+                "Save detected Pico info",
+                "save Wi-Fi or setup-USB Picos that can identify themselves",
+            ),
+            menu_item(
+                "Recover USB Pico to Wi-Fi",
+                "switch setup USB Picos with saved Wi-Fi back to Wi-Fi, then save them",
+            ),
+            menu_item("Scan again", "repeat Wi-Fi, USB, and BOOTSEL checks"),
+            menu_item(
+                "Set up Wi-Fi over USB",
+                "send or replace 2.4 GHz Wi-Fi credentials",
+            ),
+            menu_item("Back", "return to simple mode"),
+        ];
+        let default = if saveable.is_empty() && has_recoverable_usb {
+            1
+        } else {
+            0
+        };
+        match select("Existing Pico action", &choices, default).await? {
+            0 => {
+                if saveable.is_empty() {
+                    println!("No identifiable Pico was found to save.");
+                    println!(
+                        "If it is in BOOTSEL, choose `Add new Pico` to install firmware first."
+                    );
+                    continue;
+                }
+                save_detected_identities(saveable).await?;
+            }
+            1 => {
+                if !has_recoverable_usb {
+                    println!("No setup-mode USB Pico with saved Wi-Fi was found.");
+                    continue;
+                }
+                let picos =
+                    cmd_run::discover_picos_with_auto_recovery(Duration::from_secs(3), false)
+                        .await?;
+                if picos.is_empty() {
+                    println!("No Pico replied on Wi-Fi after recovery.");
+                } else {
+                    save_wifi_picos(&picos)?;
+                    println!("Saved recovered Pico board(s):");
+                    for pico in picos {
+                        println!("  {}", pico.detail_label());
+                    }
+                }
+            }
+            2 => continue,
+            3 => cmd_configure_wifi::run().await?,
+            _ => return Ok(()),
+        }
+    }
+}
+
+fn print_existing_scan(inventory: &PicoInventory) {
+    println!();
+    if inventory.wifi.is_empty()
+        && inventory.usb.is_empty()
+        && inventory.usb_errors.is_empty()
+        && inventory.bootsel.is_empty()
+    {
+        println!("No Pico was found on Wi-Fi, setup USB, or BOOTSEL.");
+        return;
+    }
+
+    if !inventory.wifi.is_empty() {
+        println!("Wi-Fi/controller mode:");
+        for pico in &inventory.wifi {
+            println!("  {}", pico.detail_label());
+            println!("    manual IP: {}", pico.peer.ip());
+        }
+    }
+    if !inventory.usb.is_empty() {
+        println!("Setup USB/debug mode:");
+        for pico in &inventory.usb {
+            let uid = pico
+                .unique_id_short
+                .map(|uid| format!(" UID {uid:08X}"))
+                .unwrap_or_else(|| " UID unavailable".to_string());
+            println!(
+                "  {}{} on {} fw v{} saved Wi-Fi: {} SELF_TEST {}",
+                setup_board_label(pico.board_type),
+                uid,
+                pico.port,
+                pico.firmware,
+                if pico.creds_present { "yes" } else { "no" },
+                if pico.self_test_passed {
+                    "PASS"
+                } else {
+                    "FAIL"
+                }
+            );
+            if !pico.self_test_message.trim().is_empty() {
+                println!("    {}", pico.self_test_message);
+            }
+        }
+    }
+    if !inventory.usb_errors.is_empty() {
+        println!("Setup USB with errors:");
+        for (port, error) in &inventory.usb_errors {
+            println!("  {port}: {error}");
+        }
+    }
+    if !inventory.bootsel.is_empty() {
+        println!("BOOTSEL firmware mode:");
+        for (mount, board) in &inventory.bootsel {
+            println!("  {board} at {mount}");
+        }
+    }
+}
+
+fn saveable_identities(inventory: &PicoInventory) -> Vec<config::PicoIdentity> {
+    let mut identities = Vec::new();
+    for pico in &inventory.wifi {
+        identities.push(cmd_run::identity_from_target(pico));
+    }
+    for pico in &inventory.usb {
+        if let Some(identity) = identity_from_usb_pico(pico) {
+            if !identities
+                .iter()
+                .any(|p: &config::PicoIdentity| p.unique_id_short == identity.unique_id_short)
+            {
+                identities.push(identity);
+            }
+        }
+    }
+    identities
+}
+
+async fn save_detected_identities(identities: Vec<config::PicoIdentity>) -> Result<()> {
+    let labels: Vec<String> = identities.iter().map(saved_identity_label).collect();
+    let selected = if identities.len() == 1 {
+        if confirm(&format!("Save {}?", labels[0]), true).await? {
+            vec![0]
+        } else {
+            Vec::new()
+        }
+    } else {
+        multiselect(
+            "Which Picos should be saved?",
+            &labels,
+            &vec![true; identities.len()],
+        )
+        .await?
+    };
+    if selected.is_empty() {
+        println!("No Pico saved.");
+        return Ok(());
+    }
+
+    let mut cfg = config::load().unwrap_or_default();
+    for idx in selected {
+        cfg.remember_pico(identities[idx].clone());
+    }
+    config::save(&cfg)?;
+    println!("Saved Pico inventory updated.");
+    Ok(())
+}
+
+fn save_wifi_picos(picos: &[cmd_run::PicoTarget]) -> Result<()> {
+    let mut cfg = config::load().unwrap_or_default();
+    for pico in picos {
+        cfg.remember_pico(cmd_run::identity_from_target(pico));
+    }
+    config::save(&cfg)
+}
+
+fn identity_from_usb_pico(pico: &SetupUsbPico) -> Option<config::PicoIdentity> {
+    Some(config::PicoIdentity {
+        unique_id_short: pico.unique_id_short?,
+        board_type: pico.board_type,
+        fw_major: pico.fw_major,
+        fw_minor: pico.fw_minor,
+        fw_patch: pico.fw_patch,
+        last_ip: None,
+        device_name: Some(setup_board_label(pico.board_type).to_string()),
+    })
+}
+
+fn saved_identity_label(pico: &config::PicoIdentity) -> String {
+    let ip = pico
+        .last_ip
+        .as_ref()
+        .map(|ip| format!(" last IP {ip}"))
+        .unwrap_or_default();
+    format!(
+        "{} {} fw v{}{}",
+        pico.board_label(),
+        pico.uid_hex(),
+        pico.firmware_version(),
+        ip
+    )
+}
+
+async fn manage_saved_picos() -> Result<()> {
+    loop {
+        let cfg = config::load().unwrap_or_default();
+        println!();
+        println!("Manage saved Picos");
+        if cfg.picos.is_empty() {
+            println!("No saved Pico yet.");
+        } else {
+            for pico in &cfg.picos {
+                println!("  {}", saved_identity_label(pico));
+            }
+        }
+
+        let choices = vec![
+            menu_item("Add existing Pico", "scan Wi-Fi, USB, and BOOTSEL"),
+            menu_item("Add new Pico", "flash firmware and run full setup"),
+            menu_item(
+                "Set up or change Wi-Fi",
+                "send 2.4 GHz Wi-Fi credentials over USB",
+            ),
+            menu_item("Remove saved Pico", "remove a saved device and its routes"),
+            menu_item("Back", "return to simple mode"),
+        ];
+        match select("Saved Pico action", &choices, 0).await? {
+            0 => add_existing_pico().await?,
+            1 => add_new_pico().await?,
+            2 => cmd_configure_wifi::run().await?,
+            3 => remove_saved_pico().await?,
+            _ => return Ok(()),
+        }
+    }
+}
+
+async fn remove_saved_pico() -> Result<()> {
+    let mut cfg = config::load().unwrap_or_default();
+    if cfg.picos.is_empty() {
+        println!("No saved Pico to remove.");
+        return Ok(());
+    }
+    let labels: Vec<String> = cfg.picos.iter().map(saved_identity_label).collect();
+    let idx = select("Remove which saved Pico?", &labels, 0).await?;
+    let pico = cfg.picos[idx].clone();
+    if !confirm(
+        &format!("Remove {} {}?", pico.board_label(), pico.uid_hex()),
+        false,
+    )
+    .await?
+    {
+        return Ok(());
+    }
+    cfg.forget_pico(pico.unique_id_short);
+    config::save(&cfg)?;
+    println!("Removed saved Pico {}", pico.uid_hex());
+    Ok(())
+}
+
+fn setup_board_label(board_type: u8) -> &'static str {
+    match board_type {
+        protocol::BOARD_PICO_2_W => "Pico 2 W",
+        protocol::BOARD_PICO_W_RP2040 => "Pico W / WH",
+        _ => "Pico",
     }
 }
 
@@ -389,11 +921,19 @@ async fn advanced_flash_menu() -> Result<()> {
 async fn tools_menu() -> Result<()> {
     loop {
         println!();
-        println!("Tools and diagnostics");
+        println!("Advanced tools");
         let choices = vec![
             menu_item(
                 "Quick status dashboard",
                 "show Pico state, controller sources, and next steps",
+            ),
+            menu_item(
+                "Firmware update",
+                "update from USB when possible, or guide BOOTSEL",
+            ),
+            menu_item(
+                "Set up or change Wi-Fi",
+                "send 2.4 GHz Wi-Fi credentials over USB",
             ),
             menu_item(
                 "Run health check",
@@ -433,31 +973,37 @@ async fn tools_menu() -> Result<()> {
                 press_enter("Press Enter to return to tools.").await?;
             }
             1 => {
+                flash_menu().await?;
+            }
+            2 => {
+                cmd_configure_wifi::run().await?;
+            }
+            3 => {
                 cmd_doctor::run_interactive().await?;
                 press_enter("Press Enter to return to tools.").await?;
             }
-            2 => {
+            4 => {
                 cmd_debug::run(cmd_debug::DebugOptions::default()).await?;
             }
-            3 => {
+            5 => {
                 cmd_usb_diag::run_interactive().await?;
                 press_enter("Press Enter to return to tools.").await?;
             }
-            4 => {
+            6 => {
                 auto_recovery_tool().await?;
                 press_enter("Press Enter to return to tools.").await?;
             }
-            5 => {
+            7 => {
                 pico_finder_tool().await?;
                 press_enter("Press Enter to return to tools.").await?;
             }
-            6 => {
+            8 => {
                 controller_tool().await?;
                 press_enter("Press Enter to return to tools.").await?;
             }
-            7 => cmd_bundle::run(None).await?,
-            8 => cmd_logs::run(false).await?,
-            9 => cmd_logs::run(true).await?,
+            9 => cmd_bundle::run(None).await?,
+            10 => cmd_logs::run(false).await?,
+            11 => cmd_logs::run(true).await?,
             _ => return Ok(()),
         }
     }
@@ -477,7 +1023,7 @@ async fn quick_status_dashboard() -> Result<()> {
     println!("Suggested next steps:");
     println!("  If a Pico appears on Wi-Fi, choose `Start streaming` or `Check Pico USB adapter`.");
     println!("  If a Pico appears in USB debug mode, choose `Set up or change Wi-Fi` or `Pico debug and recovery`.");
-    println!("  If a Pico appears in BOOTSEL, choose `Update Pico firmware`.");
+    println!("  If a Pico appears in BOOTSEL, choose `Firmware update`.");
     println!("  If no Pico appears anywhere, check the cable, then use BOOTSEL firmware mode.");
     Ok(())
 }
@@ -520,7 +1066,7 @@ async fn auto_recovery_tool() -> Result<()> {
     let picos = cmd_run::discover_picos_with_auto_recovery(Duration::from_secs(5), false).await?;
     if picos.is_empty() {
         println!("No Pico is ready for streaming yet.");
-        println!("Next step: use `Set up or change Wi-Fi` if a Pico is in USB debug mode, or `Update Pico firmware` if it is in BOOTSEL.");
+        println!("Next step: use `Set up or change Wi-Fi` if a Pico is in USB debug mode, or `Firmware update` if it is in BOOTSEL.");
     } else {
         println!("Ready Pico board(s):");
         for pico in picos {
@@ -742,6 +1288,70 @@ mod tests {
                 unique_id_short: uid,
             },
         }
+    }
+
+    fn saved_pico(uid: u32, ip: Option<&str>) -> config::PicoIdentity {
+        config::PicoIdentity {
+            unique_id_short: uid,
+            board_type: protocol::BOARD_PICO_2_W,
+            fw_major: 26,
+            fw_minor: 5,
+            fw_patch: 30,
+            last_ip: ip.map(|s| s.to_string()),
+            device_name: None,
+        }
+    }
+
+    #[test]
+    fn saved_pico_status_prefers_live_wifi_state() {
+        let saved = saved_pico(0x07D37EB6, Some("192.168.50.1"));
+        let inventory = PicoInventory {
+            wifi: vec![pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W)],
+            ..PicoInventory::default()
+        };
+
+        let line = saved_pico_status_line(&saved, &inventory);
+
+        assert!(line.contains("Wi-Fi ready at 192.168.50.226"));
+    }
+
+    #[test]
+    fn unsaved_connected_summary_reports_usb_and_bootsel() {
+        let cfg = config::Config::default();
+        let inventory = PicoInventory {
+            usb: vec![SetupUsbPico {
+                port: "COM4".to_string(),
+                unique_id_short: Some(0x07D37EB6),
+                board_type: protocol::BOARD_PICO_2_W,
+                firmware: "2026.5.30.9-E56A".to_string(),
+                fw_major: 26,
+                fw_minor: 5,
+                fw_patch: 30,
+                creds_present: true,
+                self_test_passed: true,
+                self_test_message: "pass".to_string(),
+            }],
+            bootsel: vec![("I:\\".to_string(), "Pico W / WH (RP2040)".to_string())],
+            ..PicoInventory::default()
+        };
+
+        let lines = unsaved_connected_summary(&cfg, &inventory);
+
+        assert!(lines.iter().any(|line| line.contains("USB debug on COM4")));
+        assert!(lines.iter().any(|line| line.contains("BOOTSEL drive")));
+    }
+
+    #[test]
+    fn seed_saved_picos_migrates_legacy_last_pico_once() {
+        let mut cfg = config::Config {
+            last_pico: Some(saved_pico(0x07D37EB6, None)),
+            ..config::Config::default()
+        };
+
+        assert!(seed_saved_picos_from_legacy_last(&mut cfg));
+        assert_eq!(cfg.picos.len(), 1);
+        assert!(!seed_saved_picos_from_legacy_last(&mut cfg));
+        assert_eq!(cfg.picos.len(), 1);
     }
 
     #[test]
