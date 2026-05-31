@@ -142,11 +142,13 @@ static const uint8_t desc_configuration_xinput[] = {
     0x03, 0x00, 0x03, 0x13, 0x02, 0x00, 0x03, 0x00,
     0x00,
 
-    // Endpoint 0x81 IN, interrupt, 20 bytes, 1 ms (bInterval=4 at FS = 2^(4-1)? no -- FS uses ms directly)
+    // Endpoint 0x81 IN, interrupt, 20-byte report. At full speed bInterval is
+    // counted in 1 ms frames, so bInterval=4 polls every 4 ms (250 Hz) -- the
+    // same rate the real wired Xbox 360 pad reports.
     7, TUSB_DESC_ENDPOINT, XINPUT_IN_EP_ADDR,
     0x03,                 // bmAttributes = Interrupt
     U16_TO_U8S_LE(20),
-    4,                    // bInterval (1 ms at full-speed via Microsoft's choice; matches the real wired 360 pad)
+    4,                    // bInterval = 4 ms (250 Hz) at full speed
 
     // Endpoint 0x02 OUT, interrupt, 32 bytes, 8 ms (rumble + LED ring writes from the host)
     7, TUSB_DESC_ENDPOINT, XINPUT_OUT_EP_ADDR,
