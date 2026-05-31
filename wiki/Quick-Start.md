@@ -67,6 +67,7 @@ flow instead of copying commands.
 The guided menu can:
 
 - Start streaming.
+- Automatically recover a Pico left in USB debug mode when it already has saved Wi-Fi.
 - Pick one Pico or all detected Picos.
 - Route Controller 1, 2, 3, or 4 to the Pico you choose.
 - Update Pico firmware with one guided path.
@@ -92,6 +93,7 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\bootsel.ps1           # switch setup-mode USB Pico to BOOTSEL
 .\debug.ps1             # open Pico debug and recovery
 .\configure-wifi.ps1    # re-send Wi-Fi credentials
+.\couchlink.exe recover # auto-check Wi-Fi, setup USB, and BOOTSEL before streaming
 .\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
 .\couchlink.exe run --route 1=07D37EB6  # route Controller 1 to a specific Pico UID
 .\couchlink.exe test usb --all  # check whether the USB adapter is polling the Pico

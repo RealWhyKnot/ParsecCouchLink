@@ -113,12 +113,17 @@ If the guided menu says `No Pico replied on Wi-Fi`, that is not a
 controller problem. It means the PC did not receive a UDP discovery reply
 from a running Pico.
 
+Before showing that message, Start streaming automatically checks whether a
+Pico is visible in USB debug mode with saved Wi-Fi. If it is, CouchLink asks
+the Pico to reboot back into Wi-Fi/controller mode and retries discovery.
+
 Try this in order:
 
 1. Confirm the Pico is powered and not sitting in BOOTSEL. If it appears
    as setup-mode USB, use `configure-wifi` first.
-2. Run `.\couchlink.exe test discover --all`.
-3. If the router admin page shows the Pico's IP, probe it directly:
+2. Run `.\couchlink.exe recover`, then choose **Start streaming** again.
+3. Run `.\couchlink.exe test discover --all`.
+4. If the router admin page shows the Pico's IP, probe it directly:
 
    ```powershell
    .\couchlink.exe test discover --ip 192.168.50.4
@@ -127,12 +132,12 @@ Try this in order:
 
    The guided menu also offers **Enter Pico IP manually** when automatic
    Wi-Fi discovery finds nothing.
-4. If the router name or password changed, run `.\couchlink.exe
+5. If the router name or password changed, run `.\couchlink.exe
    configure-wifi`.
-5. If `configure-wifi` cannot find the Pico, use the credential-wipe
+6. If `configure-wifi` cannot find the Pico, use the credential-wipe
    recovery in [[Setup and Flashing]], then run `configure-wifi` again.
-6. Run `.\couchlink.exe doctor`.
-7. Run `.\couchlink.exe bundle` and attach the ZIP to a bug report.
+7. Run `.\couchlink.exe doctor`.
+8. Run `.\couchlink.exe bundle` and attach the ZIP to a bug report.
 
 Common causes:
 

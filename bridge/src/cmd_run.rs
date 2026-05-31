@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, FLAG_PARSEC_CONNECTED};
-use crate::{config, discovery, journal, support, xinput};
+use crate::{cdc, cmd_flash, config, discovery, journal, support, xinput};
 
 const DEFAULT_DISCOVER_SECONDS: u64 = 5;
 const DEFAULT_STATUS_SECONDS: u64 = 2;
@@ -143,7 +143,7 @@ pub async fn run(options: RunOptions) -> Result<()> {
     }
 
     let discover_timeout = Duration::from_secs(options.discover_seconds);
-    let mut picos = discover_picos(discover_timeout).await?;
+    let mut picos = discover_picos_with_auto_recovery(discover_timeout, options.quiet).await?;
     let manual_ips = manual_ips_from_options(&options);
     if !manual_ips.is_empty() {
         picos = add_manual_ip_targets(picos, &manual_ips, discover_timeout).await?;
@@ -187,6 +187,64 @@ pub async fn discover_picos(timeout: Duration) -> Result<Vec<PicoTarget>> {
         .collect())
 }
 
+pub async fn discover_picos_with_auto_recovery(
+    timeout: Duration,
+    quiet: bool,
+) -> Result<Vec<PicoTarget>> {
+    let mut picos = discover_picos(timeout).await?;
+
+    if picos.is_empty() && !quiet {
+        println!("No Pico replied on Wi-Fi. Checking recoverable USB states...");
+    }
+
+    let baseline_ids: HashSet<u32> = picos.iter().map(|p| p.info.unique_id_short).collect();
+    let recovered = recover_setup_usb_to_wifi(quiet).await?;
+    if recovered > 0 {
+        if !quiet {
+            println!("Waiting for the recovered Pico to answer on Wi-Fi...");
+        }
+        let recovered_picos =
+            wait_for_wifi_after_recovery(Duration::from_secs(60), quiet, &baseline_ids, recovered)
+                .await?;
+        let recovered_count = recovered_target_count(&recovered_picos, &baseline_ids);
+        if recovered_count < recovered && !quiet {
+            println!(
+                "Only {recovered_count}/{recovered} recovered setup-mode Pico board(s) answered on Wi-Fi before timeout."
+            );
+        }
+        merge_unique_picos(&mut picos, recovered_picos);
+    }
+
+    if !picos.is_empty() {
+        return Ok(picos);
+    }
+
+    let bootsel = cmd_flash::visible_bootsel_mounts();
+    if !bootsel.is_empty() && !quiet {
+        println!("Found Pico board(s) in BOOTSEL firmware mode:");
+        for (mount, board) in bootsel {
+            println!("  {}  {}", mount.display(), board.label());
+        }
+        println!("Next step: choose `Update Pico firmware` or run `couchlink flash --all`.");
+    }
+
+    Ok(Vec::new())
+}
+
+pub async fn run_recover_command() -> Result<()> {
+    println!("Recovering Pico boards for streaming...");
+    let picos = discover_picos_with_auto_recovery(Duration::from_secs(5), false).await?;
+    if picos.is_empty() {
+        bail!("{}", support::no_pico_wifi_help(5));
+    }
+    println!("Ready for streaming:");
+    for pico in picos {
+        println!("  {}", pico.detail_label());
+        println!("    manual IP: {}", pico.peer.ip());
+    }
+    Ok(())
+}
+
 pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> {
     let socket = UdpSocket::bind("0.0.0.0:0")
         .await
@@ -209,6 +267,150 @@ pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> 
         );
     }
     Ok(PicoTarget { peer, info })
+}
+
+async fn recover_setup_usb_to_wifi(quiet: bool) -> Result<usize> {
+    let ports = cdc::find_setup_ports()?;
+    if ports.is_empty() {
+        return Ok(0);
+    }
+
+    let mut rebooted = 0usize;
+    let mut blocked = 0usize;
+    if !quiet {
+        println!("Found setup-mode USB Pico port(s): {}", ports.join(", "));
+    }
+
+    for port in ports {
+        match setup_port_reboot_to_run(port.clone()).await {
+            Ok(SetupRecovery::Rebooted { firmware, board }) => {
+                rebooted += 1;
+                if !quiet {
+                    println!("  {port}: fw v{firmware} {board} -> Wi-Fi/controller mode");
+                }
+            }
+            Ok(SetupRecovery::NoCredentials { firmware, board }) => {
+                blocked += 1;
+                if !quiet {
+                    println!(
+                        "  {port}: fw v{firmware} {board} has no saved Wi-Fi; choose `Set up or change Wi-Fi`."
+                    );
+                }
+            }
+            Err(e) => {
+                blocked += 1;
+                if !quiet {
+                    println!("  {port}: could not auto-recover: {e:#}");
+                }
+            }
+        }
+    }
+
+    if rebooted == 0 && blocked > 0 && !quiet {
+        println!("Auto-recovery could not switch any setup-mode Pico back to Wi-Fi.");
+    }
+
+    Ok(rebooted)
+}
+
+enum SetupRecovery {
+    Rebooted {
+        firmware: String,
+        board: &'static str,
+    },
+    NoCredentials {
+        firmware: String,
+        board: &'static str,
+    },
+}
+
+async fn setup_port_reboot_to_run(port: String) -> Result<SetupRecovery> {
+    tokio::task::spawn_blocking(move || -> Result<SetupRecovery> {
+        let mut pico = cdc::PicoSetup::open_named(&port)?;
+        let hello = pico.hello()?;
+        if hello.proto_version != cdc::PROTO_VERSION {
+            bail!(
+                "Pico speaks CDC protocol v{}, bridge speaks v{}. Update whichever side is older.",
+                hello.proto_version,
+                cdc::PROTO_VERSION,
+            );
+        }
+        let self_test = pico.self_test()?;
+        if !self_test.passed {
+            bail!("SELF_TEST failed: {}", self_test.message);
+        }
+
+        let firmware = hello.firmware_version().to_string();
+        let board = setup_board_label(hello.board_type);
+        if !hello.creds_present() {
+            return Ok(SetupRecovery::NoCredentials { firmware, board });
+        }
+
+        pico.reboot_to_run()?;
+        Ok(SetupRecovery::Rebooted { firmware, board })
+    })
+    .await?
+}
+
+async fn wait_for_wifi_after_recovery(
+    timeout: Duration,
+    quiet: bool,
+    baseline_ids: &HashSet<u32>,
+    expected_new: usize,
+) -> Result<Vec<PicoTarget>> {
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut next_beat = started + Duration::from_secs(10);
+    let mut seen = Vec::new();
+    loop {
+        let picos = discover_picos(Duration::from_secs(2)).await?;
+        merge_unique_picos(&mut seen, picos);
+        if recovered_target_count(&seen, baseline_ids) >= expected_new {
+            return Ok(seen);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Ok(seen);
+        }
+        if now >= next_beat {
+            if !quiet {
+                let elapsed = now.duration_since(started).as_secs();
+                println!(
+                    "  ... still waiting for Wi-Fi reply ({elapsed}/{})",
+                    timeout.as_secs()
+                );
+            }
+            next_beat = now + Duration::from_secs(10);
+        }
+    }
+}
+
+fn merge_unique_picos(picos: &mut Vec<PicoTarget>, incoming: Vec<PicoTarget>) {
+    for pico in incoming {
+        if let Some(existing) = picos
+            .iter_mut()
+            .find(|p| p.info.unique_id_short == pico.info.unique_id_short)
+        {
+            *existing = pico;
+        } else {
+            picos.push(pico);
+        }
+    }
+}
+
+fn recovered_target_count(picos: &[PicoTarget], baseline_ids: &HashSet<u32>) -> usize {
+    picos
+        .iter()
+        .filter(|p| !baseline_ids.contains(&p.info.unique_id_short))
+        .count()
+}
+
+fn setup_board_label(board_type: u8) -> &'static str {
+    match board_type {
+        protocol::BOARD_PICO_2_W => "Pico 2 W",
+        protocol::BOARD_PICO_W_RP2040 => "Pico W / WH",
+        _ => "Pico",
+    }
 }
 
 async fn add_manual_ip_targets(
@@ -743,32 +945,36 @@ fn apply_recovery_results(routes: &mut [RouteRuntime], picos: &[PicoTarget], qui
 }
 
 async fn run_legacy_single() -> Result<()> {
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
-    tracing::info!("UDP socket bound at {}", socket.local_addr()?);
     println!("Looking for a Pico on the LAN...");
-    let (peer, info) = discovery::run(&socket).await?;
+    let mut picos =
+        discover_picos_with_auto_recovery(Duration::from_secs(DEFAULT_DISCOVER_SECONDS), false)
+            .await?;
+    if picos.is_empty() {
+        bail!("{}", support::no_pico_wifi_help(DEFAULT_DISCOVER_SECONDS));
+    }
+    let pico = picos.remove(0);
     tracing::info!(
         "run: discovered Pico {} fw v{} uid 0x{:08X}",
-        peer,
-        info.firmware_version(),
-        info.unique_id_short,
+        pico.peer,
+        pico.info.firmware_version(),
+        pico.info.unique_id_short,
     );
     journal!(
         "run",
-        "discovered Pico {peer} fw v{} uid 0x{:08X}",
-        info.firmware_version(),
-        info.unique_id_short,
+        "discovered Pico {} fw v{} uid 0x{:08X}",
+        pico.peer,
+        pico.info.firmware_version(),
+        pico.info.unique_id_short,
     );
 
-    if info.proto_version != protocol::PROTO_VERSION {
+    if pico.info.proto_version != protocol::PROTO_VERSION {
         bail!(
             "wire protocol mismatch: Pico speaks v{}, bridge speaks v{}. Update whichever is older.",
-            info.proto_version,
+            pico.info.proto_version,
             protocol::PROTO_VERSION,
         );
     }
 
-    let pico = PicoTarget { peer, info };
     let route = auto_routes(vec![pico], None)?
         .into_iter()
         .next()
@@ -877,6 +1083,32 @@ mod tests {
                 "192.168.50.226".parse::<IpAddr>().unwrap()
             ]
         );
+    }
+
+    #[test]
+    fn merge_unique_picos_updates_existing_and_adds_new() {
+        let mut picos = vec![pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W)];
+        let incoming = vec![
+            pico(0x07D37EB6, "192.168.50.227", protocol::BOARD_PICO_2_W),
+            pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
+        ];
+
+        merge_unique_picos(&mut picos, incoming);
+
+        assert_eq!(picos.len(), 2);
+        assert_eq!(picos[0].peer.ip().to_string(), "192.168.50.227");
+        assert_eq!(picos[1].info.unique_id_short, 0x523861E6);
+    }
+
+    #[test]
+    fn recovered_target_count_ignores_already_online_picos() {
+        let baseline_ids = HashSet::from([0x523861E6]);
+        let picos = vec![
+            pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
+            pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
+        ];
+
+        assert_eq!(recovered_target_count(&picos, &baseline_ids), 1);
     }
 
     #[test]

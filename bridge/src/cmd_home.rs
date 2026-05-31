@@ -53,7 +53,8 @@ fn print_header() {
 async fn start_routing() -> Result<()> {
     loop {
         println!("Looking for running Pico boards on Wi-Fi...");
-        let mut picos = cmd_run::discover_picos(Duration::from_secs(5)).await?;
+        let mut picos =
+            cmd_run::discover_picos_with_auto_recovery(Duration::from_secs(5), false).await?;
         if picos.is_empty() {
             support::print_no_pico_wifi_help(5);
             let choices = vec![
@@ -407,6 +408,10 @@ async fn tools_menu() -> Result<()> {
                 "ask the Pico whether the console adapter accepted XInput",
             ),
             menu_item(
+                "Auto recover for streaming",
+                "move setup-mode USB Pico back to Wi-Fi when possible",
+            ),
+            menu_item(
                 "Find Picos on Wi-Fi",
                 "discover all Picos or probe one by manual IP",
             ),
@@ -439,16 +444,20 @@ async fn tools_menu() -> Result<()> {
                 press_enter("Press Enter to return to tools.").await?;
             }
             4 => {
-                pico_finder_tool().await?;
+                auto_recovery_tool().await?;
                 press_enter("Press Enter to return to tools.").await?;
             }
             5 => {
+                pico_finder_tool().await?;
+                press_enter("Press Enter to return to tools.").await?;
+            }
+            6 => {
                 controller_tool().await?;
                 press_enter("Press Enter to return to tools.").await?;
             }
-            6 => cmd_bundle::run(None).await?,
-            7 => cmd_logs::run(false).await?,
-            8 => cmd_logs::run(true).await?,
+            7 => cmd_bundle::run(None).await?,
+            8 => cmd_logs::run(false).await?,
+            9 => cmd_logs::run(true).await?,
             _ => return Ok(()),
         }
     }
@@ -504,6 +513,25 @@ async fn pico_finder_tool() -> Result<()> {
     }
 }
 
+async fn auto_recovery_tool() -> Result<()> {
+    println!();
+    println!("Auto recover for streaming");
+    println!("CouchLink will scan Wi-Fi first, then recover setup-mode USB Picos that already have saved Wi-Fi.");
+    let picos = cmd_run::discover_picos_with_auto_recovery(Duration::from_secs(5), false).await?;
+    if picos.is_empty() {
+        println!("No Pico is ready for streaming yet.");
+        println!("Next step: use `Set up or change Wi-Fi` if a Pico is in USB debug mode, or `Update Pico firmware` if it is in BOOTSEL.");
+    } else {
+        println!("Ready Pico board(s):");
+        for pico in picos {
+            println!("  {}", pico.detail_label());
+            println!("    manual IP: {}", pico.peer.ip());
+        }
+        println!("Next step: choose `Start streaming`.");
+    }
+    Ok(())
+}
+
 async fn controller_tool() -> Result<()> {
     println!();
     println!("Windows controller check");
@@ -553,6 +581,10 @@ async fn show_direct_commands() -> Result<()> {
     );
     println!();
     println!("Pico recovery");
+    print_command(
+        "couchlink recover",
+        "auto-check Wi-Fi, setup USB, and BOOTSEL before streaming",
+    );
     print_command("couchlink debug", "Pico USB/Wi-Fi recovery menu");
     print_command(
         "couchlink debug --status",

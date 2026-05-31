@@ -27,7 +27,7 @@ pub fn no_pico_wifi_help(timeout_seconds: u64) -> String {
         "No Pico replied on Wi-Fi within {timeout_seconds} s.\n\
          This is a Pico/network discovery problem, not a controller problem.\n\
          Try this in order:\n\
-           1. Run `couchlink debug --status` to see whether the Pico is on Wi-Fi, USB debug, or BOOTSEL.\n\
+           1. Run `couchlink` and choose `Start streaming` again, or run `couchlink recover`. CouchLink automatically checks setup-mode USB and reboots saved-Wi-Fi Picos back to Wi-Fi.\n\
            2. Run `couchlink test discover --all` to retry discovery.\n\
            3. If your router shows the Pico's IP, choose `Enter Pico IP manually` or run `couchlink test discover --ip <ip>`.\n\
            4. If the router, SSID, or password changed, run `couchlink configure-wifi`.\n\
@@ -42,7 +42,7 @@ pub fn print_no_pico_wifi_help(timeout_seconds: u64) {
 }
 
 pub fn no_pico_wifi_short_hint() -> &'static str {
-    "Run `couchlink debug --status` to see whether the Pico is on Wi-Fi, USB debug, or BOOTSEL, then run `couchlink test discover --all`. If the router shows its IP, run `couchlink test discover --ip <ip>`. If Wi-Fi changed or the Pico is in USB debug mode, run `couchlink configure-wifi`. If it still fails, run `couchlink doctor` and `couchlink bundle`."
+    "Run `couchlink` and choose `Start streaming` again, or run `couchlink recover`, so CouchLink can auto-recover setup-mode USB Picos with saved Wi-Fi. Then run `couchlink test discover --all`. If the router shows its IP, run `couchlink test discover --ip <ip>`. If Wi-Fi changed or the Pico is in USB debug mode, run `couchlink configure-wifi`. If it still fails, run `couchlink doctor` and `couchlink bundle`."
 }
 
 #[cfg(test)]
@@ -54,7 +54,8 @@ mod tests {
         let help = no_pico_wifi_help(5);
         assert!(help.contains("No Pico replied on Wi-Fi within 5 s."));
         assert!(help.contains("not a controller problem"));
-        assert!(help.contains("couchlink debug --status"));
+        assert!(help.contains("couchlink recover"));
+        assert!(help.contains("automatically checks setup-mode USB"));
         assert!(help.contains("Enter Pico IP manually"));
         assert!(help.contains("couchlink test discover --ip <ip>"));
         assert!(help.contains("couchlink configure-wifi"));
@@ -66,7 +67,8 @@ mod tests {
     #[test]
     fn no_pico_wifi_short_hint_is_actionable() {
         let hint = no_pico_wifi_short_hint();
-        assert!(hint.contains("couchlink debug --status"));
+        assert!(hint.contains("couchlink recover"));
+        assert!(hint.contains("auto-recover setup-mode USB"));
         assert!(hint.contains("couchlink test discover --all"));
     }
 }
