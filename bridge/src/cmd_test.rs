@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use tokio::net::UdpSocket;
 
 use crate::cdc;
 use crate::cmd_doctor::{
@@ -216,7 +215,7 @@ async fn run_cdc_one_reboot_to_run() -> Result<()> {
 }
 
 async fn run_discover_all() -> Result<()> {
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    let socket = crate::net::bind_udp("0.0.0.0:0").await?;
     let replies = discovery::collect(&socket, Duration::from_secs(8)).await?;
     if replies.is_empty() {
         return Err(anyhow!("{}", support::no_pico_wifi_help(8)));

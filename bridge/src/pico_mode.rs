@@ -3,12 +3,11 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tokio::net::UdpSocket;
 
-use crate::{cdc, cmd_run, protocol};
+use crate::{cdc, cmd_run, net, protocol};
 
 pub async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
-    let socket = UdpSocket::bind("0.0.0.0:0")
+    let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP reboot-to-setup socket")?;
     let mut seq = 0xE0u8;

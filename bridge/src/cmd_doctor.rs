@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use console::style;
-use tokio::net::UdpSocket;
 
 use crate::{cdc, config, protocol, support};
 
@@ -294,7 +293,7 @@ pub async fn check_cdc() -> CheckResult {
 }
 
 pub async fn check_discover() -> CheckResult {
-    let socket = match UdpSocket::bind("0.0.0.0:0").await {
+    let socket = match crate::net::bind_udp("0.0.0.0:0").await {
         Ok(s) => s,
         Err(e) => {
             return CheckResult::Fail(

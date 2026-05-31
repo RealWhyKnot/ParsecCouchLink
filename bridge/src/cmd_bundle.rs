@@ -1277,7 +1277,7 @@ async fn try_capture_run_udp() -> DiagOutcome {
         return DiagOutcome::NoLastPicoInConfig;
     }
 
-    let socket = match UdpSocket::bind("0.0.0.0:0").await {
+    let socket = match crate::net::bind_udp("0.0.0.0:0").await {
         Ok(s) => s,
         Err(e) => {
             return DiagOutcome::UdpDiscoveryFailed {

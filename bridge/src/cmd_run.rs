@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, FLAG_PARSEC_CONNECTED};
-use crate::{cdc, cmd_flash, config, discovery, journal, support, xinput};
+use crate::{cdc, cmd_flash, config, discovery, journal, net, support, xinput};
 
 const DEFAULT_DISCOVER_SECONDS: u64 = 5;
 const DEFAULT_STATUS_SECONDS: u64 = 2;
@@ -187,7 +187,7 @@ pub async fn run(options: RunOptions) -> Result<()> {
 }
 
 pub async fn discover_picos(timeout: Duration) -> Result<Vec<PicoTarget>> {
-    let socket = UdpSocket::bind("0.0.0.0:0")
+    let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP discovery socket")?;
     let found = discovery::collect(&socket, timeout)
@@ -258,7 +258,7 @@ pub async fn run_recover_command() -> Result<()> {
 }
 
 pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> {
-    let socket = UdpSocket::bind("0.0.0.0:0")
+    let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP manual-IP probe socket")?;
     let Some((peer, info)) = discovery::probe_ip(&socket, ip, timeout)
@@ -646,7 +646,7 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
         save_routes(&routes)?;
     }
 
-    let socket = UdpSocket::bind("0.0.0.0:0")
+    let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP stream socket")?;
     socket
@@ -671,13 +671,31 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
             _ = tick.tick() => {
                 for route in &mut runtime {
                     if let Err(e) = route.send_tick(&socket).await {
-                        return Err(e).with_context(|| format!("streaming to {}", route.route.pico.short_label()));
+                        // A Pico that rebooted or dropped off Wi-Fi makes the OS
+                        // surface a transient error (ICMP unreachable -> reset on
+                        // Windows). Keep streaming the other routes and let the
+                        // recovery path rediscover this one instead of exiting.
+                        if net::is_transient(&e) {
+                            tracing::debug!(
+                                "stream: transient send error to {} (continuing): {e}",
+                                route.route.pico.short_label()
+                            );
+                        } else {
+                            return Err(e).with_context(|| {
+                                format!("streaming to {}", route.route.pico.short_label())
+                            });
+                        }
                     }
                 }
             }
             recv = socket.recv_from(&mut buf) => {
                 match recv {
                     Ok((n, from)) => handle_stream_reply(&mut runtime, from, &buf[..n]),
+                    // Same transient family on the shared recv socket -- not
+                    // attributable to one peer, so just log and keep listening.
+                    Err(e) if net::is_transient(&e) => {
+                        tracing::debug!("stream: transient recv error (continuing): {e}");
+                    }
                     Err(e) => return Err(e).context("receiving stream reply"),
                 }
             }
@@ -782,7 +800,7 @@ impl RouteRuntime {
         }
     }
 
-    async fn send_tick(&mut self, socket: &UdpSocket) -> Result<()> {
+    async fn send_tick(&mut self, socket: &UdpSocket) -> std::io::Result<()> {
         let source = xinput::read_slot(self.route.source_slot);
         let (state, packet_number, connected) = match source {
             Some(snapshot) => (snapshot.state, Some(snapshot.packet_number), true),

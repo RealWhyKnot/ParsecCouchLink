@@ -4,7 +4,6 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
-use tokio::net::UdpSocket;
 use tokio::time::interval;
 
 use crate::{cmd_run, protocol, support};
@@ -126,7 +125,7 @@ pub async fn query_usb_diag(
     pico: &cmd_run::PicoTarget,
     timeout: Duration,
 ) -> Result<protocol::UsbDiag> {
-    let socket = UdpSocket::bind("0.0.0.0:0")
+    let socket = crate::net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP USB diagnostic socket")?;
     let mut seq = 0xD1u8;

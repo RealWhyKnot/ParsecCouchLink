@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
-use tokio::net::UdpSocket;
 use zeroize::Zeroize;
 
 use crate::{cdc, cmd_run, config, diag_usb, journal, protocol};
@@ -237,7 +236,7 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
     print_stage(4);
     tracing::info!("setup: stage 5/6 -- LAN discovery");
     println!("  Waiting for the Pico to join your Wi-Fi and answer a discover broadcast...");
-    let socket = UdpSocket::bind("0.0.0.0:0").await?;
+    let socket = crate::net::bind_udp("0.0.0.0:0").await?;
     socket.set_broadcast(true)?;
 
     let timeout = Duration::from_secs(60);

@@ -179,7 +179,7 @@ async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
             continue;
         }
         let bind = SocketAddr::V4(SocketAddrV4::new(addr, 0));
-        match UdpSocket::bind(bind).await {
+        match crate::net::bind_udp(bind).await {
             Ok(s) => {
                 if let Err(e) = s.set_broadcast(true) {
                     tracing::debug!("discovery: set_broadcast on {addr} failed: {e}; skipping");
@@ -190,6 +190,77 @@ async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
             Err(e) => {
                 tracing::debug!("discovery: bind on {addr} failed: {e}; skipping");
             }
+        }
+    }
+    out
+}
+
+#[cfg(not(windows))]
+async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
+    Vec::new()
+}
+
+#[cfg(windows)]
+fn enumerate_ipv4_unicast_addresses() -> Vec<Ipv4Addr> {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
+        GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
+    };
+    use windows::Win32::Networking::WinSock::{AF_INET, SOCKADDR_IN};
+
+    let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    let mut size: u32 = 16 * 1024;
+    let mut buf: Vec<u8> = vec![0; size as usize];
+    let mut out = Vec::new();
+
+    // Two-pass: GetAdaptersAddresses returns ERROR_BUFFER_OVERFLOW with
+    // the required size on the first call. The Windows docs recommend
+    // starting with 15 KB and growing if needed.
+    for _ in 0..3 {
+        let rc = unsafe {
+            GetAdaptersAddresses(
+                AF_INET.0 as u32,
+                flags,
+                None,
+                Some(buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH),
+                &mut size,
+            )
+        };
+        if rc == 0 {
+            break;
+        }
+        if rc == 111 {
+            // ERROR_BUFFER_OVERFLOW
+            buf.resize(size as usize, 0);
+            continue;
+        }
+        tracing::debug!("discovery: GetAdaptersAddresses rc={rc}");
+        return out;
+    }
+
+    let mut adapter = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
+    while !adapter.is_null() {
+        unsafe {
+            let a = &*adapter;
+            // Skip adapters that aren't operationally up.
+            const IF_OPER_STATUS_UP: i32 = 1;
+            if (a.OperStatus.0 as i32) != IF_OPER_STATUS_UP {
+                adapter = a.Next;
+                continue;
+            }
+            let mut uni = a.FirstUnicastAddress;
+            while !uni.is_null() {
+                let u = &*uni;
+                let sa = u.Address.lpSockaddr;
+                if !sa.is_null() && (*sa).sa_family == AF_INET {
+                    let sa_in = sa as *const SOCKADDR_IN;
+                    let octets = (*sa_in).sin_addr.S_un.S_addr.to_ne_bytes();
+                    let addr = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
+                    out.push(addr);
+                }
+                uni = u.Next;
+            }
+            adapter = a.Next;
         }
     }
     out
@@ -268,75 +339,4 @@ mod tests {
             Ok(())
         }
     }
-}
-
-#[cfg(not(windows))]
-async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
-    Vec::new()
-}
-
-#[cfg(windows)]
-fn enumerate_ipv4_unicast_addresses() -> Vec<Ipv4Addr> {
-    use windows::Win32::NetworkManagement::IpHelper::{
-        GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
-        GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
-    };
-    use windows::Win32::Networking::WinSock::{AF_INET, SOCKADDR_IN};
-
-    let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
-    let mut size: u32 = 16 * 1024;
-    let mut buf: Vec<u8> = vec![0; size as usize];
-    let mut out = Vec::new();
-
-    // Two-pass: GetAdaptersAddresses returns ERROR_BUFFER_OVERFLOW with
-    // the required size on the first call. The Windows docs recommend
-    // starting with 15 KB and growing if needed.
-    for _ in 0..3 {
-        let rc = unsafe {
-            GetAdaptersAddresses(
-                AF_INET.0 as u32,
-                flags,
-                None,
-                Some(buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH),
-                &mut size,
-            )
-        };
-        if rc == 0 {
-            break;
-        }
-        if rc == 111 {
-            // ERROR_BUFFER_OVERFLOW
-            buf.resize(size as usize, 0);
-            continue;
-        }
-        tracing::debug!("discovery: GetAdaptersAddresses rc={rc}");
-        return out;
-    }
-
-    let mut adapter = buf.as_ptr() as *const IP_ADAPTER_ADDRESSES_LH;
-    while !adapter.is_null() {
-        unsafe {
-            let a = &*adapter;
-            // Skip adapters that aren't operationally up.
-            const IF_OPER_STATUS_UP: i32 = 1;
-            if (a.OperStatus.0 as i32) != IF_OPER_STATUS_UP {
-                adapter = a.Next;
-                continue;
-            }
-            let mut uni = a.FirstUnicastAddress;
-            while !uni.is_null() {
-                let u = &*uni;
-                let sa = u.Address.lpSockaddr;
-                if !sa.is_null() && (*sa).sa_family == AF_INET {
-                    let sa_in = sa as *const SOCKADDR_IN;
-                    let octets = (*sa_in).sin_addr.S_un.S_addr.to_ne_bytes();
-                    let addr = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-                    out.push(addr);
-                }
-                uni = u.Next;
-            }
-            adapter = a.Next;
-        }
-    }
-    out
 }

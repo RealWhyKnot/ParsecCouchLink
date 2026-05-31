@@ -17,6 +17,7 @@ mod firmware_version;
 mod journal;
 mod known_folders;
 mod logfile;
+mod net;
 mod pico_mode;
 mod protocol;
 mod support;
@@ -156,7 +157,8 @@ enum Command {
     },
     /// Run a single diagnostic test by name.
     ///
-    /// Names: xinput, paths, firewall, startup, discover, cdc, usb
+    /// Names: paths, xinput, startup, firewall, wifi-band, cdc, discover, usb
+    /// (aliases: wifi = wifi-band, adapter = usb).
     Test {
         which: String,
 
