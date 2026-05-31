@@ -72,6 +72,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
 
+      - name: Host unit tests (CDC framing)
+        run: |
+          cmake -S pico-bridge/tests -B build-host-tests
+          cmake --build build-host-tests
+          ctest --test-dir build-host-tests --output-on-failure
+
       - name: Build firmware (both boards)
         shell: pwsh
         run: ./pico-bridge/scripts/build.ps1 -Release

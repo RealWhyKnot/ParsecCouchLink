@@ -6,6 +6,7 @@ bridge/Cargo.lock.bak
 # Pico build artifacts
 pico-bridge/build/
 pico-bridge/wifi_credentials.h
+build-host-tests/
 
 # Release/build staging
 dist/
