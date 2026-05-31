@@ -70,7 +70,7 @@ The guided menu can:
 - Pick one Pico or all detected Picos.
 - Route Controller 1, 2, 3, or 4 to the Pico you choose.
 - Update Pico firmware with one guided path.
-- Fix a problem with health checks, Pico debug/recovery, USB adapter checks, logs, and support bundles.
+- Open **Tools and diagnostics** for a status dashboard, Wi-Fi finder, controller check, Pico debug/recovery, USB adapter checks, logs, and support bundles.
 
 When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
 

@@ -23,8 +23,8 @@ pub async fn run() -> Result<()> {
                 "send 2.4 GHz Wi-Fi credentials over USB",
             ),
             menu_item(
-                "Fix a problem",
-                "health checks, recovery, logs, support bundle",
+                "Tools and diagnostics",
+                "status dashboard, recovery, checks, logs",
             ),
             menu_item(
                 "Advanced commands",
@@ -36,7 +36,7 @@ pub async fn run() -> Result<()> {
             0 => start_routing().await?,
             1 => flash_menu().await?,
             2 => cmd_configure_wifi::run().await?,
-            3 => support_menu().await?,
+            3 => tools_menu().await?,
             4 => show_direct_commands().await?,
             _ => return Ok(()),
         }
@@ -60,7 +60,7 @@ async fn start_routing() -> Result<()> {
                 menu_item("Try discovery again", "repeat Wi-Fi broadcast discovery"),
                 menu_item("Enter Pico IP manually", "use the IP shown by your router"),
                 menu_item("Set up or change Wi-Fi", "re-send Wi-Fi credentials"),
-                menu_item("Fix a problem", "open guided diagnostics and recovery"),
+                menu_item("Tools and diagnostics", "open status, checks, and recovery"),
                 menu_item("Update firmware", "flash the Pico firmware"),
                 menu_item("Back", "return to the main menu"),
             ];
@@ -73,7 +73,7 @@ async fn start_routing() -> Result<()> {
                     picos.push(pico);
                 }
                 2 => cmd_configure_wifi::run().await?,
-                3 => support_menu().await?,
+                3 => tools_menu().await?,
                 4 => flash_menu().await?,
                 _ => return Ok(()),
             }
@@ -385,11 +385,15 @@ async fn advanced_flash_menu() -> Result<()> {
     }
 }
 
-async fn support_menu() -> Result<()> {
+async fn tools_menu() -> Result<()> {
     loop {
         println!();
-        println!("Fix a problem");
+        println!("Tools and diagnostics");
         let choices = vec![
+            menu_item(
+                "Quick status dashboard",
+                "show Pico state, controller sources, and next steps",
+            ),
             menu_item(
                 "Run health check",
                 "check paths, controllers, firewall, Wi-Fi, Pico",
@@ -403,6 +407,14 @@ async fn support_menu() -> Result<()> {
                 "ask the Pico whether the console adapter accepted XInput",
             ),
             menu_item(
+                "Find Picos on Wi-Fi",
+                "discover all Picos or probe one by manual IP",
+            ),
+            menu_item(
+                "Check Windows controllers",
+                "show which XInput controller slots are live",
+            ),
+            menu_item(
                 "Create support bundle",
                 "zip logs and diagnostics for a bug report",
             ),
@@ -410,24 +422,107 @@ async fn support_menu() -> Result<()> {
             menu_item("Follow live log", "tail the active log file"),
             menu_item("Back", "return to the main menu"),
         ];
-        match select("Support option", &choices, 0).await? {
+        match select("Tool", &choices, 0).await? {
             0 => {
-                cmd_doctor::run_interactive().await?;
-                press_enter("Press Enter to return to support options.").await?;
+                quick_status_dashboard().await?;
+                press_enter("Press Enter to return to tools.").await?;
             }
             1 => {
-                cmd_debug::run(cmd_debug::DebugOptions::default()).await?;
+                cmd_doctor::run_interactive().await?;
+                press_enter("Press Enter to return to tools.").await?;
             }
             2 => {
-                cmd_usb_diag::run_interactive().await?;
-                press_enter("Press Enter to return to support options.").await?;
+                cmd_debug::run(cmd_debug::DebugOptions::default()).await?;
             }
-            3 => cmd_bundle::run(None).await?,
-            4 => cmd_logs::run(false).await?,
-            5 => cmd_logs::run(true).await?,
+            3 => {
+                cmd_usb_diag::run_interactive().await?;
+                press_enter("Press Enter to return to tools.").await?;
+            }
+            4 => {
+                pico_finder_tool().await?;
+                press_enter("Press Enter to return to tools.").await?;
+            }
+            5 => {
+                controller_tool().await?;
+                press_enter("Press Enter to return to tools.").await?;
+            }
+            6 => cmd_bundle::run(None).await?,
+            7 => cmd_logs::run(false).await?,
+            8 => cmd_logs::run(true).await?,
             _ => return Ok(()),
         }
     }
+}
+
+async fn quick_status_dashboard() -> Result<()> {
+    println!();
+    println!("Quick status dashboard");
+    println!("This is the fastest way to decide the next tool to use.");
+    cmd_debug::run(cmd_debug::DebugOptions {
+        status: true,
+        ..cmd_debug::DebugOptions::default()
+    })
+    .await?;
+    print_xinput_sources();
+    println!();
+    println!("Suggested next steps:");
+    println!("  If a Pico appears on Wi-Fi, choose `Start streaming` or `Check Pico USB adapter`.");
+    println!("  If a Pico appears in USB debug mode, choose `Set up or change Wi-Fi` or `Pico debug and recovery`.");
+    println!("  If a Pico appears in BOOTSEL, choose `Update Pico firmware`.");
+    println!("  If no Pico appears anywhere, check the cable, then use BOOTSEL firmware mode.");
+    Ok(())
+}
+
+async fn pico_finder_tool() -> Result<()> {
+    loop {
+        println!();
+        println!("Find Picos on Wi-Fi");
+        println!("This checks the same discovery path used by streaming.");
+        let picos = cmd_run::discover_picos(Duration::from_secs(5)).await?;
+        if picos.is_empty() {
+            support::print_no_pico_wifi_help(5);
+        } else {
+            println!("Discovered Pico boards:");
+            for pico in &picos {
+                println!("  {}", pico.detail_label());
+                println!("    manual IP: {}", pico.peer.ip());
+            }
+        }
+
+        let choices = vec![
+            menu_item("Scan again", "repeat Wi-Fi discovery"),
+            menu_item("Probe manual IP", "test the IP shown in your router"),
+            menu_item("Back", "return to tools"),
+        ];
+        match select("Wi-Fi finder", &choices, 0).await? {
+            0 => continue,
+            1 => {
+                let _ = prompt_manual_pico_ip().await?;
+            }
+            _ => return Ok(()),
+        }
+    }
+}
+
+async fn controller_tool() -> Result<()> {
+    println!();
+    println!("Windows controller check");
+    println!("This checks the source controllers that CouchLink reads from Windows.");
+    print_xinput_sources();
+    println!();
+    match cmd_doctor::check_xinput().await {
+        cmd_doctor::CheckResult::Pass(message) => println!("PASS  {message}"),
+        cmd_doctor::CheckResult::Warn(message) => {
+            println!("WARN  {message}");
+            println!("Hint: start Parsec with a guest gamepad connected, or plug in a wired Xbox controller for bench testing.");
+        }
+        cmd_doctor::CheckResult::Skip(message) => println!("SKIP  {message}"),
+        cmd_doctor::CheckResult::Fail(message, hint) => {
+            println!("FAIL  {message}");
+            println!("Hint: {hint}");
+        }
+    }
+    Ok(())
 }
 
 async fn show_direct_commands() -> Result<()> {

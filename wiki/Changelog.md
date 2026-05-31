@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Guided menus now include short inline hints for each choice, and the advanced command page is grouped by setup, streaming, recovery, and diagnostics.
+- Guided menus now include short inline hints for each choice. The **Tools and diagnostics** hub adds a quick status dashboard, Wi-Fi finder/manual-IP probe, Windows controller check, Pico recovery, USB adapter diagnostics, logs, and support bundles. The advanced command page is grouped by setup, streaming, recovery, and diagnostics.
 - `couchlink debug` adds a guided Pico recovery menu and direct mode-switch commands for Wi-Fi/controller mode, USB debug mode, and BOOTSEL firmware mode. `couchlink bootsel` is the fast direct command for moving a setup-mode USB Pico into BOOTSEL.
-- `couchlink test usb` asks run-mode firmware over Wi-Fi for USB/XInput status, including mount/configuration state, descriptor counters, accepted IN reports, and host OUT traffic. The guided **Fix a problem** menu exposes the same check for console-adapter troubleshooting.
+- `couchlink test usb` asks run-mode firmware over Wi-Fi for USB/XInput status, including mount/configuration state, descriptor counters, accepted IN reports, and host OUT traffic. The guided **Tools and diagnostics** menu exposes the same check for console-adapter troubleshooting.
 - Release packaging describes only the current CouchLink setup, streaming, diagnostic, flashing, and Wi-Fi configuration tools. Protocol docs list the active setup and runtime commands.
 - Firmware writes one heartbeat line every 5 seconds while running, covering USB mount/suspend state, Wi-Fi state with IP and RSSI, peer presence, and tx/rx packet counters. A quiet system used to leave the diag ring with no recent entries; the heartbeat guarantees there is always state to reason about in `pico-diag.txt`.
 - Firmware fault context expanded. On HardFault / BusFault / UsageFault / MemManage the breadcrumb now captures the full hardware-stacked basic exception frame (R0-R3, R12, LR, PC, xPSR) plus SP and -- on Cortex-M33 / Pico 2 W -- the CFSR / HFSR / MMFAR / BFAR. The next boot's log names the cause directly (divide-by-zero, unaligned-access, precise-bus-error, etc.) rather than just an address.
