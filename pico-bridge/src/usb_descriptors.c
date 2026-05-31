@@ -143,12 +143,14 @@ static const uint8_t desc_configuration_xinput[] = {
     0x00,
 
     // Endpoint 0x81 IN, interrupt, 20-byte report. At full speed bInterval is
-    // counted in 1 ms frames, so bInterval=4 polls every 4 ms (250 Hz) -- the
-    // same rate the real wired Xbox 360 pad reports.
+    // counted in 1 ms frames, so bInterval=1 requests a 1 ms (1000 Hz) poll for
+    // the lowest input latency. (The real wired Xbox 360 pad asks for 4 ms /
+    // 250 Hz; advertising the faster rate only lets the host poll more often --
+    // the report itself is still produced on change, so there is no extra load.)
     7, TUSB_DESC_ENDPOINT, XINPUT_IN_EP_ADDR,
     0x03,                 // bmAttributes = Interrupt
     U16_TO_U8S_LE(20),
-    4,                    // bInterval = 4 ms (250 Hz) at full speed
+    1,                    // bInterval = 1 ms (1000 Hz) at full speed
 
     // Endpoint 0x02 OUT, interrupt, 32 bytes, 8 ms (rumble + LED ring writes from the host)
     7, TUSB_DESC_ENDPOINT, XINPUT_OUT_EP_ADDR,
