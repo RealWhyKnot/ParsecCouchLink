@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
+use dialoguer::{theme::ColorfulTheme, Input, Password};
 use zeroize::Zeroize;
 
 use crate::{cdc, cmd_run, config, diag_usb, journal, protocol};
@@ -519,43 +519,15 @@ fn print_stage(index: usize) {
 }
 
 async fn ask_yes_no(prompt: &str, default: bool) -> Result<bool> {
-    let prompt = prompt.to_string();
-    let r = tokio::task::spawn_blocking(move || {
-        Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .default(default)
-            .interact()
-    })
-    .await??;
-    Ok(r)
+    crate::tui::confirm(prompt, default).await
 }
 
 async fn ask_press_enter(prompt: &str) -> Result<()> {
-    let prompt = prompt.to_string();
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        use std::io::{BufRead, Write};
-        let stdin = std::io::stdin();
-        let mut stdout = std::io::stdout();
-        write!(stdout, "{} ", prompt)?;
-        stdout.flush()?;
-        let mut line = String::new();
-        stdin.lock().read_line(&mut line)?;
-        Ok(())
-    })
-    .await??;
-    Ok(())
+    crate::tui::press_enter(prompt).await
 }
 
 async fn prompt_optional_text(prompt: &str) -> Result<String> {
-    let prompt = prompt.to_string();
-    tokio::task::spawn_blocking(move || {
-        Input::<String>::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .allow_empty(true)
-            .interact_text()
-    })
-    .await?
-    .context("reading input")
+    crate::tui::input_text(prompt).await
 }
 
 struct WifiCreds {

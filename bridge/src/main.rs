@@ -21,6 +21,7 @@ mod net;
 mod pico_mode;
 mod protocol;
 mod support;
+mod tui;
 mod xinput;
 
 use std::path::PathBuf;

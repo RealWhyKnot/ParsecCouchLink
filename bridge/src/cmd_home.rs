@@ -4,10 +4,9 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
-use dialoguer::theme::ColorfulTheme;
-use dialoguer::{Confirm, Input, MultiSelect, Select};
+use anyhow::Result;
 
+use crate::tui::{confirm, input_text, multiselect, press_enter, select};
 use crate::{
     cdc, cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_logs, cmd_run,
     cmd_setup, cmd_usb_diag, config, protocol, support, xinput,
@@ -1192,82 +1191,12 @@ async fn show_direct_commands() -> Result<()> {
     press_enter("Press Enter to return to the menu.").await
 }
 
-async fn input_text(prompt: &str) -> Result<String> {
-    let prompt = prompt.to_string();
-    tokio::task::spawn_blocking(move || {
-        Input::<String>::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .allow_empty(true)
-            .interact_text()
-    })
-    .await?
-    .context("reading input")
-}
-
 fn menu_item(label: &str, help: &str) -> String {
     format!("{label:<36} {help}")
 }
 
 fn print_command(command: &str, help: &str) {
     println!("  {command:<42} {help}");
-}
-
-async fn select(prompt: &str, items: &[impl ToString], default: usize) -> Result<usize> {
-    let prompt = prompt.to_string();
-    let items: Vec<String> = items.iter().map(ToString::to_string).collect();
-    tokio::task::spawn_blocking(move || {
-        Select::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .items(&items)
-            .default(default.min(items.len().saturating_sub(1)))
-            .interact()
-    })
-    .await?
-    .context("reading menu selection")
-}
-
-async fn multiselect(prompt: &str, items: &[String], defaults: &[bool]) -> Result<Vec<usize>> {
-    let prompt = prompt.to_string();
-    let items = items.to_vec();
-    let defaults = defaults.to_vec();
-    tokio::task::spawn_blocking(move || {
-        MultiSelect::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .items(&items)
-            .defaults(&defaults)
-            .interact()
-    })
-    .await?
-    .context("reading menu selection")
-}
-
-async fn confirm(prompt: &str, default: bool) -> Result<bool> {
-    let prompt = prompt.to_string();
-    tokio::task::spawn_blocking(move || {
-        Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .default(default)
-            .interact()
-    })
-    .await?
-    .context("reading confirmation")
-}
-
-async fn press_enter(prompt: &str) -> Result<()> {
-    let prompt = prompt.to_string();
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        use std::io::{BufRead, Write};
-        let stdin = std::io::stdin();
-        let mut stdout = std::io::stdout();
-        write!(stdout, "{} ", prompt)?;
-        stdout.flush()?;
-        let mut line = String::new();
-        stdin.lock().read_line(&mut line)?;
-        Ok(())
-    })
-    .await?
-    .context("waiting for Enter")?;
-    Ok(())
 }
 
 #[cfg(test)]
