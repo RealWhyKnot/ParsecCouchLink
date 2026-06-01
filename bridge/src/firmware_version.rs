@@ -6,7 +6,10 @@ pub enum FirmwareVersion {
         year: u16,
         month: u8,
         day: u8,
-        revision: u8,
+        // None when the source can't carry the build number -- notably the
+        // Wi-Fi discovery ack, which only encodes year/month/day. Rendered
+        // as ".x" so a same-day rebuild is never mistaken for build 0.
+        revision: Option<u8>,
         suffix: Option<[u8; 4]>,
     },
     Legacy {
@@ -23,7 +26,9 @@ impl FirmwareVersion {
                 year: 2000 + major as u16,
                 month: minor,
                 day: patch,
-                revision: 0,
+                // The triplet (discovery ack) carries only the date; the
+                // build number is unknown over this transport.
+                revision: None,
                 suffix: None,
             }
         } else {
@@ -48,7 +53,7 @@ impl FirmwareVersion {
                     year,
                     month,
                     day,
-                    revision,
+                    revision: Some(revision),
                     suffix,
                 };
             }
@@ -88,10 +93,16 @@ impl fmt::Display for FirmwareVersion {
                 revision,
                 suffix,
             } => {
-                write!(f, "{year}.{month}.{day}.{revision}")?;
-                if let Some(suffix) = suffix {
-                    let suffix = std::str::from_utf8(&suffix).map_err(|_| fmt::Error)?;
-                    write!(f, "-{suffix}")?;
+                match revision {
+                    Some(revision) => {
+                        write!(f, "{year}.{month}.{day}.{revision}")?;
+                        if let Some(suffix) = suffix {
+                            let suffix = std::str::from_utf8(&suffix).map_err(|_| fmt::Error)?;
+                            write!(f, "-{suffix}")?;
+                        }
+                    }
+                    // Build unknown (discovery ack): date only, ".x" build.
+                    None => write!(f, "{year}.{month}.{day}.x")?,
                 }
                 Ok(())
             }
@@ -142,10 +153,12 @@ mod tests {
 
     #[test]
     fn from_triplet_gates_release_vs_legacy() {
-        // An in-range date triplet is shown as a YYYY.M.D.0 release.
+        // An in-range date triplet is a release whose build is unknown over
+        // the discovery transport, so it renders as YYYY.M.D.x -- never .0,
+        // which would falsely read as "build 0" against a same-day rebuild.
         assert_eq!(
             FirmwareVersion::from_triplet(26, 5, 30).to_string(),
-            "2026.5.30.0"
+            "2026.5.30.x"
         );
         // Out-of-range fields stay a legacy triplet (year < 2020, bad month, bad day).
         assert_eq!(
@@ -168,7 +181,7 @@ mod tests {
             year: 2026,
             month: 5,
             day: 30,
-            revision: 7,
+            revision: Some(7),
             suffix: Some(*b"D69A"),
         };
         assert_eq!(v.to_string(), "2026.5.30.7-D69A");
@@ -177,9 +190,19 @@ mod tests {
             year: 2026,
             month: 5,
             day: 30,
-            revision: 0,
+            revision: Some(0),
             suffix: None,
         };
         assert_eq!(no_suffix.to_string(), "2026.5.30.0");
+
+        // Build unknown (e.g. from the Wi-Fi discovery ack) renders ".x".
+        let unknown_build = FirmwareVersion::Release {
+            year: 2026,
+            month: 5,
+            day: 30,
+            revision: None,
+            suffix: None,
+        };
+        assert_eq!(unknown_build.to_string(), "2026.5.30.x");
     }
 }

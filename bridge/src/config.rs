@@ -117,8 +117,18 @@ impl PicoIdentity {
         }
     }
 
+    /// Last-known firmware for a saved Pico, only shown while it is offline.
+    /// Stored as the date-triplet (the discovery ack never carried the build
+    /// number), so render it through the shared formatter -- "2026.5.31.x",
+    /// build unknown -- rather than a raw "26.5.31" that reads like a
+    /// different, lower version.
     pub fn firmware_version(&self) -> String {
-        format!("{}.{}.{}", self.fw_major, self.fw_minor, self.fw_patch)
+        crate::firmware_version::FirmwareVersion::from_triplet(
+            self.fw_major,
+            self.fw_minor,
+            self.fw_patch,
+        )
+        .to_string()
     }
 }
 
