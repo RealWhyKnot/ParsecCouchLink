@@ -7,6 +7,8 @@
 //     cyw43, UDP listener on 4242, forwards state from bridge.exe into
 //     a shared gamepad struct that the XInput report builder consumes.
 
+#include <stdio.h>
+
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "pico/unique_id.h"
@@ -113,23 +115,29 @@ static void log_board_identity(void) {
                     PICO_BRIDGE_FW_VERSION_STRING, PICO_BRIDGE_BOARD_TYPE, id);
 }
 
-// Inline state-name helper for the assoc watchdog log line. The
-// canonical wifi_state_name() is static in heartbeat.c; duplicating
-// the four-case switch here avoids an API surface change for a single
-// call site.
-static const char *wifi_state_str(wifi_state_t s) {
-    switch (s) {
-        case WIFI_STATE_IDLE:    return "idle";
-        case WIFI_STATE_JOINING: return "joining";
-        case WIFI_STATE_JOINED:  return "joined";
-        case WIFI_STATE_FAILED:  return "failed";
-        default:                 return "?";
-    }
+// Hand the credentials to cyw43 and start a non-blocking join, then wipe
+// the local plaintext password copy (cyw43 has its own copy now).
+static void run_issue_join(flash_creds_t *creds) {
+    wifi_start_join((const char*)creds->ssid, creds->ssid_len,
+                    (const char*)creds->password, creds->pass_len);
+    for (size_t i = 0; i < sizeof(creds->password); i++)
+        ((volatile uint8_t *)creds->password)[i] = 0;
 }
 
 static void run_mode_main_loop(void) {
     // Load creds (already verified by boot_mode_decide), bring up Wi-Fi,
     // bring up UDP, then poll forever.
+    //
+    // Wi-Fi is the payload, but the USB controller persona is the
+    // device's identity: once we hold valid credentials we never give up
+    // either. A radio that will not initialise, or an AP that will not
+    // associate, must not cost the user their controller -- we stay
+    // enumerated and keep retrying. The only reason run mode ever leaves
+    // is a *sustained* definitive auth rejection (the stored password is
+    // wrong and only the user can fix it) or a radio that cannot init at
+    // all for a long window (broken hardware/power). Both bounce to setup
+    // mode with the reason recorded in the cross-reset breadcrumb, since
+    // the run-mode diag ring is RAM-only and would be lost on reboot.
     flash_creds_t creds;
     if (!flash_creds_load(&creds)) {
         diag_log_msg("run: lost creds between boot and run -- rebooting to setup");
@@ -137,24 +145,25 @@ static void run_mode_main_loop(void) {
         for (;;) tight_loop_contents();
     }
 
-    if (!wifi_init()) {
-        diag_log_msg("run: cyw43 init failed; halting");
-        for (;;) {
-            tud_task();
-            sleep_ms(100);
-        }
-    }
-    wifi_start_join((const char*)creds.ssid, creds.ssid_len,
-                    (const char*)creds.password, creds.pass_len);
-    // Zero the local copy of the password now that cyw43 has it.
-    for (size_t i = 0; i < sizeof(creds.password); i++)
-        ((volatile uint8_t *)creds.password)[i] = 0;
+    // Issue the join once the radio is up, then wipe the local password.
+    bool join_issued = false;
+    bool radio_up = wifi_init();
+    if (radio_up) { run_issue_join(&creds); join_issued = true; }
+    uint32_t        radio_init_fails    = radio_up ? 0u : 1u;
+    absolute_time_t radio_retry_at      = make_timeout_time_ms(3000);
+    absolute_time_t radio_failing_since = get_absolute_time();
 
     bool udp_inited = false;
 
-    // Capture entry time for the association watchdog.
-    absolute_time_t run_entry = get_absolute_time();
-    bool assoc_watchdog_armed = true;
+    // Sustained-BADAUTH escape hatch. wifi.c already retries every failure
+    // mode forever (NONET, timeout, generic, link-drop, DHCP regrab), so a
+    // single bad result is never a reason to abandon run mode -- a fresh
+    // radio's first scan after a replug routinely reports NONET, and
+    // link_status can briefly mis-report BADAUTH (cyw43-driver #62). Only a
+    // password that is *continuously* rejected means re-provisioning is
+    // needed, so we require BADAUTH to persist before bouncing.
+    absolute_time_t badauth_since = get_absolute_time();
+    bool            badauth_armed = false;
 
     xinput_init();
     watchdog_init();
@@ -172,56 +181,72 @@ static void run_mode_main_loop(void) {
         // a future regression that reintroduces the persona race can't
         // silently fill the CDC RX FIFO again.
         cdc_handlers_poll();
-        cyw43_arch_poll();
-        wifi_task();
 
-        if (wifi_state() == WIFI_STATE_JOINED && !udp_inited) {
-            udp_inited = net_udp_init();
-        }
-        if (udp_inited) {
-            net_udp_task();
+        if (!radio_up) {
+            // Stay a live (idle) controller while the radio refuses to
+            // come up; retry cyw43_arch_init from the loop instead of
+            // halting, so a transient init failure self-heals.
+            if (absolute_time_diff_us(get_absolute_time(), radio_retry_at) <= 0) {
+                radio_up = wifi_init();
+                if (radio_up) {
+                    diag_log_printf("run: cyw43 init recovered after %u failure(s)",
+                                    (unsigned)radio_init_fails);
+                    run_issue_join(&creds);
+                    join_issued = true;
+                } else {
+                    radio_init_fails++;
+                    radio_retry_at = make_timeout_time_ms(3000);
+                    // A radio that cannot init for a sustained window is
+                    // broken hardware/power, not a hiccup. Bounce to setup
+                    // with the rc recorded so a bundle explains why.
+                    if (absolute_time_diff_us(radio_failing_since,
+                                              get_absolute_time())
+                            >= 60LL * 1000 * 1000) {
+                        char note[RESET_REASON_LAST_LINE_CAP];
+                        snprintf(note, sizeof(note),
+                                 "wifi: cyw43 init rc=%d x%u",
+                                 wifi_last_init_rc(), (unsigned)radio_init_fails);
+                        diag_log_printf("run: %s -- bouncing to setup for diagnosis",
+                                        note);
+                        reset_reason_request_setup_with_note(note);
+                        watchdog_reboot(0, 0, 100);
+                        for (;;) tight_loop_contents();
+                    }
+                }
+            }
+        } else {
+            cyw43_arch_poll();
+            wifi_task();
+
+            if (wifi_state() == WIFI_STATE_JOINED && !udp_inited) {
+                udp_inited = net_udp_init();
+            }
+            if (udp_inited) {
+                net_udp_task();
+            }
         }
 
         xinput_task();
         watchdog_tick();
         heartbeat_run_mode_task();
 
-        // Wi-Fi association watchdog. Fires once and triggers a bounce
-        // to setup mode so the user can re-provision if the credentials
-        // are wrong or the AP is unreachable at this location.
-        if (assoc_watchdog_armed && wifi_state() != WIFI_STATE_JOINED) {
-            wifi_state_t ws = wifi_state();
-            uint8_t err = wifi_last_error_code();
-
-            // Immediate bounce on definitive auth / SSID failures --
-            // no point waiting 30 s when the answer is already known.
-            if (ws == WIFI_STATE_FAILED
-                && (err == CDC_ERR_AUTH_FAIL || err == CDC_ERR_NO_2G_NETWORK)) {
-                const char *ename = (err == CDC_ERR_AUTH_FAIL) ? "BADAUTH" : "NONET";
-                diag_log_printf("wifi: assoc_result=%s -- bouncing immediately to setup mode",
-                                ename);
-                assoc_watchdog_armed = false;
-                reset_reason_request_setup_after_reboot();
+        // Sustained-BADAUTH watchdog. Arm on the first auth rejection and
+        // disarm the instant we join or see any other state, so only a
+        // continuously-wrong password ever reaches the timeout and bounces.
+        if (join_issued && wifi_state() != WIFI_STATE_JOINED
+                && wifi_last_error_code() == CDC_ERR_AUTH_FAIL) {
+            if (!badauth_armed) {
+                badauth_since = get_absolute_time();
+                badauth_armed = true;
+            } else if (absolute_time_diff_us(badauth_since, get_absolute_time())
+                       >= 120LL * 1000 * 1000) {
+                diag_log_msg("wifi: auth rejected for 120 s -- bouncing to setup so the password can be re-entered");
+                reset_reason_request_setup_with_note("wifi: BADAUTH sustained 120s");
                 watchdog_reboot(0, 0, 100);
                 for (;;) tight_loop_contents();
             }
-
-            // 30-second timeout watchdog for all other failure modes
-            // (JOINING timeout, generic FAILED, idle).
-            int64_t elapsed_us = absolute_time_diff_us(run_entry,
-                                                       get_absolute_time());
-            if (elapsed_us >= 30000000) {
-                uint32_t uptime_s = (uint32_t)(
-                    to_ms_since_boot(get_absolute_time()) / 1000);
-                diag_log_printf(
-                    "wifi: assoc watchdog firing -- mode=run uptime=%us "
-                    "state=%s last_error=%u -- bouncing to setup mode, creds retained",
-                    (unsigned)uptime_s, wifi_state_str(ws), (unsigned)err);
-                assoc_watchdog_armed = false;
-                reset_reason_request_setup_after_reboot();
-                watchdog_reboot(0, 0, 100);
-                for (;;) tight_loop_contents();
-            }
+        } else {
+            badauth_armed = false;
         }
 
         // Briefly yield so cyw43_arch_poll doesn't get starved on a

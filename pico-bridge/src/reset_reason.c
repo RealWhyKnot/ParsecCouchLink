@@ -213,20 +213,32 @@ bool reset_reason_force_setup_requested(void) {
     return g_force_setup_requested;
 }
 
-void reset_reason_request_setup_after_reboot(void) {
-    // Write a minimal breadcrumb containing only the force_setup flag.
-    // We intentionally do not stomp any existing fault frame here --
-    // this is called from a healthy code path, and the last_line/fault
-    // fields are not meaningful. Write MAGIC_NORMAL_EXIT to scratch[0]
-    // so reset_reason_classify() takes the DELIBERATE branch and reads
-    // the breadcrumb (the force_setup flag lives there, not in scratch).
+void reset_reason_request_setup_with_note(const char *note) {
+    // Write a minimal breadcrumb containing the force_setup flag and,
+    // optionally, a short human-readable reason in last_line. We
+    // intentionally do not stomp any existing fault frame here -- this is
+    // called from a healthy code path. Write MAGIC_NORMAL_EXIT to
+    // scratch[0] so reset_reason_classify() takes the DELIBERATE branch
+    // and reads the breadcrumb (the force_setup flag and last_line live
+    // there, not in scratch). The note must be populated BEFORE the CRC is
+    // computed, since the CRC covers last_line.
     memset(&g_crash_breadcrumb, 0, sizeof(g_crash_breadcrumb));
     g_crash_breadcrumb.force_setup = 1;
+    if (note) {
+        size_t i = 0;
+        for (; i < sizeof(g_crash_breadcrumb.last_line) - 1 && note[i]; i++)
+            g_crash_breadcrumb.last_line[i] = note[i];
+        g_crash_breadcrumb.last_line[i] = 0;
+    }
     g_crash_breadcrumb.crc32 = breadcrumb_crc();
     g_crash_breadcrumb.magic = BREADCRUMB_MAGIC;
     // Mark scratch[0] so classify() treats this as a deliberate reboot
     // and calls breadcrumb_fill_info() to pick up force_setup.
     watchdog_hw->scratch[0] = RESET_REASON_MAGIC_NORMAL_EXIT;
+}
+
+void reset_reason_request_setup_after_reboot(void) {
+    reset_reason_request_setup_with_note(NULL);
 }
 
 void reset_reason_record_fault(const uint32_t *frame, uint32_t sp_at_fault) {

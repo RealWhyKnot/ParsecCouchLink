@@ -100,6 +100,13 @@ void reset_reason_mark_main_loop_entered(void);
 // breadcrumb from an older firmware build is never misread.
 void reset_reason_request_setup_after_reboot(void);
 
+// As above, but also stashes a short human-readable note into the
+// breadcrumb's last_line so the next boot's log (and a couchlink bundle)
+// explains why the bounce happened -- the run-mode diag ring is RAM-only
+// and is lost across the reboot. `note` is truncated to
+// RESET_REASON_LAST_LINE_CAP-1 chars; NULL is allowed (no note).
+void reset_reason_request_setup_with_note(const char *note);
+
 // True if reset_reason_classify() found a force_setup_after_reboot
 // flag in the breadcrumb. Stable after reset_reason_classify() returns;
 // the underlying breadcrumb field is cleared (one-shot) at that point.
