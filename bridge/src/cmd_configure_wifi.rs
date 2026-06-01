@@ -275,6 +275,23 @@ impl Drop for Credentials {
 }
 
 fn prompt_credentials() -> Result<Credentials> {
+    // Non-interactive override for scripted / headless provisioning: when
+    // both COUCHLINK_WIFI_SSID and COUCHLINK_WIFI_PASSWORD are set, use them
+    // instead of prompting. Same length limits as the interactive path.
+    // Env vars keep the password out of argv and shell history.
+    if let Ok(ssid) = std::env::var("COUCHLINK_WIFI_SSID") {
+        if !ssid.is_empty() {
+            let password = std::env::var("COUCHLINK_WIFI_PASSWORD").unwrap_or_default();
+            if ssid.len() > 32 {
+                bail!("COUCHLINK_WIFI_SSID can't be longer than 32 bytes");
+            }
+            if password.len() > 63 {
+                bail!("COUCHLINK_WIFI_PASSWORD can't be longer than 63 bytes (WPA2 limit)");
+            }
+            println!("Using Wi-Fi credentials from COUCHLINK_WIFI_SSID/PASSWORD.");
+            return Ok(Credentials { ssid, password });
+        }
+    }
     let theme = ColorfulTheme::default();
     let ssid: String = Input::with_theme(&theme)
         .with_prompt("Wi-Fi SSID (2.4 GHz network)")
