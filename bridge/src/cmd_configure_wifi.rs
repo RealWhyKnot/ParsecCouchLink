@@ -149,6 +149,13 @@ async fn print_discovered_pico_ips(before: BTreeSet<u32>) -> Result<()> {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(60);
     let mut next_beat = started + Duration::from_secs(10);
+    // The setup-mode COM port we just rebooted lingers in the OS for a
+    // second or two after REBOOT_TO_RUN, before the board re-enumerates as
+    // the XInput controller. Only treat a setup port as a genuine bounce
+    // back to setup once it has first disappeared -- otherwise the stale
+    // pre-reboot port reads as an instant "didn't join" even when the board
+    // went on to join Wi-Fi normally.
+    let mut setup_port_gone = false;
     loop {
         let picos = cmd_run::discover_picos(Duration::from_secs(2)).await?;
         let current: BTreeSet<u32> = picos.iter().map(|pico| pico.info.unique_id_short).collect();
@@ -157,13 +164,20 @@ async fn print_discovered_pico_ips(before: BTreeSet<u32>) -> Result<()> {
             return Ok(());
         }
 
-        if let Ok(port) = cdc::find_setup_port() {
-            println!();
-            println!("The Pico came back in setup-mode USB before joining Wi-Fi.");
-            println!("That usually means the SSID was not found, the password was rejected, or DHCP never completed.");
-            print_setup_mode_diag(&port).await;
-            println!("Fix the Wi-Fi details, then run `couchlink configure-wifi` again.");
-            return Ok(());
+        match cdc::find_setup_port() {
+            // No setup port right now: the reboot took effect. A setup port
+            // that appears *after* this point is a real bounce-back.
+            Err(_) => setup_port_gone = true,
+            Ok(port) if setup_port_gone => {
+                println!();
+                println!("The Pico came back in setup-mode USB before joining Wi-Fi.");
+                println!("That usually means the SSID was not found, the password was rejected, or DHCP never completed.");
+                print_setup_mode_diag(&port).await;
+                println!("Fix the Wi-Fi details, then run `couchlink configure-wifi` again.");
+                return Ok(());
+            }
+            // Pre-reboot setup port still lingering; ignore and keep waiting.
+            Ok(_) => {}
         }
 
         let now = Instant::now();
