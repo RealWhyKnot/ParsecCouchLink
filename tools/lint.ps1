@@ -25,6 +25,33 @@ function Invoke-Native {
     }
 }
 
+function Get-ClangFormatCommand {
+    if ($env:CLANG_FORMAT) {
+        $configured = Get-Command $env:CLANG_FORMAT -ErrorAction SilentlyContinue
+        if ($configured) { return $configured.Source }
+        if (Test-Path -LiteralPath $env:CLANG_FORMAT) {
+            return (Resolve-Path -LiteralPath $env:CLANG_FORMAT).Path
+        }
+        throw "CLANG_FORMAT is set but was not found: $env:CLANG_FORMAT"
+    }
+
+    $versioned = Get-Command clang-format-19 -ErrorAction SilentlyContinue
+    if ($versioned) { return $versioned.Source }
+
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+    if ($programFilesX86) {
+        $vsClangFormat = Join-Path $programFilesX86 "Microsoft Visual Studio\2022\BuildTools\VC\Tools\Llvm\bin\clang-format.exe"
+        if (Test-Path -LiteralPath $vsClangFormat) {
+            return (Resolve-Path -LiteralPath $vsClangFormat).Path
+        }
+    }
+
+    $pathClangFormat = Get-Command clang-format -ErrorAction SilentlyContinue
+    if ($pathClangFormat) { return $pathClangFormat.Source }
+
+    throw "clang-format was not found. Install LLVM clang-format and rerun tools/lint.ps1."
+}
+
 if (-not $SkipPowerShell) {
     Write-Host "Checking PowerShell syntax and changelog updater..."
     Invoke-Native -FilePath "powershell" -Arguments @(
@@ -71,10 +98,8 @@ if (-not $SkipRust) {
 }
 
 if (-not $SkipFirmware) {
-    $clangFormat = Get-Command clang-format -ErrorAction SilentlyContinue
-    if (-not $clangFormat) {
-        throw "clang-format was not found. Install LLVM clang-format and rerun tools/lint.ps1."
-    }
+    $clangFormat = Get-ClangFormatCommand
+    Write-Host "Using $clangFormat"
 
     $FirmwareRoot = Join-Path $RepoRoot "pico-bridge"
     $firmwareRoots = @(
@@ -89,9 +114,9 @@ if (-not $SkipFirmware) {
     if ($firmwareFiles.Count -gt 0) {
         Write-Host "Checking firmware C formatting..."
         if ($Fix) {
-            Invoke-Native -FilePath $clangFormat.Source -Arguments (@("-i") + $firmwareFiles)
+            Invoke-Native -FilePath $clangFormat -Arguments (@("-i") + $firmwareFiles)
         } else {
-            Invoke-Native -FilePath $clangFormat.Source -Arguments (@("--dry-run", "--Werror") + $firmwareFiles)
+            Invoke-Native -FilePath $clangFormat -Arguments (@("--dry-run", "--Werror") + $firmwareFiles)
         }
     }
 }

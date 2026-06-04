@@ -111,14 +111,7 @@ static const uint8_t desc_configuration_cdc[] = {
     // the diag log is read via a vendor control transfer on EP0 (see
     // tud_vendor_control_xfer_cb below). Bound to WinUSB on Windows via
     // the MS OS 2.0 descriptor set (see further down).
-    9,
-    TUSB_DESC_INTERFACE,
-    DIAG_ITF_NUM,
-    0,
-    0,
-    0xFF,
-    0x00,
-    0x00,
+    9, TUSB_DESC_INTERFACE, DIAG_ITF_NUM, 0, 0, 0xFF, 0x00, 0x00,
     5, // iInterface = STRID_DIAG_INTERFACE (see string enum below)
 };
 
@@ -380,25 +373,8 @@ static const uint8_t desc_bos[BOS_DESC_TOTAL_LEN] = {
     0x05, // bDevCapType = PLATFORM
     0x00, // bReserved
     // MS OS 2.0 platform-capability UUID: {D8DD60DF-4589-4CC7-9CD2-659D9E648A9F}
-    0xDF,
-    0x60,
-    0xDD,
-    0xD8,
-    0x89,
-    0x45,
-    0xC7,
-    0x4C,
-    0x9C,
-    0xD2,
-    0x65,
-    0x9D,
-    0x9E,
-    0x64,
-    0x8A,
-    0x9F,
-    0x00,
-    0x00,
-    0x03,
+    0xDF, 0x60, 0xDD, 0xD8, 0x89, 0x45, 0xC7, 0x4C, 0x9C, 0xD2, 0x65, 0x9D, 0x9E, 0x64, 0x8A, 0x9F,
+    0x00, 0x00, 0x03,
     0x06, // dwWindowsVersion = Windows 8.1+
     MS_OS_20_DESC_SET_TOTAL_LEN,
     0x00,                     // wMSOSDescriptorSetTotalLength
