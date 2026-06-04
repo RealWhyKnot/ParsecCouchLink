@@ -32,25 +32,21 @@
 #include "xinput.h"
 
 volatile gamepad_state_t g_gamepad_state = {0};
-volatile uint32_t        g_last_packet_ms = 0;
-volatile uint8_t         g_parsec_connected = 0;
+volatile uint32_t g_last_packet_ms = 0;
+volatile uint8_t g_parsec_connected = 0;
 
 static void log_reset_reason(const reset_reason_info_t *info) {
     diag_log_printf("boot: reset-reason=%s", reset_reason_name(info->reason));
     if (info->reason == RESET_REASON_FAULT) {
         diag_log_printf("boot: prior fault pc=0x%08X lr=0x%08X xpsr=0x%08X",
-                        (unsigned)info->fault_pc,
-                        (unsigned)info->fault_lr,
+                        (unsigned)info->fault_pc, (unsigned)info->fault_lr,
                         (unsigned)info->fault_xpsr);
         if (info->full_frame_valid) {
             diag_log_printf("boot: prior fault r0=0x%08X r1=0x%08X r2=0x%08X r3=0x%08X",
-                            (unsigned)info->fault_r0,
-                            (unsigned)info->fault_r1,
-                            (unsigned)info->fault_r2,
-                            (unsigned)info->fault_r3);
+                            (unsigned)info->fault_r0, (unsigned)info->fault_r1,
+                            (unsigned)info->fault_r2, (unsigned)info->fault_r3);
             diag_log_printf("boot: prior fault r12=0x%08X sp_at_fault=0x%08X",
-                            (unsigned)info->fault_r12,
-                            (unsigned)info->fault_sp);
+                            (unsigned)info->fault_r12, (unsigned)info->fault_sp);
         }
         if (info->fault_status_valid) {
             // CFSR splits as MMFSR (byte 0), BFSR (byte 1), UFSR (bytes 2-3)
@@ -59,9 +55,7 @@ static void log_reset_reason(const reset_reason_info_t *info) {
             // common-case bit decode.
             uint32_t cfsr = info->fault_cfsr;
             diag_log_printf("boot: prior fault cfsr=0x%08X hfsr=0x%08X mmfar=0x%08X bfar=0x%08X",
-                            (unsigned)cfsr,
-                            (unsigned)info->fault_hfsr,
-                            (unsigned)info->fault_mmfar,
+                            (unsigned)cfsr, (unsigned)info->fault_hfsr, (unsigned)info->fault_mmfar,
                             (unsigned)info->fault_bfar);
             // MMFSR bits in CFSR[7:0]:
             //   bit 0 IACCVIOL    instruction access violation
@@ -84,27 +78,41 @@ static void log_reset_reason(const reset_reason_info_t *info) {
             //   bit 24 UNALIGNED  unaligned access
             //   bit 25 DIVBYZERO  integer divide by zero
             const char *cause = "unspecified";
-            if (cfsr & (1u << 25)) cause = "divide-by-zero";
-            else if (cfsr & (1u << 24)) cause = "unaligned-access";
-            else if (cfsr & (1u << 19)) cause = "coprocessor-access";
-            else if (cfsr & (1u << 18)) cause = "invalid-EXC_RETURN";
-            else if (cfsr & (1u << 17)) cause = "invalid-EPSR-state";
-            else if (cfsr & (1u << 16)) cause = "undefined-instruction";
-            else if (cfsr & (1u << 12)) cause = "stacking-error";
-            else if (cfsr & (1u << 11)) cause = "unstacking-error";
-            else if (cfsr & (1u << 10)) cause = "imprecise-bus-error";
-            else if (cfsr & (1u <<  9)) cause = "precise-bus-error";
-            else if (cfsr & (1u <<  8)) cause = "instruction-prefetch-bus-error";
-            else if (cfsr & (1u <<  4)) cause = "exception-entry-stack-error";
-            else if (cfsr & (1u <<  3)) cause = "exception-return-unstack-error";
-            else if (cfsr & (1u <<  1)) cause = "data-access-violation";
-            else if (cfsr & (1u <<  0)) cause = "instruction-access-violation";
+            if (cfsr & (1u << 25))
+                cause = "divide-by-zero";
+            else if (cfsr & (1u << 24))
+                cause = "unaligned-access";
+            else if (cfsr & (1u << 19))
+                cause = "coprocessor-access";
+            else if (cfsr & (1u << 18))
+                cause = "invalid-EXC_RETURN";
+            else if (cfsr & (1u << 17))
+                cause = "invalid-EPSR-state";
+            else if (cfsr & (1u << 16))
+                cause = "undefined-instruction";
+            else if (cfsr & (1u << 12))
+                cause = "stacking-error";
+            else if (cfsr & (1u << 11))
+                cause = "unstacking-error";
+            else if (cfsr & (1u << 10))
+                cause = "imprecise-bus-error";
+            else if (cfsr & (1u << 9))
+                cause = "precise-bus-error";
+            else if (cfsr & (1u << 8))
+                cause = "instruction-prefetch-bus-error";
+            else if (cfsr & (1u << 4))
+                cause = "exception-entry-stack-error";
+            else if (cfsr & (1u << 3))
+                cause = "exception-return-unstack-error";
+            else if (cfsr & (1u << 1))
+                cause = "data-access-violation";
+            else if (cfsr & (1u << 0))
+                cause = "instruction-access-violation";
             diag_log_printf("boot: prior fault cause=%s", cause);
         }
     }
     if (info->last_line_valid && info->last_line[0] != 0) {
-        diag_log_printf("boot: last live line before reset: %s",
-                        info->last_line);
+        diag_log_printf("boot: last live line before reset: %s", info->last_line);
     }
 }
 
@@ -118,8 +126,8 @@ static void log_board_identity(void) {
 // Hand the credentials to cyw43 and start a non-blocking join, then wipe
 // the local plaintext password copy (cyw43 has its own copy now).
 static void run_issue_join(flash_creds_t *creds) {
-    wifi_start_join((const char*)creds->ssid, creds->ssid_len,
-                    (const char*)creds->password, creds->pass_len);
+    wifi_start_join((const char *)creds->ssid, creds->ssid_len, (const char *)creds->password,
+                    creds->pass_len);
     for (size_t i = 0; i < sizeof(creds->password); i++)
         ((volatile uint8_t *)creds->password)[i] = 0;
 }
@@ -142,15 +150,19 @@ static void run_mode_main_loop(void) {
     if (!flash_creds_load(&creds)) {
         diag_log_msg("run: lost creds between boot and run -- rebooting to setup");
         watchdog_reboot(0, 0, 100);
-        for (;;) tight_loop_contents();
+        for (;;)
+            tight_loop_contents();
     }
 
     // Issue the join once the radio is up, then wipe the local password.
     bool join_issued = false;
     bool radio_up = wifi_init();
-    if (radio_up) { run_issue_join(&creds); join_issued = true; }
-    uint32_t        radio_init_fails    = radio_up ? 0u : 1u;
-    absolute_time_t radio_retry_at      = make_timeout_time_ms(3000);
+    if (radio_up) {
+        run_issue_join(&creds);
+        join_issued = true;
+    }
+    uint32_t radio_init_fails = radio_up ? 0u : 1u;
+    absolute_time_t radio_retry_at = make_timeout_time_ms(3000);
     absolute_time_t radio_failing_since = get_absolute_time();
 
     bool udp_inited = false;
@@ -163,7 +175,7 @@ static void run_mode_main_loop(void) {
     // password that is *continuously* rejected means re-provisioning is
     // needed, so we require BADAUTH to persist before bouncing.
     absolute_time_t badauth_since = get_absolute_time();
-    bool            badauth_armed = false;
+    bool badauth_armed = false;
 
     xinput_init();
     watchdog_init();
@@ -199,18 +211,16 @@ static void run_mode_main_loop(void) {
                     // A radio that cannot init for a sustained window is
                     // broken hardware/power, not a hiccup. Bounce to setup
                     // with the rc recorded so a bundle explains why.
-                    if (absolute_time_diff_us(radio_failing_since,
-                                              get_absolute_time())
-                            >= 60LL * 1000 * 1000) {
+                    if (absolute_time_diff_us(radio_failing_since, get_absolute_time()) >=
+                        60LL * 1000 * 1000) {
                         char note[RESET_REASON_LAST_LINE_CAP];
-                        snprintf(note, sizeof(note),
-                                 "wifi: cyw43 init rc=%d x%u",
+                        snprintf(note, sizeof(note), "wifi: cyw43 init rc=%d x%u",
                                  wifi_last_init_rc(), (unsigned)radio_init_fails);
-                        diag_log_printf("run: %s -- bouncing to setup for diagnosis",
-                                        note);
+                        diag_log_printf("run: %s -- bouncing to setup for diagnosis", note);
                         reset_reason_request_setup_with_note(note);
                         watchdog_reboot(0, 0, 100);
-                        for (;;) tight_loop_contents();
+                        for (;;)
+                            tight_loop_contents();
                     }
                 }
             }
@@ -233,17 +243,19 @@ static void run_mode_main_loop(void) {
         // Sustained-BADAUTH watchdog. Arm on the first auth rejection and
         // disarm the instant we join or see any other state, so only a
         // continuously-wrong password ever reaches the timeout and bounces.
-        if (join_issued && wifi_state() != WIFI_STATE_JOINED
-                && wifi_last_error_code() == CDC_ERR_AUTH_FAIL) {
+        if (join_issued && wifi_state() != WIFI_STATE_JOINED &&
+            wifi_last_error_code() == CDC_ERR_AUTH_FAIL) {
             if (!badauth_armed) {
                 badauth_since = get_absolute_time();
                 badauth_armed = true;
-            } else if (absolute_time_diff_us(badauth_since, get_absolute_time())
-                       >= 120LL * 1000 * 1000) {
-                diag_log_msg("wifi: auth rejected for 120 s -- bouncing to setup so the password can be re-entered");
+            } else if (absolute_time_diff_us(badauth_since, get_absolute_time()) >=
+                       120LL * 1000 * 1000) {
+                diag_log_msg("wifi: auth rejected for 120 s -- bouncing to setup so the password "
+                             "can be re-entered");
                 reset_reason_request_setup_with_note("wifi: BADAUTH sustained 120s");
                 watchdog_reboot(0, 0, 100);
-                for (;;) tight_loop_contents();
+                for (;;)
+                    tight_loop_contents();
             }
         } else {
             badauth_armed = false;
@@ -275,7 +287,8 @@ static void setup_mode_main_loop(void) {
             diag_log_msg("setup: REBOOT_TO_RUN acknowledged, resetting");
             sleep_ms(50);
             watchdog_reboot(0, 0, 100);
-            for (;;) tight_loop_contents();
+            for (;;)
+                tight_loop_contents();
         }
         sleep_us(500);
     }
@@ -319,24 +332,25 @@ int main(void) {
     // costs us nothing on the setup path.
     {
         absolute_time_t pump_start = get_absolute_time();
-        absolute_time_t deadline   = make_timeout_time_ms(1500);
+        absolute_time_t deadline = make_timeout_time_ms(1500);
         bool mounted_in_pump = false;
         while (!time_reached(deadline)) {
             tud_task();
-            if (tud_mounted()) { mounted_in_pump = true; break; }
+            if (tud_mounted()) {
+                mounted_in_pump = true;
+                break;
+            }
             sleep_us(500);
         }
-        uint32_t elapsed_ms = (uint32_t)(
-            absolute_time_diff_us(pump_start, get_absolute_time()) / 1000);
+        uint32_t elapsed_ms =
+            (uint32_t)(absolute_time_diff_us(pump_start, get_absolute_time()) / 1000);
         if (mounted_in_pump) {
-            diag_log_printf(
-                "usb_init: enumeration completed during pump (%u ms)",
-                (unsigned)elapsed_ms);
+            diag_log_printf("usb_init: enumeration completed during pump (%u ms)",
+                            (unsigned)elapsed_ms);
         } else {
-            diag_log_printf(
-                "usb_init: pump timeout after %u ms (mounted=%d) -- "
-                "continuing with mode init",
-                (unsigned)elapsed_ms, (int)tud_mounted());
+            diag_log_printf("usb_init: pump timeout after %u ms (mounted=%d) -- "
+                            "continuing with mode init",
+                            (unsigned)elapsed_ms, (int)tud_mounted());
         }
     }
 

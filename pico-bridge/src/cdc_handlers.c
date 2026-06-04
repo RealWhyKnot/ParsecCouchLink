@@ -9,19 +9,20 @@
 #include "diag_log.h"
 #include "version.h"
 
-#define RX_BUFFER_SIZE  (CDC_MAX_FRAME * 2)
-#define TX_BUFFER_SIZE  (CDC_MAX_FRAME * 2)
+#define RX_BUFFER_SIZE (CDC_MAX_FRAME * 2)
+#define TX_BUFFER_SIZE (CDC_MAX_FRAME * 2)
 
 static uint8_t rx_buf[RX_BUFFER_SIZE];
-static size_t  rx_len;
-static bool    reboot_pending;
-static bool    bootsel_pending;
+static size_t rx_len;
+static bool reboot_pending;
+static bool bootsel_pending;
 
 static void send_nack(uint8_t seq, uint8_t code, uint8_t detail) {
-    uint8_t payload[2] = { code, detail };
+    uint8_t payload[2] = {code, detail};
     uint8_t frame[CDC_MAX_FRAME];
     size_t n = cdc_encode(CDC_RSP_NACK, seq, payload, 2, frame, sizeof(frame));
-    if (n) tud_cdc_write(frame, n);
+    if (n)
+        tud_cdc_write(frame, n);
 }
 
 static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
@@ -36,8 +37,7 @@ static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
     payload[2] = PICO_BRIDGE_FW_WIRE_MINOR;
     payload[3] = PICO_BRIDGE_FW_WIRE_PATCH;
     payload[4] = PICO_BRIDGE_BOARD_TYPE;
-    payload[5] = (have ? CDC_HELLO_FLAG_CREDS_PRESENT : 0)
-               | CDC_HELLO_FLAG_RUN_MODE_OK;
+    payload[5] = (have ? CDC_HELLO_FLAG_CREDS_PRESENT : 0) | CDC_HELLO_FLAG_RUN_MODE_OK;
     payload[6] = (uint8_t)(PICO_BRIDGE_FW_YEAR & 0xFFu);
     payload[7] = (uint8_t)((PICO_BRIDGE_FW_YEAR >> 8) & 0xFFu);
     payload[8] = PICO_BRIDGE_FW_MONTH;
@@ -50,22 +50,21 @@ static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
     return cdc_encode(CDC_RSP_HELLO, seq, payload, sizeof(payload), reply, cap);
 }
 
-static size_t handle_set_wifi(const cdc_frame_view_t *req,
-                              uint8_t *reply, size_t cap) {
+static size_t handle_set_wifi(const cdc_frame_view_t *req, uint8_t *reply, size_t cap) {
     if (req->payload_len < 2) {
-        uint8_t err[2] = { CDC_ERR_BAD_LENGTH, 0 };
+        uint8_t err[2] = {CDC_ERR_BAD_LENGTH, 0};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     uint8_t ssid_len = req->payload[0];
-    if (ssid_len == 0 || ssid_len > FLASH_CREDS_SSID_MAX
-        || (size_t)1 + ssid_len + 1 > req->payload_len) {
-        uint8_t err[2] = { CDC_ERR_BAD_LENGTH, 1 };
+    if (ssid_len == 0 || ssid_len > FLASH_CREDS_SSID_MAX ||
+        (size_t)1 + ssid_len + 1 > req->payload_len) {
+        uint8_t err[2] = {CDC_ERR_BAD_LENGTH, 1};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     uint8_t pass_len = req->payload[1 + ssid_len];
-    if (pass_len > FLASH_CREDS_PASS_MAX
-        || (size_t)1 + ssid_len + 1 + pass_len != req->payload_len) {
-        uint8_t err[2] = { CDC_ERR_BAD_LENGTH, 2 };
+    if (pass_len > FLASH_CREDS_PASS_MAX ||
+        (size_t)1 + ssid_len + 1 + pass_len != req->payload_len) {
+        uint8_t err[2] = {CDC_ERR_BAD_LENGTH, 2};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
 
@@ -88,13 +87,13 @@ static size_t handle_set_wifi(const cdc_frame_view_t *req,
     memset(&rec, 0, sizeof(rec));
 
     if (rc == -2) {
-        uint8_t err[2] = { CDC_ERR_FLASH_WRITE_FAIL, 0 };
+        uint8_t err[2] = {CDC_ERR_FLASH_WRITE_FAIL, 0};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     } else if (rc == -3) {
-        uint8_t err[2] = { CDC_ERR_FLASH_VERIFY_FAIL, 0 };
+        uint8_t err[2] = {CDC_ERR_FLASH_VERIFY_FAIL, 0};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     } else if (rc < 0) {
-        uint8_t err[2] = { CDC_ERR_INTERNAL, (uint8_t)(-rc) };
+        uint8_t err[2] = {CDC_ERR_INTERNAL, (uint8_t)(-rc)};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     return cdc_encode(CDC_RSP_SET_WIFI, req->seq, NULL, 0, reply, cap);
@@ -121,29 +120,28 @@ static size_t handle_device_name_get(uint8_t seq, uint8_t *reply, size_t cap) {
     if (!flash_creds_load(&rec)) {
         return cdc_encode(CDC_RSP_DEVICE_NAME, seq, NULL, 0, reply, cap);
     }
-    return cdc_encode(CDC_RSP_DEVICE_NAME, seq, rec.device_name, rec.name_len,
-                      reply, cap);
+    return cdc_encode(CDC_RSP_DEVICE_NAME, seq, rec.device_name, rec.name_len, reply, cap);
 }
 
-static size_t handle_device_name_set(const cdc_frame_view_t *req,
-                                     uint8_t *reply, size_t cap) {
+static size_t handle_device_name_set(const cdc_frame_view_t *req, uint8_t *reply, size_t cap) {
     if (req->payload_len > FLASH_CREDS_NAME_MAX) {
-        uint8_t err[2] = { CDC_ERR_BAD_LENGTH, 0 };
+        uint8_t err[2] = {CDC_ERR_BAD_LENGTH, 0};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     flash_creds_t rec;
     if (!flash_creds_load(&rec)) {
         // No creds yet; can't store a name on its own.
-        uint8_t err[2] = { CDC_ERR_INTERNAL, 1 };
+        uint8_t err[2] = {CDC_ERR_INTERNAL, 1};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     rec.name_len = (uint8_t)req->payload_len;
     memset(rec.device_name, 0, FLASH_CREDS_NAME_MAX);
-    if (req->payload_len) memcpy(rec.device_name, req->payload, req->payload_len);
+    if (req->payload_len)
+        memcpy(rec.device_name, req->payload, req->payload_len);
     int rc = flash_creds_store(&rec);
     memset(&rec, 0, sizeof(rec));
     if (rc != 0) {
-        uint8_t err[2] = { CDC_ERR_FLASH_WRITE_FAIL, 0 };
+        uint8_t err[2] = {CDC_ERR_FLASH_WRITE_FAIL, 0};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     return cdc_encode(CDC_RSP_SET_DEVICE_NAME, req->seq, NULL, 0, reply, cap);
@@ -156,10 +154,11 @@ static size_t handle_log_buffer(uint8_t seq, uint8_t *reply, size_t cap) {
     // older hosts (no understanding of the prefix) interoperate as
     // long as one or the other is patched.
     uint8_t buf[CDC_MAX_PAYLOAD];
-    if (sizeof(buf) < 4) return 0;
+    if (sizeof(buf) < 4)
+        return 0;
     uint32_t lost = 0;
-    size_t   tail_cap = sizeof(buf) - 4;
-    size_t   n = diag_log_snapshot(buf + 4, tail_cap, &lost);
+    size_t tail_cap = sizeof(buf) - 4;
+    size_t n = diag_log_snapshot(buf + 4, tail_cap, &lost);
     buf[0] = (uint8_t)(lost & 0xFFu);
     buf[1] = (uint8_t)((lost >> 8) & 0xFFu);
     buf[2] = (uint8_t)((lost >> 16) & 0xFFu);
@@ -174,14 +173,13 @@ static size_t handle_self_test(uint8_t seq, uint8_t *reply, size_t cap) {
     bool ok = true;
     flash_creds_t rec;
     bool have = flash_creds_load(&rec);
-    int n = snprintf(buf, sizeof(buf),
-                     "result=%s flash=%s creds=%s fw=%s board=0x%02X",
-                     ok ? "pass" : "fail",
-                     flash_ok ? "ok" : "bad",
-                     have ? "present" : "absent",
+    int n = snprintf(buf, sizeof(buf), "result=%s flash=%s creds=%s fw=%s board=0x%02X",
+                     ok ? "pass" : "fail", flash_ok ? "ok" : "bad", have ? "present" : "absent",
                      PICO_BRIDGE_FW_VERSION_STRING, PICO_BRIDGE_BOARD_TYPE);
-    if (n < 0) n = 0;
-    if ((size_t)n > sizeof(buf)) n = sizeof(buf);
+    if (n < 0)
+        n = 0;
+    if ((size_t)n > sizeof(buf))
+        n = sizeof(buf);
     uint8_t payload[1 + sizeof(buf)];
     payload[0] = ok ? 0 : 1;
     memcpy(&payload[1], buf, n);
@@ -190,21 +188,30 @@ static size_t handle_self_test(uint8_t seq, uint8_t *reply, size_t cap) {
 
 size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_cap) {
     switch (req->command) {
-        case CDC_CMD_HELLO:           return handle_hello(req->seq, reply, reply_cap);
-        case CDC_CMD_GET_STATUS:      return handle_hello(req->seq, reply, reply_cap); // for now, same body
-        case CDC_CMD_SET_WIFI:        return handle_set_wifi(req, reply, reply_cap);
-        case CDC_CMD_REBOOT_TO_RUN:   return handle_reboot(req->seq, reply, reply_cap);
-        case CDC_CMD_SELF_TEST:       return handle_self_test(req->seq, reply, reply_cap);
-        case CDC_CMD_GET_DEVICE_NAME: return handle_device_name_get(req->seq, reply, reply_cap);
-        case CDC_CMD_SET_DEVICE_NAME: return handle_device_name_set(req, reply, reply_cap);
-        case CDC_CMD_GET_UNIQUE_ID:   return handle_unique_id(req->seq, reply, reply_cap);
-        case CDC_CMD_GET_LOG_BUFFER:  return handle_log_buffer(req->seq, reply, reply_cap);
-        case CDC_CMD_REBOOT_TO_BOOTSEL:
-                                      return handle_reboot_to_bootsel(req->seq, reply, reply_cap);
-        default: {
-            uint8_t err[2] = { CDC_ERR_UNKNOWN_COMMAND, req->command };
-            return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, reply_cap);
-        }
+    case CDC_CMD_HELLO:
+        return handle_hello(req->seq, reply, reply_cap);
+    case CDC_CMD_GET_STATUS:
+        return handle_hello(req->seq, reply, reply_cap); // for now, same body
+    case CDC_CMD_SET_WIFI:
+        return handle_set_wifi(req, reply, reply_cap);
+    case CDC_CMD_REBOOT_TO_RUN:
+        return handle_reboot(req->seq, reply, reply_cap);
+    case CDC_CMD_SELF_TEST:
+        return handle_self_test(req->seq, reply, reply_cap);
+    case CDC_CMD_GET_DEVICE_NAME:
+        return handle_device_name_get(req->seq, reply, reply_cap);
+    case CDC_CMD_SET_DEVICE_NAME:
+        return handle_device_name_set(req, reply, reply_cap);
+    case CDC_CMD_GET_UNIQUE_ID:
+        return handle_unique_id(req->seq, reply, reply_cap);
+    case CDC_CMD_GET_LOG_BUFFER:
+        return handle_log_buffer(req->seq, reply, reply_cap);
+    case CDC_CMD_REBOOT_TO_BOOTSEL:
+        return handle_reboot_to_bootsel(req->seq, reply, reply_cap);
+    default: {
+        uint8_t err[2] = {CDC_ERR_UNKNOWN_COMMAND, req->command};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, reply_cap);
+    }
     }
 }
 
@@ -219,13 +226,11 @@ bool cdc_handlers_reboot_pending(void) {
     // frame we just queued has actually left the device. tud_cdc_write_available()
     // returns the number of FREE bytes, so the FIFO is empty when it
     // equals the configured TX bufsize.
-    return reboot_pending
-        && (tud_cdc_write_available() == CFG_TUD_CDC_TX_BUFSIZE);
+    return reboot_pending && (tud_cdc_write_available() == CFG_TUD_CDC_TX_BUFSIZE);
 }
 
 bool cdc_handlers_bootsel_pending(void) {
-    return bootsel_pending
-        && (tud_cdc_write_available() == CFG_TUD_CDC_TX_BUFSIZE);
+    return bootsel_pending && (tud_cdc_write_available() == CFG_TUD_CDC_TX_BUFSIZE);
 }
 
 void cdc_handlers_poll(void) {
@@ -248,7 +253,8 @@ void cdc_handlers_poll(void) {
     // never opens the line they stay there until reboot, which is fine.
     while (tud_cdc_available() && rx_len < sizeof(rx_buf)) {
         size_t want = sizeof(rx_buf) - rx_len;
-        if (want > 64) want = 64;
+        if (want > 64)
+            want = 64;
         rx_len += tud_cdc_read(&rx_buf[rx_len], want);
     }
 
@@ -257,15 +263,16 @@ void cdc_handlers_poll(void) {
         cdc_frame_view_t view;
         size_t consumed = 0;
         cdc_decode_status_t st = cdc_try_decode(rx_buf, rx_len, &view, &consumed);
-        if (st == CDC_DECODE_NEED_MORE) break;
+        if (st == CDC_DECODE_NEED_MORE)
+            break;
 
         if (st == CDC_DECODE_OK) {
             diag_log_printf("cdc: dispatching cmd=0x%02X seq=%u payload=%u bytes",
-                            (unsigned)view.command, (unsigned)view.seq,
-                            (unsigned)view.payload_len);
+                            (unsigned)view.command, (unsigned)view.seq, (unsigned)view.payload_len);
             uint8_t reply[CDC_MAX_FRAME];
             size_t n = cdc_dispatch(&view, reply, sizeof(reply));
-            if (n > 0) tud_cdc_write(reply, n);
+            if (n > 0)
+                tud_cdc_write(reply, n);
             tud_cdc_write_flush();
             // Shift remaining bytes down.
             memmove(rx_buf, &rx_buf[consumed], rx_len - consumed);

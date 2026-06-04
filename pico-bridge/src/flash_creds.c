@@ -17,9 +17,9 @@
 #error "PICO_FLASH_SIZE_BYTES not defined; check board headers"
 #endif
 
-#define SLOT_SIZE       FLASH_SECTOR_SIZE                       // 4096
-#define SLOT_A_OFFSET   (PICO_FLASH_SIZE_BYTES - 2 * SLOT_SIZE)
-#define SLOT_B_OFFSET   (PICO_FLASH_SIZE_BYTES - 1 * SLOT_SIZE)
+#define SLOT_SIZE FLASH_SECTOR_SIZE // 4096
+#define SLOT_A_OFFSET (PICO_FLASH_SIZE_BYTES - 2 * SLOT_SIZE)
+#define SLOT_B_OFFSET (PICO_FLASH_SIZE_BYTES - 1 * SLOT_SIZE)
 
 _Static_assert(FLASH_CREDS_RECORD_SIZE <= FLASH_PAGE_SIZE,
                "credential record must fit in a single flash program page");
@@ -39,12 +39,17 @@ static uint32_t crc32_zlib(const uint8_t *data, size_t n) {
 }
 
 static bool record_is_valid(const flash_creds_t *r) {
-    if (r->magic != FLASH_CREDS_MAGIC) return false;
-    if (r->version != FLASH_CREDS_VERSION) return false;
-    if (r->ssid_len == 0 || r->ssid_len > FLASH_CREDS_SSID_MAX) return false;
-    if (r->pass_len > FLASH_CREDS_PASS_MAX) return false;
-    if (r->name_len > FLASH_CREDS_NAME_MAX) return false;
-    uint32_t crc = crc32_zlib((const uint8_t*)r, FLASH_CREDS_RECORD_SIZE - 4);
+    if (r->magic != FLASH_CREDS_MAGIC)
+        return false;
+    if (r->version != FLASH_CREDS_VERSION)
+        return false;
+    if (r->ssid_len == 0 || r->ssid_len > FLASH_CREDS_SSID_MAX)
+        return false;
+    if (r->pass_len > FLASH_CREDS_PASS_MAX)
+        return false;
+    if (r->name_len > FLASH_CREDS_NAME_MAX)
+        return false;
+    uint32_t crc = crc32_zlib((const uint8_t *)r, FLASH_CREDS_RECORD_SIZE - 4);
     return crc == r->crc32;
 }
 
@@ -73,7 +78,7 @@ bool flash_creds_load(flash_creds_t *out) {
 }
 
 typedef struct {
-    uint32_t      offset;
+    uint32_t offset;
     const uint8_t *data;
 } flash_op_args_t;
 
@@ -93,7 +98,7 @@ static int program_slot(uint32_t offset, const flash_creds_t *rec) {
     memset(buf, 0xFF, sizeof(buf));
     memcpy(buf, rec, FLASH_CREDS_RECORD_SIZE);
 
-    flash_op_args_t args = { .offset = offset, .data = buf };
+    flash_op_args_t args = {.offset = offset, .data = buf};
     // flash_safe_execute coordinates with core 1 (cyw43) when present and
     // keeps interrupt-disabled windows scoped to the actual erase/program
     // calls instead of one big block. 1 s lockout is far more than the
@@ -109,9 +114,12 @@ static int program_slot(uint32_t offset, const flash_creds_t *rec) {
 }
 
 int flash_creds_store(const flash_creds_t *rec) {
-    if (rec->ssid_len == 0 || rec->ssid_len > FLASH_CREDS_SSID_MAX) return -1;
-    if (rec->pass_len > FLASH_CREDS_PASS_MAX) return -1;
-    if (rec->name_len > FLASH_CREDS_NAME_MAX) return -1;
+    if (rec->ssid_len == 0 || rec->ssid_len > FLASH_CREDS_SSID_MAX)
+        return -1;
+    if (rec->pass_len > FLASH_CREDS_PASS_MAX)
+        return -1;
+    if (rec->name_len > FLASH_CREDS_NAME_MAX)
+        return -1;
 
     // Pick the older slot to write into so we keep at least one valid
     // record at all times.
@@ -131,8 +139,7 @@ int flash_creds_store(const flash_creds_t *rec) {
         target_offset = SLOT_A_OFFSET;
         new_generation = b->generation + 1;
     } else {
-        const flash_creds_t *winner =
-            ((int32_t)(a->generation - b->generation) > 0) ? a : b;
+        const flash_creds_t *winner = ((int32_t)(a->generation - b->generation) > 0) ? a : b;
         target_offset = (winner == a) ? SLOT_B_OFFSET : SLOT_A_OFFSET;
         new_generation = winner->generation + 1;
     }
@@ -142,14 +149,12 @@ int flash_creds_store(const flash_creds_t *rec) {
     to_write.version = FLASH_CREDS_VERSION;
     to_write.generation = new_generation;
     memset(to_write.reserved, 0, sizeof(to_write.reserved));
-    to_write.crc32 = crc32_zlib((const uint8_t*)&to_write,
-                                FLASH_CREDS_RECORD_SIZE - 4);
+    to_write.crc32 = crc32_zlib((const uint8_t *)&to_write, FLASH_CREDS_RECORD_SIZE - 4);
 
     int rc = program_slot(target_offset, &to_write);
     if (rc == 0) {
         diag_log_printf("flash_creds: wrote slot %s, gen=%u",
-                        target_offset == SLOT_A_OFFSET ? "A" : "B",
-                        (unsigned)new_generation);
+                        target_offset == SLOT_A_OFFSET ? "A" : "B", (unsigned)new_generation);
     } else {
         diag_log_printf("flash_creds: store failed rc=%d", rc);
     }

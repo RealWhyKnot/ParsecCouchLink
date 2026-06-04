@@ -33,14 +33,14 @@ typedef struct {
     uint32_t crc32;
     uint32_t r0, r1, r2, r3, r12, lr, pc, xpsr;
     uint32_t sp_at_fault;
-    uint32_t cfsr;   // valid only on Cortex-M33 / RP2350; zero on RP2040
+    uint32_t cfsr; // valid only on Cortex-M33 / RP2350; zero on RP2040
     uint32_t hfsr;
     uint32_t mmfar;
     uint32_t bfar;
-    uint8_t  fault_status_valid;  // 1 = the four regs above are RP2350-valid
-    uint8_t  force_setup;         // 1 = boot_mode_decide must force setup mode
-    uint8_t  reserved[2];
-    char     last_line[RESET_REASON_LAST_LINE_CAP];
+    uint8_t fault_status_valid; // 1 = the four regs above are RP2350-valid
+    uint8_t force_setup;        // 1 = boot_mode_decide must force setup mode
+    uint8_t reserved[2];
+    char last_line[RESET_REASON_LAST_LINE_CAP];
 } crash_breadcrumb_t;
 
 static crash_breadcrumb_t __uninitialized_ram(g_crash_breadcrumb);
@@ -72,19 +72,22 @@ static uint32_t breadcrumb_crc(void) {
 }
 
 static bool breadcrumb_valid(void) {
-    if (g_crash_breadcrumb.magic != BREADCRUMB_MAGIC) return false;
+    if (g_crash_breadcrumb.magic != BREADCRUMB_MAGIC)
+        return false;
     return g_crash_breadcrumb.crc32 == breadcrumb_crc();
 }
 
 static bool breadcrumb_read_last_line(char *out, size_t cap) {
-    if (!breadcrumb_valid()) return false;
+    if (!breadcrumb_valid())
+        return false;
     size_t n = 0;
-    while (n < sizeof(g_crash_breadcrumb.last_line)
-           && g_crash_breadcrumb.last_line[n] != 0) {
+    while (n < sizeof(g_crash_breadcrumb.last_line) && g_crash_breadcrumb.last_line[n] != 0) {
         n++;
     }
-    if (n > cap - 1) n = cap - 1;
-    for (size_t i = 0; i < n; i++) out[i] = g_crash_breadcrumb.last_line[i];
+    if (n > cap - 1)
+        n = cap - 1;
+    for (size_t i = 0; i < n; i++)
+        out[i] = g_crash_breadcrumb.last_line[i];
     out[n] = 0;
     return n > 0;
 }
@@ -104,18 +107,18 @@ static void breadcrumb_fill_info(reset_reason_info_t *out) {
         return;
     }
     out->full_frame_valid = true;
-    out->fault_r0  = g_crash_breadcrumb.r0;
-    out->fault_r1  = g_crash_breadcrumb.r1;
-    out->fault_r2  = g_crash_breadcrumb.r2;
-    out->fault_r3  = g_crash_breadcrumb.r3;
+    out->fault_r0 = g_crash_breadcrumb.r0;
+    out->fault_r1 = g_crash_breadcrumb.r1;
+    out->fault_r2 = g_crash_breadcrumb.r2;
+    out->fault_r3 = g_crash_breadcrumb.r3;
     out->fault_r12 = g_crash_breadcrumb.r12;
-    out->fault_sp  = g_crash_breadcrumb.sp_at_fault;
+    out->fault_sp = g_crash_breadcrumb.sp_at_fault;
     if (g_crash_breadcrumb.fault_status_valid) {
         out->fault_status_valid = true;
-        out->fault_cfsr  = g_crash_breadcrumb.cfsr;
-        out->fault_hfsr  = g_crash_breadcrumb.hfsr;
+        out->fault_cfsr = g_crash_breadcrumb.cfsr;
+        out->fault_hfsr = g_crash_breadcrumb.hfsr;
         out->fault_mmfar = g_crash_breadcrumb.mmfar;
-        out->fault_bfar  = g_crash_breadcrumb.bfar;
+        out->fault_bfar = g_crash_breadcrumb.bfar;
     }
     // Read and clear the one-shot flag so a second call after an
     // accidental breadcrumb_clear() doesn't re-trigger it.
@@ -125,21 +128,21 @@ static void breadcrumb_fill_info(reset_reason_info_t *out) {
 
 reset_reason_info_t reset_reason_classify(void) {
     reset_reason_info_t out = (reset_reason_info_t){
-        .reason                 = RESET_REASON_UNKNOWN,
-        .fault_pc               = 0,
-        .fault_lr               = 0,
-        .fault_xpsr             = 0,
-        .full_frame_valid       = false,
-        .fault_status_valid     = false,
-        .last_line_valid        = false,
+        .reason = RESET_REASON_UNKNOWN,
+        .fault_pc = 0,
+        .fault_lr = 0,
+        .fault_xpsr = 0,
+        .full_frame_valid = false,
+        .fault_status_valid = false,
+        .last_line_valid = false,
         .force_setup_after_reboot = false,
     };
     out.last_line[0] = 0;
 
     uint32_t magic = watchdog_hw->scratch[0];
-    uint32_t pc    = watchdog_hw->scratch[1];
-    uint32_t lr    = watchdog_hw->scratch[2];
-    uint32_t xpsr  = watchdog_hw->scratch[3];
+    uint32_t pc = watchdog_hw->scratch[1];
+    uint32_t lr = watchdog_hw->scratch[2];
+    uint32_t xpsr = watchdog_hw->scratch[3];
 
     watchdog_hw->scratch[0] = 0;
     watchdog_hw->scratch[1] = 0;
@@ -159,28 +162,25 @@ reset_reason_info_t reset_reason_classify(void) {
 
     if (wdt) {
         if (magic == RESET_REASON_MAGIC_FAULT) {
-            out.reason     = RESET_REASON_FAULT;
-            out.fault_pc   = pc;
-            out.fault_lr   = lr;
+            out.reason = RESET_REASON_FAULT;
+            out.fault_pc = pc;
+            out.fault_lr = lr;
             out.fault_xpsr = xpsr;
             breadcrumb_fill_info(&out);
-            out.last_line_valid = breadcrumb_read_last_line(out.last_line,
-                                                            sizeof(out.last_line));
+            out.last_line_valid = breadcrumb_read_last_line(out.last_line, sizeof(out.last_line));
         } else if (magic == RESET_REASON_MAGIC_NORMAL_EXIT) {
             out.reason = RESET_REASON_DELIBERATE;
             // A deliberate reboot may carry the force_setup flag set by
             // reset_reason_request_setup_after_reboot(). Read it now and
             // clear it (one-shot) before breadcrumb_clear() below.
             breadcrumb_fill_info(&out);
-            out.last_line_valid = breadcrumb_read_last_line(out.last_line,
-                                                            sizeof(out.last_line));
+            out.last_line_valid = breadcrumb_read_last_line(out.last_line, sizeof(out.last_line));
         } else {
             out.reason = RESET_REASON_WATCHDOG_HANG;
             // Hang during boot may still have a breadcrumb from the
             // previous boot's last live line -- worth carrying.
             breadcrumb_fill_info(&out);
-            out.last_line_valid = breadcrumb_read_last_line(out.last_line,
-                                                            sizeof(out.last_line));
+            out.last_line_valid = breadcrumb_read_last_line(out.last_line, sizeof(out.last_line));
         }
     } else {
         out.reason = RESET_REASON_COLD_OR_PIN;
@@ -195,13 +195,19 @@ reset_reason_info_t reset_reason_classify(void) {
 
 const char *reset_reason_name(reset_reason_t r) {
     switch (r) {
-        case RESET_REASON_COLD_OR_PIN:   return "cold-or-pin-reset";
-        case RESET_REASON_FLASH_UPDATE:  return "uf2-reflash";
-        case RESET_REASON_DELIBERATE:    return "deliberate-reboot";
-        case RESET_REASON_WATCHDOG_HANG: return "watchdog-hang";
-        case RESET_REASON_FAULT:         return "fault";
-        case RESET_REASON_UNKNOWN:
-        default:                         return "unknown";
+    case RESET_REASON_COLD_OR_PIN:
+        return "cold-or-pin-reset";
+    case RESET_REASON_FLASH_UPDATE:
+        return "uf2-reflash";
+    case RESET_REASON_DELIBERATE:
+        return "deliberate-reboot";
+    case RESET_REASON_WATCHDOG_HANG:
+        return "watchdog-hang";
+    case RESET_REASON_FAULT:
+        return "fault";
+    case RESET_REASON_UNKNOWN:
+    default:
+        return "unknown";
     }
 }
 
@@ -246,8 +252,8 @@ void reset_reason_record_fault(const uint32_t *frame, uint32_t sp_at_fault) {
     // context. Even if the breadcrumb storage fails or its CRC gets
     // torn, the reset-reason classifier can still report the fault
     // PC/LR/xPSR from scratch on the next boot.
-    uint32_t pc   = frame[6];
-    uint32_t lr   = frame[5];
+    uint32_t pc = frame[6];
+    uint32_t lr = frame[5];
     uint32_t xpsr = frame[7];
     watchdog_hw->scratch[1] = pc;
     watchdog_hw->scratch[2] = lr;
@@ -261,27 +267,27 @@ void reset_reason_record_fault(const uint32_t *frame, uint32_t sp_at_fault) {
     // would fault again. The PICO_RP2040 guard keeps the RP2040 path
     // entirely off them.
     memset(&g_crash_breadcrumb, 0, sizeof(g_crash_breadcrumb));
-    g_crash_breadcrumb.r0   = frame[0];
-    g_crash_breadcrumb.r1   = frame[1];
-    g_crash_breadcrumb.r2   = frame[2];
-    g_crash_breadcrumb.r3   = frame[3];
-    g_crash_breadcrumb.r12  = frame[4];
-    g_crash_breadcrumb.lr   = frame[5];
-    g_crash_breadcrumb.pc   = frame[6];
+    g_crash_breadcrumb.r0 = frame[0];
+    g_crash_breadcrumb.r1 = frame[1];
+    g_crash_breadcrumb.r2 = frame[2];
+    g_crash_breadcrumb.r3 = frame[3];
+    g_crash_breadcrumb.r12 = frame[4];
+    g_crash_breadcrumb.lr = frame[5];
+    g_crash_breadcrumb.pc = frame[6];
     g_crash_breadcrumb.xpsr = frame[7];
     g_crash_breadcrumb.sp_at_fault = sp_at_fault;
 #if !PICO_RP2040
     {
         // SCB->CFSR @ 0xE000ED28, HFSR @ 0xE000ED2C,
         // MMFAR @ 0xE000ED34, BFAR @ 0xE000ED38.
-        volatile uint32_t *cfsr  = (volatile uint32_t *)0xE000ED28u;
-        volatile uint32_t *hfsr  = (volatile uint32_t *)0xE000ED2Cu;
+        volatile uint32_t *cfsr = (volatile uint32_t *)0xE000ED28u;
+        volatile uint32_t *hfsr = (volatile uint32_t *)0xE000ED2Cu;
         volatile uint32_t *mmfar = (volatile uint32_t *)0xE000ED34u;
-        volatile uint32_t *bfar  = (volatile uint32_t *)0xE000ED38u;
-        g_crash_breadcrumb.cfsr  = *cfsr;
-        g_crash_breadcrumb.hfsr  = *hfsr;
+        volatile uint32_t *bfar = (volatile uint32_t *)0xE000ED38u;
+        g_crash_breadcrumb.cfsr = *cfsr;
+        g_crash_breadcrumb.hfsr = *hfsr;
         g_crash_breadcrumb.mmfar = *mmfar;
-        g_crash_breadcrumb.bfar  = *bfar;
+        g_crash_breadcrumb.bfar = *bfar;
         g_crash_breadcrumb.fault_status_valid = 1;
     }
 #endif

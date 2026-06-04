@@ -2,6 +2,8 @@
 
 .gitattributes text eol=lf
 .gitignore text eol=lf
+.clang-format text eol=lf
+.editorconfig text eol=lf
 LICENSE text eol=lf
 NOTICE text eol=lf
 CMakeLists.txt text eol=lf
@@ -20,6 +22,8 @@ CMakeLists.txt text eol=lf
 *.toml text eol=lf
 *.cmake text eol=lf
 *.lock text eol=lf
+
+.githooks/* text eol=lf
 
 *.uf2 binary
 *.exe binary

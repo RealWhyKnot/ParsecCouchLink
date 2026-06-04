@@ -31,7 +31,8 @@ static bool __no_inline_not_in_flash_func(read_bootsel_button)(void) {
     hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
                     GPIO_OVERRIDE_LOW << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
                     IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_BITS);
-    for (volatile int i = 0; i < 1000; i++);
+    for (volatile int i = 0; i < 1000; i++)
+        ;
     bool pressed = !(sio_hw->gpio_hi_in & (1u << CS_PIN_INDEX));
     hw_write_masked(&ioqspi_hw->io[CS_PIN_INDEX].ctrl,
                     GPIO_OVERRIDE_NORMAL << IO_QSPI_GPIO_QSPI_SS_CTRL_OEOVER_LSB,
@@ -47,7 +48,8 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
     // Previous boot explicitly requested a setup-mode bounce (e.g. the
     // Wi-Fi association watchdog fired). Honor it regardless of creds.
     if (rr->force_setup_after_reboot) {
-        diag_log_msg("boot: previous boot requested setup-mode bounce; honoring with creds retained");
+        diag_log_msg(
+            "boot: previous boot requested setup-mode bounce; honoring with creds retained");
         current = BOOT_MODE_SETUP;
         return current;
     }
@@ -112,7 +114,8 @@ bool boot_mode_bootsel_at_boot(void) {
 void boot_mode_post_enum_bootsel_poll(void) {
     // Fast-exit: if BOOTSEL was not pressed at boot, the 3-second wipe
     // window is irrelevant. Also exit after 3 seconds -- decision settled.
-    if (!bootsel_at_boot) return;
+    if (!bootsel_at_boot)
+        return;
 
     int64_t elapsed_us = absolute_time_diff_us(decide_time, get_absolute_time());
 
@@ -124,12 +127,14 @@ void boot_mode_post_enum_bootsel_poll(void) {
         return;
     }
 
-    if (elapsed_us < 3000000) return;
+    if (elapsed_us < 3000000)
+        return;
 
     // BOOTSEL has been held continuously since boot for >= 3 seconds.
     // This matches the old blocking-wait behavior: wipe creds and reboot.
     diag_log_msg("boot: BOOTSEL held >= 3s -- wiping creds and rebooting to setup mode");
     flash_creds_clear();
     watchdog_reboot(0, 0, 100);
-    for (;;) tight_loop_contents();
+    for (;;)
+        tight_loop_contents();
 }

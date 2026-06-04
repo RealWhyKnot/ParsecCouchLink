@@ -8,7 +8,7 @@
 #include "lwip/netif.h"
 
 #include "diag_log.h"
-#include "cdc_proto.h"  // for CDC_ERR_* codes (re-used for status reporting)
+#include "cdc_proto.h" // for CDC_ERR_* codes (re-used for status reporting)
 
 // Country code default. Override at build time with
 // -DPICO_BRIDGE_WIFI_COUNTRY=CYW43_COUNTRY_<XX>. WORLDWIDE is the
@@ -19,7 +19,7 @@
 #endif
 
 #define WIFI_COUNTRY_NAME_(c) #c
-#define WIFI_COUNTRY_NAME(c)  WIFI_COUNTRY_NAME_(c)
+#define WIFI_COUNTRY_NAME(c) WIFI_COUNTRY_NAME_(c)
 
 // After this many consecutive join failures, do a full cyw43_arch
 // deinit / init cycle before retrying. Community reports show the
@@ -36,9 +36,9 @@
 #define WIFI_DHCP_REGRAB_MS 30000u
 
 static wifi_state_t state = WIFI_STATE_IDLE;
-static int8_t  rssi = 0;
+static int8_t rssi = 0;
 static uint8_t last_error = 0;
-static int     last_init_rc = 0;  // rc from the most recent cyw43_arch_init
+static int last_init_rc = 0; // rc from the most recent cyw43_arch_init
 
 static char saved_ssid[33];
 static char saved_pass[64];
@@ -48,10 +48,10 @@ static uint8_t saved_pass_len = 0;
 static absolute_time_t join_started;
 static absolute_time_t next_retry;
 static absolute_time_t no_ip_since;
-static bool            no_ip_armed = false;
-static uint32_t        retry_count = 0;
-static uint32_t        consecutive_failures = 0;
-static bool            link_logged_after_join = false;
+static bool no_ip_armed = false;
+static uint32_t retry_count = 0;
+static uint32_t consecutive_failures = 0;
+static bool link_logged_after_join = false;
 
 static void apply_power_save(void) {
     // Default `CYW43_DEFAULT_PM = 0xA11142` (PM2 with 200 ms
@@ -98,8 +98,7 @@ static bool wifi_reinit_after_wedge(void) {
     return true;
 }
 
-void wifi_start_join(const char *ssid, uint8_t ssid_len,
-                     const char *password, uint8_t pass_len) {
+void wifi_start_join(const char *ssid, uint8_t ssid_len, const char *password, uint8_t pass_len) {
     if (ssid_len == 0 || ssid_len > 32) {
         diag_log_printf("wifi: rejecting ssid_len=%u", (unsigned)ssid_len);
         state = WIFI_STATE_FAILED;
@@ -109,13 +108,14 @@ void wifi_start_join(const char *ssid, uint8_t ssid_len,
     memcpy(saved_ssid, ssid, ssid_len);
     saved_ssid[ssid_len] = 0;
     saved_ssid_len = ssid_len;
-    if (pass_len > 63) pass_len = 63;
+    if (pass_len > 63)
+        pass_len = 63;
     memcpy(saved_pass, password, pass_len);
     saved_pass[pass_len] = 0;
     saved_pass_len = pass_len;
 
-    diag_log_printf("wifi: starting join to %s (ssid_len=%u pass_len=%u)",
-                    saved_ssid, (unsigned)ssid_len, (unsigned)pass_len);
+    diag_log_printf("wifi: starting join to %s (ssid_len=%u pass_len=%u)", saved_ssid,
+                    (unsigned)ssid_len, (unsigned)pass_len);
     state = WIFI_STATE_JOINING;
     last_error = 0;
     join_started = get_absolute_time();
@@ -129,8 +129,7 @@ void wifi_start_join(const char *ssid, uint8_t ssid_len,
     // link_status can lie about BADAUTH vs JOIN). We still use
     // cyw43_tcpip_link_status below for the eventual UP/NONET/
     // BADAUTH classification once join is in flight.
-    int rc = cyw43_arch_wifi_connect_async(saved_ssid, saved_pass,
-                                           CYW43_AUTH_WPA2_AES_PSK);
+    int rc = cyw43_arch_wifi_connect_async(saved_ssid, saved_pass, CYW43_AUTH_WPA2_AES_PSK);
     if (rc != 0) {
         diag_log_printf("wifi: initial connect_async returned rc=%d", rc);
         state = WIFI_STATE_FAILED;
@@ -141,7 +140,8 @@ void wifi_start_join(const char *ssid, uint8_t ssid_len,
 }
 
 void wifi_task(void) {
-    if (state == WIFI_STATE_IDLE) return;
+    if (state == WIFI_STATE_IDLE)
+        return;
 
     int link = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
 
@@ -172,8 +172,8 @@ void wifi_task(void) {
                 no_ip_since = get_absolute_time();
                 no_ip_armed = true;
                 diag_log_msg("wifi: link up but no IP -- watching for DHCP regrab");
-            } else if (absolute_time_diff_us(no_ip_since, get_absolute_time())
-                       > (int64_t)WIFI_DHCP_REGRAB_MS * 1000) {
+            } else if (absolute_time_diff_us(no_ip_since, get_absolute_time()) >
+                       (int64_t)WIFI_DHCP_REGRAB_MS * 1000) {
                 diag_log_msg("wifi: no IP for 30 s -- restarting DHCP");
                 if (nif) {
                     dhcp_release_and_stop(nif);
@@ -203,8 +203,7 @@ void wifi_task(void) {
             last_error = CDC_ERR_NO_2G_NETWORK;
             next_retry = make_timeout_time_ms(15000);
             consecutive_failures++;
-            diag_log_printf("wifi: SSID not found (fail #%u)",
-                            (unsigned)consecutive_failures);
+            diag_log_printf("wifi: SSID not found (fail #%u)", (unsigned)consecutive_failures);
             return;
         }
         if (link == CYW43_LINK_BADAUTH) {
@@ -221,8 +220,7 @@ void wifi_task(void) {
             last_error = CDC_ERR_INTERNAL;
             next_retry = make_timeout_time_ms(15000);
             consecutive_failures++;
-            diag_log_printf("wifi: generic join fail (fail #%u)",
-                            (unsigned)consecutive_failures);
+            diag_log_printf("wifi: generic join fail (fail #%u)", (unsigned)consecutive_failures);
             return;
         }
         // Otherwise still negotiating; check timeout.
@@ -249,32 +247,38 @@ void wifi_task(void) {
             }
 
             retry_count++;
-            diag_log_printf("wifi: retry #%u (consecutive_failures=%u)",
-                            (unsigned)retry_count,
+            diag_log_printf("wifi: retry #%u (consecutive_failures=%u)", (unsigned)retry_count,
                             (unsigned)consecutive_failures);
             join_started = get_absolute_time();
             link_logged_after_join = false;
             state = WIFI_STATE_JOINING;
-            int rc = cyw43_arch_wifi_connect_async(saved_ssid, saved_pass,
-                                                   CYW43_AUTH_WPA2_AES_PSK);
+            int rc = cyw43_arch_wifi_connect_async(saved_ssid, saved_pass, CYW43_AUTH_WPA2_AES_PSK);
             if (rc != 0) {
                 state = WIFI_STATE_FAILED;
                 last_error = CDC_ERR_INTERNAL;
                 next_retry = make_timeout_time_ms(15000);
                 consecutive_failures++;
                 diag_log_printf("wifi: retry #%u connect_async rc=%d (fail #%u)",
-                                (unsigned)retry_count, rc,
-                                (unsigned)consecutive_failures);
+                                (unsigned)retry_count, rc, (unsigned)consecutive_failures);
             }
         }
     }
 }
 
-wifi_state_t wifi_state(void)         { return state; }
-int8_t       wifi_rssi(void)          { return rssi; }
-uint8_t      wifi_last_error_code(void) { return last_error; }
-int          wifi_last_init_rc(void)  { return last_init_rc; }
-uint32_t     wifi_ip(void) {
-    if (state != WIFI_STATE_JOINED) return 0;
+wifi_state_t wifi_state(void) {
+    return state;
+}
+int8_t wifi_rssi(void) {
+    return rssi;
+}
+uint8_t wifi_last_error_code(void) {
+    return last_error;
+}
+int wifi_last_init_rc(void) {
+    return last_init_rc;
+}
+uint32_t wifi_ip(void) {
+    if (state != WIFI_STATE_JOINED)
+        return 0;
     return cyw43_state.netif[0].ip_addr.addr;
 }

@@ -5,8 +5,8 @@
 #include "reset_reason.h"
 
 typedef enum {
-    BOOT_MODE_SETUP = 0,   // CDC, no Wi-Fi
-    BOOT_MODE_RUN   = 1,   // XInput, Wi-Fi
+    BOOT_MODE_SETUP = 0, // CDC, no Wi-Fi
+    BOOT_MODE_RUN = 1,   // XInput, Wi-Fi
 } boot_mode_t;
 
 // Decide which mode to boot into. Reads reset context from `rr`

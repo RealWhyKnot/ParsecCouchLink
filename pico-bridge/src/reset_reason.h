@@ -32,17 +32,17 @@
 //   - scratch[5..7] are kept available for SDK bootrom helpers.
 
 #define RESET_REASON_MAGIC_NORMAL_EXIT 0xB007C1EAu
-#define RESET_REASON_MAGIC_FAULT       0xFA0FAEDDu
+#define RESET_REASON_MAGIC_FAULT 0xFA0FAEDDu
 
 #define RESET_REASON_LAST_LINE_CAP 56
 
 typedef enum {
     RESET_REASON_UNKNOWN = 0,
-    RESET_REASON_COLD_OR_PIN,    // cold power-on, RUN-pin reset, or debugger reset
-    RESET_REASON_FLASH_UPDATE,   // UF2 was just dropped (RP2350 only; RP2040 cannot distinguish)
-    RESET_REASON_DELIBERATE,     // firmware called watchdog_reboot() in a healthy state
-    RESET_REASON_WATCHDOG_HANG,  // hardware watchdog tripped because firmware hung
-    RESET_REASON_FAULT,          // HardFault / BusFault / etc. captured a frame and reset
+    RESET_REASON_COLD_OR_PIN,   // cold power-on, RUN-pin reset, or debugger reset
+    RESET_REASON_FLASH_UPDATE,  // UF2 was just dropped (RP2350 only; RP2040 cannot distinguish)
+    RESET_REASON_DELIBERATE,    // firmware called watchdog_reboot() in a healthy state
+    RESET_REASON_WATCHDOG_HANG, // hardware watchdog tripped because firmware hung
+    RESET_REASON_FAULT,         // HardFault / BusFault / etc. captured a frame and reset
 } reset_reason_t;
 
 typedef struct {
@@ -50,7 +50,7 @@ typedef struct {
     // The three "always-available" registers, persisted via watchdog
     // scratch so they survive even when the larger breadcrumb does not
     // (RP2350 RUN-pin reset).
-    uint32_t fault_pc;                                  // valid only when reason == RESET_REASON_FAULT
+    uint32_t fault_pc; // valid only when reason == RESET_REASON_FAULT
     uint32_t fault_lr;
     uint32_t fault_xpsr;
     // The rest of the hardware-stacked basic exception frame plus the
@@ -58,24 +58,24 @@ typedef struct {
     // __uninitialized_ram. Valid when the next boot found the breadcrumb
     // intact (most watchdog/SCB-reset cases on both chips; not RP2350
     // RUN-pin reset per pico-sdk #2203).
-    bool     full_frame_valid;
+    bool full_frame_valid;
     uint32_t fault_r0, fault_r1, fault_r2, fault_r3, fault_r12;
     uint32_t fault_sp;
     // Cortex-M33 fault status registers (CFSR / HFSR / MMFAR / BFAR).
     // Only the M33 stacks these; RP2040's Cortex-M0+ has neither the
     // CFSR nor the granular fault vectors, so these stay false/zero on
     // RP2040.
-    bool     fault_status_valid;
+    bool fault_status_valid;
     uint32_t fault_cfsr;
     uint32_t fault_hfsr;
     uint32_t fault_mmfar;
     uint32_t fault_bfar;
-    bool     last_line_valid;
-    char     last_line[RESET_REASON_LAST_LINE_CAP];     // most recent diag_log line before the fault
+    bool last_line_valid;
+    char last_line[RESET_REASON_LAST_LINE_CAP]; // most recent diag_log line before the fault
     // Set when the previous boot explicitly requested a setup-mode
     // bounce (e.g. Wi-Fi association watchdog fired). One-shot: cleared
     // from the breadcrumb after classify() reads it.
-    bool     force_setup_after_reboot;
+    bool force_setup_after_reboot;
 } reset_reason_info_t;
 
 // Read scratch + breadcrumb + SDK state, classify, and clear the

@@ -12,6 +12,7 @@ build-host-tests/
 dist/
 release/
 .local_build_state.json
+version.txt
 build_log.txt
 build_stdout.txt
 build_stderr.txt

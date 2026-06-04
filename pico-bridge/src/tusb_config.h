@@ -16,30 +16,30 @@ extern "C" {
 #define CFG_TUSB_MCU OPT_MCU_RP2040
 #endif
 
-#define CFG_TUSB_OS              OPT_OS_PICO
-#define CFG_TUSB_DEBUG           0
-#define CFG_TUSB_RHPORT0_MODE    OPT_MODE_DEVICE
+#define CFG_TUSB_OS OPT_OS_PICO
+#define CFG_TUSB_DEBUG 0
+#define CFG_TUSB_RHPORT0_MODE OPT_MODE_DEVICE
 
-#define CFG_TUD_ENABLED          1
+#define CFG_TUD_ENABLED 1
 #define CFG_TUSB_MEM_SECTION
-#define CFG_TUSB_MEM_ALIGN       __attribute__((aligned(4)))
+#define CFG_TUSB_MEM_ALIGN __attribute__((aligned(4)))
 
-#define CFG_TUD_ENDPOINT0_SIZE   64
+#define CFG_TUD_ENDPOINT0_SIZE 64
 
 // Class drivers. CDC for setup-mode provisioning; Vendor for XUSB.
-#define CFG_TUD_CDC              1
-#define CFG_TUD_VENDOR           1
-#define CFG_TUD_HID              0
-#define CFG_TUD_MSC              0
-#define CFG_TUD_MIDI             0
-#define CFG_TUD_DFU              0
-#define CFG_TUD_DFU_RUNTIME      0
-#define CFG_TUD_NCM              0
+#define CFG_TUD_CDC 1
+#define CFG_TUD_VENDOR 1
+#define CFG_TUD_HID 0
+#define CFG_TUD_MSC 0
+#define CFG_TUD_MIDI 0
+#define CFG_TUD_DFU 0
+#define CFG_TUD_DFU_RUNTIME 0
+#define CFG_TUD_NCM 0
 
 // CDC FIFO sizes. CDC frames are up to ~260 bytes; size FIFOs ~2x to
 // avoid blocking when the host sends back-to-back commands.
-#define CFG_TUD_CDC_RX_BUFSIZE   512
-#define CFG_TUD_CDC_TX_BUFSIZE   512
+#define CFG_TUD_CDC_RX_BUFSIZE 512
+#define CFG_TUD_CDC_TX_BUFSIZE 512
 
 // XInput uses 20-byte interrupt-IN and 8-byte interrupt-OUT.
 #define CFG_TUD_VENDOR_RX_BUFSIZE 64

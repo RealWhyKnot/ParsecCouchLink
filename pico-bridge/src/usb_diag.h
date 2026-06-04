@@ -4,11 +4,11 @@
 #include <stdint.h>
 
 typedef struct {
-    bool     mounted;
-    bool     suspended;
-    uint8_t  last_out_len;
-    uint8_t  last_out_byte0;
-    uint8_t  last_out_byte1;
+    bool mounted;
+    bool suspended;
+    uint8_t last_out_len;
+    uint8_t last_out_byte0;
+    uint8_t last_out_byte1;
     uint32_t now_ms;
     uint32_t mount_count;
     uint32_t umount_count;

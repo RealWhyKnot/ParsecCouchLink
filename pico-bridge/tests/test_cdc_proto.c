@@ -13,12 +13,12 @@
 
 static int failures = 0;
 
-#define CHECK(cond)                                                  \
-    do {                                                             \
-        if (!(cond)) {                                               \
-            printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);   \
-            failures++;                                              \
-        }                                                            \
+#define CHECK(cond)                                                                                \
+    do {                                                                                           \
+        if (!(cond)) {                                                                             \
+            printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond);                                 \
+            failures++;                                                                            \
+        }                                                                                          \
     } while (0)
 
 // CRC-16/CCITT-FALSE canonical check value: crc("123456789") == 0x29B1.
@@ -29,7 +29,8 @@ static void test_crc16_check_vector(void) {
 
 static void roundtrip(uint8_t cmd, uint8_t seq, size_t len) {
     uint8_t payload[CDC_MAX_PAYLOAD];
-    for (size_t i = 0; i < len; i++) payload[i] = (uint8_t)(i * 7 + 1);
+    for (size_t i = 0; i < len; i++)
+        payload[i] = (uint8_t)(i * 7 + 1);
 
     uint8_t frame[CDC_MAX_FRAME];
     size_t total = cdc_encode(cmd, seq, len ? payload : NULL, len, frame, sizeof(frame));
@@ -43,7 +44,8 @@ static void roundtrip(uint8_t cmd, uint8_t seq, size_t len) {
     CHECK(view.command == cmd);
     CHECK(view.seq == seq);
     CHECK(view.payload_len == len);
-    if (len) CHECK(memcmp(view.payload, payload, len) == 0);
+    if (len)
+        CHECK(memcmp(view.payload, payload, len) == 0);
 }
 
 static void test_roundtrips(void) {
@@ -76,7 +78,7 @@ static void test_bad_magic(void) {
 static void test_bad_version(void) {
     uint8_t frame[CDC_MAX_FRAME];
     size_t total = cdc_encode(0x01, 0, NULL, 0, frame, sizeof(frame));
-    frame[2] = CDC_PROTO_VERSION + 1;  // version is checked before the CRC
+    frame[2] = CDC_PROTO_VERSION + 1; // version is checked before the CRC
     cdc_frame_view_t view;
     size_t consumed;
     CHECK(cdc_try_decode(frame, total, &view, &consumed) == CDC_DECODE_BAD_VERSION);
@@ -100,7 +102,7 @@ static void test_bad_crc(void) {
     uint8_t payload[4] = {1, 2, 3, 4};
     uint8_t frame[CDC_MAX_FRAME];
     size_t total = cdc_encode(0x03, 7, payload, sizeof(payload), frame, sizeof(frame));
-    frame[total - 1] ^= 0xFF;  // corrupt the trailing CRC byte
+    frame[total - 1] ^= 0xFF; // corrupt the trailing CRC byte
     cdc_frame_view_t view;
     size_t consumed;
     CHECK(cdc_try_decode(frame, total, &view, &consumed) == CDC_DECODE_BAD_CRC);

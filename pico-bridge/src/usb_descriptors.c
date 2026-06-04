@@ -43,40 +43,40 @@
 // -------- common: device descriptors -----------------------------------
 
 static const tusb_desc_device_t desc_device_cdc = {
-    .bLength            = sizeof(tusb_desc_device_t),
-    .bDescriptorType    = TUSB_DESC_DEVICE,
-    .bcdUSB             = 0x0200,
-    .bDeviceClass       = TUSB_CLASS_MISC,
-    .bDeviceSubClass    = MISC_SUBCLASS_COMMON,
-    .bDeviceProtocol    = MISC_PROTOCOL_IAD,
-    .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = TUSB_CLASS_MISC,
+    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
+    .bDeviceProtocol = MISC_PROTOCOL_IAD,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
 
-    .idVendor           = 0x2E8A,  // Raspberry Pi
-    .idProduct          = 0xCAF0,  // sub-licensed; see raspberrypi/usb-pid
-    .bcdDevice          = BCD_DEVICE_VERSION,
+    .idVendor = 0x2E8A,  // Raspberry Pi
+    .idProduct = 0xCAF0, // sub-licensed; see raspberrypi/usb-pid
+    .bcdDevice = BCD_DEVICE_VERSION,
 
-    .iManufacturer      = 0x01,
-    .iProduct           = 0x02,
-    .iSerialNumber      = 0x03,
+    .iManufacturer = 0x01,
+    .iProduct = 0x02,
+    .iSerialNumber = 0x03,
     .bNumConfigurations = 0x01,
 };
 
 static const tusb_desc_device_t desc_device_xinput = {
-    .bLength            = sizeof(tusb_desc_device_t),
-    .bDescriptorType    = TUSB_DESC_DEVICE,
-    .bcdUSB             = 0x0200,
-    .bDeviceClass       = 0xFF,    // vendor-specific
-    .bDeviceSubClass    = 0xFF,
-    .bDeviceProtocol    = 0xFF,
-    .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = 0xFF, // vendor-specific
+    .bDeviceSubClass = 0xFF,
+    .bDeviceProtocol = 0xFF,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
 
-    .idVendor           = 0x045E,  // Microsoft
-    .idProduct          = 0x028E,  // wired Xbox 360 controller
-    .bcdDevice          = 0x0114,
+    .idVendor = 0x045E,  // Microsoft
+    .idProduct = 0x028E, // wired Xbox 360 controller
+    .bcdDevice = 0x0114,
 
-    .iManufacturer      = 0x01,
-    .iProduct           = 0x02,
-    .iSerialNumber      = 0x03,
+    .iManufacturer = 0x01,
+    .iProduct = 0x02,
+    .iSerialNumber = 0x03,
     .bNumConfigurations = 0x01,
 };
 
@@ -87,59 +87,86 @@ uint8_t const *tud_descriptor_device_cb(void) {
         logged = true;
         diag_log_msg("usb_init: first GET_DESCRIPTOR(DEVICE) reply sent");
     }
-    return (uint8_t const *)(boot_mode_current() == BOOT_MODE_RUN
-                             ? &desc_device_xinput
-                             : &desc_device_cdc);
+    return (uint8_t const *)(boot_mode_current() == BOOT_MODE_RUN ? &desc_device_xinput
+                                                                  : &desc_device_cdc);
 }
 
 // -------- setup mode: CDC + WinUSB diag configuration ------------------
 
 enum { CDC_ITF_NUM_NOTIF = 0, CDC_ITF_NUM_DATA, DIAG_ITF_NUM, CDC_ITF_COUNT };
 
-#define DIAG_VENDOR_DESC_LEN  9  // interface descriptor only, no endpoints
-#define CDC_CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + DIAG_VENDOR_DESC_LEN)
+#define DIAG_VENDOR_DESC_LEN 9 // interface descriptor only, no endpoints
+#define CDC_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + DIAG_VENDOR_DESC_LEN)
 
-#define CDC_NOTIF_EP_ADDR  0x82
-#define CDC_OUT_EP_ADDR    0x03
-#define CDC_IN_EP_ADDR     0x83
+#define CDC_NOTIF_EP_ADDR 0x82
+#define CDC_OUT_EP_ADDR 0x03
+#define CDC_IN_EP_ADDR 0x83
 
 static const uint8_t desc_configuration_cdc[] = {
     TUD_CONFIG_DESCRIPTOR(1, CDC_ITF_COUNT, 0, CDC_CONFIG_TOTAL_LEN, 0xA0, 100),
-    TUD_CDC_DESCRIPTOR(CDC_ITF_NUM_NOTIF, 4,
-                       CDC_NOTIF_EP_ADDR, 8,
-                       CDC_OUT_EP_ADDR, CDC_IN_EP_ADDR, 64),
+    TUD_CDC_DESCRIPTOR(CDC_ITF_NUM_NOTIF, 4, CDC_NOTIF_EP_ADDR, 8, CDC_OUT_EP_ADDR, CDC_IN_EP_ADDR,
+                       64),
 
     // Interface 2: diag vendor interface. Class 0xFF, no endpoints --
     // the diag log is read via a vendor control transfer on EP0 (see
     // tud_vendor_control_xfer_cb below). Bound to WinUSB on Windows via
     // the MS OS 2.0 descriptor set (see further down).
-    9, TUSB_DESC_INTERFACE,
-    DIAG_ITF_NUM, 0, 0,
-    0xFF, 0x00, 0x00,
-    5,  // iInterface = STRID_DIAG_INTERFACE (see string enum below)
+    9,
+    TUSB_DESC_INTERFACE,
+    DIAG_ITF_NUM,
+    0,
+    0,
+    0xFF,
+    0x00,
+    0x00,
+    5, // iInterface = STRID_DIAG_INTERFACE (see string enum below)
 };
 
 // -------- run mode: XInput configuration --------------------------------
 
-#define XINPUT_IN_EP_ADDR   0x81
-#define XINPUT_OUT_EP_ADDR  0x02
-#define XINPUT_CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + 9 /*interface*/ + 17 /*magic*/ + 7 + 7)
+#define XINPUT_IN_EP_ADDR 0x81
+#define XINPUT_OUT_EP_ADDR 0x02
+#define XINPUT_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 9 /*interface*/ + 17 /*magic*/ + 7 + 7)
 
 static const uint8_t desc_configuration_xinput[] = {
     // Configuration descriptor
-    9, TUSB_DESC_CONFIGURATION,
+    9,
+    TUSB_DESC_CONFIGURATION,
     U16_TO_U8S_LE(XINPUT_CONFIG_TOTAL_LEN),
-    1, 1, 0, 0xA0, 250,   // bmAttributes=bus-powered, bMaxPower=500mA
+    1,
+    1,
+    0,
+    0xA0,
+    250, // bmAttributes=bus-powered, bMaxPower=500mA
 
     // Interface 0: vendor-specific, class 0xFF, subclass 0x5D, protocol 0x01
-    9, TUSB_DESC_INTERFACE,
-    0, 0, 2,              // bInterfaceNumber=0, bAlternateSetting=0, bNumEndpoints=2
-    0xFF, 0x5D, 0x01,
-    0,                    // iInterface
+    9,
+    TUSB_DESC_INTERFACE,
+    0,
+    0,
+    2, // bInterfaceNumber=0, bAlternateSetting=0, bNumEndpoints=2
+    0xFF,
+    0x5D,
+    0x01,
+    0, // iInterface
 
     // Magic 17-byte unknown descriptor; required by xusb22.sys.
-    0x11, 0x21, 0x10, 0x01, 0x01, 0x24, 0x81, 0x14,
-    0x03, 0x00, 0x03, 0x13, 0x02, 0x00, 0x03, 0x00,
+    0x11,
+    0x21,
+    0x10,
+    0x01,
+    0x01,
+    0x24,
+    0x81,
+    0x14,
+    0x03,
+    0x00,
+    0x03,
+    0x13,
+    0x02,
+    0x00,
+    0x03,
+    0x00,
     0x00,
 
     // Endpoint 0x81 IN, interrupt, 20-byte report. At full speed bInterval is
@@ -147,13 +174,17 @@ static const uint8_t desc_configuration_xinput[] = {
     // the lowest input latency. (The real wired Xbox 360 pad asks for 4 ms /
     // 250 Hz; advertising the faster rate only lets the host poll more often --
     // the report itself is still produced on change, so there is no extra load.)
-    7, TUSB_DESC_ENDPOINT, XINPUT_IN_EP_ADDR,
-    0x03,                 // bmAttributes = Interrupt
+    7,
+    TUSB_DESC_ENDPOINT,
+    XINPUT_IN_EP_ADDR,
+    0x03, // bmAttributes = Interrupt
     U16_TO_U8S_LE(20),
-    1,                    // bInterval = 1 ms (1000 Hz) at full speed
+    1, // bInterval = 1 ms (1000 Hz) at full speed
 
     // Endpoint 0x02 OUT, interrupt, 32 bytes, 8 ms (rumble + LED ring writes from the host)
-    7, TUSB_DESC_ENDPOINT, XINPUT_OUT_EP_ADDR,
+    7,
+    TUSB_DESC_ENDPOINT,
+    XINPUT_OUT_EP_ADDR,
     0x03,
     U16_TO_U8S_LE(32),
     8,
@@ -187,21 +218,21 @@ enum {
 static char serial_str[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1];
 
 static const char *const string_desc_arr[] = {
-    [STRID_LANGID]         = (const char[]){0x09, 0x04}, // English (US)
-    [STRID_MANUFACTURER]   = "Parsec CouchLink",
-    [STRID_PRODUCT]        = "CouchLink Pico",
-    [STRID_SERIAL]         = serial_str,
-    [STRID_CDC_INTERFACE]  = "Parsec CouchLink Setup",
+    [STRID_LANGID] = (const char[]){0x09, 0x04}, // English (US)
+    [STRID_MANUFACTURER] = "Parsec CouchLink",
+    [STRID_PRODUCT] = "CouchLink Pico",
+    [STRID_SERIAL] = serial_str,
+    [STRID_CDC_INTERFACE] = "Parsec CouchLink Setup",
     [STRID_DIAG_INTERFACE] = "Parsec CouchLink Diag",
 };
 
 // XInput wants Microsoft-y strings so xusb22.sys binds without
 // complaining. Real wired 360 pads report these (or close enough).
 static const char *const string_desc_arr_xinput[] = {
-    [STRID_LANGID]       = (const char[]){0x09, 0x04},
+    [STRID_LANGID] = (const char[]){0x09, 0x04},
     [STRID_MANUFACTURER] = "(c) Microsoft Corporation",
-    [STRID_PRODUCT]      = "Controller",
-    [STRID_SERIAL]       = serial_str,
+    [STRID_PRODUCT] = "Controller",
+    [STRID_SERIAL] = serial_str,
 };
 
 static uint16_t string_buf[33]; // descriptor type + length prefix + up to 31 chars
@@ -215,19 +246,19 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         pico_get_unique_board_id(&id);
         for (int i = 0; i < PICO_UNIQUE_BOARD_ID_SIZE_BYTES; i++) {
             static const char hex[] = "0123456789ABCDEF";
-            serial_str[i*2 + 0] = hex[(id.id[i] >> 4) & 0xF];
-            serial_str[i*2 + 1] = hex[id.id[i] & 0xF];
+            serial_str[i * 2 + 0] = hex[(id.id[i] >> 4) & 0xF];
+            serial_str[i * 2 + 1] = hex[id.id[i] & 0xF];
         }
         serial_str[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES] = 0;
     }
 
     bool xinput = (boot_mode_current() == BOOT_MODE_RUN);
     const char *const *arr = xinput ? string_desc_arr_xinput : string_desc_arr;
-    size_t arr_count = xinput
-        ? (sizeof(string_desc_arr_xinput) / sizeof(string_desc_arr_xinput[0]))
-        : (sizeof(string_desc_arr) / sizeof(string_desc_arr[0]));
+    size_t arr_count = xinput ? (sizeof(string_desc_arr_xinput) / sizeof(string_desc_arr_xinput[0]))
+                              : (sizeof(string_desc_arr) / sizeof(string_desc_arr[0]));
 
-    if (index >= arr_count) return NULL;
+    if (index >= arr_count)
+        return NULL;
 
     if (index == STRID_LANGID) {
         // LANGID descriptor is exactly 4 bytes: length(1)+type(1)+langid(2).
@@ -237,10 +268,13 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     }
 
     const char *str = arr[index];
-    if (!str) return NULL;
+    if (!str)
+        return NULL;
     size_t len = strlen(str);
-    if (len > 31) len = 31;
-    for (size_t i = 0; i < len; i++) string_buf[1 + i] = (uint16_t)str[i];
+    if (len > 31)
+        len = 31;
+    for (size_t i = 0; i < len; i++)
+        string_buf[1 + i] = (uint16_t)str[i];
     string_buf[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 + len * 2));
     return string_buf;
 }
@@ -275,66 +309,109 @@ void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes) {
 // format of the diag transfer matches the CDC CMD_GET_LOG_BUFFER
 // response payload: [lost_bytes_le32][raw_log_bytes].
 
-#define MS_OS_20_VENDOR_REQ_CODE  0x20
+#define MS_OS_20_VENDOR_REQ_CODE 0x20
 #define MS_OS_20_DESCRIPTOR_INDEX 0x0007
-#define DIAG_GET_LOG_REQ          0x01
+#define DIAG_GET_LOG_REQ 0x01
 
-#define MS_OS_20_DESC_SET_TOTAL_LEN  38
+#define MS_OS_20_DESC_SET_TOTAL_LEN 38
 
 static const uint8_t desc_ms_os_20[MS_OS_20_DESC_SET_TOTAL_LEN] = {
     // Set header (10 bytes).
-    0x0A, 0x00,                          // wLength = 10
-    0x00, 0x00,                          // wDescriptorType = SET_HEADER
-    0x00, 0x00, 0x03, 0x06,              // dwWindowsVersion = Windows 8.1+
-    MS_OS_20_DESC_SET_TOTAL_LEN, 0x00,   // wTotalLength
+    0x0A,
+    0x00, // wLength = 10
+    0x00,
+    0x00, // wDescriptorType = SET_HEADER
+    0x00,
+    0x00,
+    0x03,
+    0x06, // dwWindowsVersion = Windows 8.1+
+    MS_OS_20_DESC_SET_TOTAL_LEN,
+    0x00, // wTotalLength
 
     // Function subset header (8 bytes): scopes the rest of the set to
     // interface DIAG_ITF_NUM only, so usbser.sys's binding to the CDC
     // interfaces is unaffected.
-    0x08, 0x00,                          // wLength = 8
-    0x02, 0x00,                          // wDescriptorType = SUBSET_HEADER_FUNCTION
-    DIAG_ITF_NUM,                        // bFirstInterface
-    0x00,                                // bReserved
-    0x14, 0x00,                          // wSubsetLength = 8 + 20 = 28
+    0x08,
+    0x00, // wLength = 8
+    0x02,
+    0x00,         // wDescriptorType = SUBSET_HEADER_FUNCTION
+    DIAG_ITF_NUM, // bFirstInterface
+    0x00,         // bReserved
+    0x14,
+    0x00, // wSubsetLength = 8 + 20 = 28
 
     // Compatible ID feature descriptor (20 bytes): tells Windows to
     // bind WinUSB.
-    0x14, 0x00,                          // wLength = 20
-    0x03, 0x00,                          // wDescriptorType = FEATURE_COMPATIBLE_ID
-    'W', 'I', 'N', 'U', 'S', 'B', 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x14,
+    0x00, // wLength = 20
+    0x03,
+    0x00, // wDescriptorType = FEATURE_COMPATIBLE_ID
+    'W',
+    'I',
+    'N',
+    'U',
+    'S',
+    'B',
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
 };
 
-#define BOS_DESC_TOTAL_LEN  (5 + 28)
+#define BOS_DESC_TOTAL_LEN (5 + 28)
 
 static const uint8_t desc_bos[BOS_DESC_TOTAL_LEN] = {
     // BOS header (5 bytes).
-    0x05,                                // bLength
-    0x0F,                                // bDescriptorType = BOS
-    BOS_DESC_TOTAL_LEN, 0x00,            // wTotalLength
-    0x01,                                // bNumDeviceCaps
+    0x05, // bLength
+    0x0F, // bDescriptorType = BOS
+    BOS_DESC_TOTAL_LEN,
+    0x00, // wTotalLength
+    0x01, // bNumDeviceCaps
 
     // Platform device capability (28 bytes) advertising MS OS 2.0.
-    0x1C,                                // bLength
-    0x10,                                // bDescriptorType = DEVICE_CAPABILITY
-    0x05,                                // bDevCapType = PLATFORM
-    0x00,                                // bReserved
+    0x1C, // bLength
+    0x10, // bDescriptorType = DEVICE_CAPABILITY
+    0x05, // bDevCapType = PLATFORM
+    0x00, // bReserved
     // MS OS 2.0 platform-capability UUID: {D8DD60DF-4589-4CC7-9CD2-659D9E648A9F}
-    0xDF, 0x60, 0xDD, 0xD8,
-    0x89, 0x45, 0xC7, 0x4C,
-    0x9C, 0xD2,
-    0x65, 0x9D, 0x9E, 0x64, 0x8A, 0x9F,
-    0x00, 0x00, 0x03, 0x06,              // dwWindowsVersion = Windows 8.1+
-    MS_OS_20_DESC_SET_TOTAL_LEN, 0x00,   // wMSOSDescriptorSetTotalLength
-    MS_OS_20_VENDOR_REQ_CODE,            // bMS_VendorCode
-    0x00,                                // bAltEnumCode
+    0xDF,
+    0x60,
+    0xDD,
+    0xD8,
+    0x89,
+    0x45,
+    0xC7,
+    0x4C,
+    0x9C,
+    0xD2,
+    0x65,
+    0x9D,
+    0x9E,
+    0x64,
+    0x8A,
+    0x9F,
+    0x00,
+    0x00,
+    0x03,
+    0x06, // dwWindowsVersion = Windows 8.1+
+    MS_OS_20_DESC_SET_TOTAL_LEN,
+    0x00,                     // wMSOSDescriptorSetTotalLength
+    MS_OS_20_VENDOR_REQ_CODE, // bMS_VendorCode
+    0x00,                     // bAltEnumCode
 };
 
 uint8_t const *tud_descriptor_bos_cb(void) {
     // Only setup mode advertises WinUSB binding. XInput's binding to
     // xusb22.sys is sensitive to extra descriptors and capability
     // declarations; run mode skips BOS entirely.
-    if (boot_mode_current() == BOOT_MODE_RUN) return NULL;
+    if (boot_mode_current() == BOOT_MODE_RUN)
+        return NULL;
     return desc_bos;
 }
 
@@ -344,36 +421,35 @@ uint8_t const *tud_descriptor_bos_cb(void) {
 // full diag ring (4 KiB).
 static uint8_t diag_xfer_buf[4 + 4096];
 
-bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
-                                tusb_control_request_t const *req) {
-    if (stage != CONTROL_STAGE_SETUP) return true;
+bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *req) {
+    if (stage != CONTROL_STAGE_SETUP)
+        return true;
 
     // GET_MS_OS_20_DESCRIPTOR: bmRequestType=0xC0 (vendor IN, device),
     // bRequest=MS_OS_20_VENDOR_REQ_CODE, wIndex=7.
-    if (req->bmRequestType == 0xC0
-        && req->bRequest == MS_OS_20_VENDOR_REQ_CODE
-        && req->wIndex == MS_OS_20_DESCRIPTOR_INDEX) {
+    if (req->bmRequestType == 0xC0 && req->bRequest == MS_OS_20_VENDOR_REQ_CODE &&
+        req->wIndex == MS_OS_20_DESCRIPTOR_INDEX) {
         uint16_t want = req->wLength;
-        if (want > sizeof(desc_ms_os_20)) want = sizeof(desc_ms_os_20);
+        if (want > sizeof(desc_ms_os_20))
+            want = sizeof(desc_ms_os_20);
         return tud_control_xfer(rhport, req, (void *)desc_ms_os_20, want);
     }
 
     // GET_DIAG_LOG: bmRequestType=0xC1 (vendor IN, interface),
     // bRequest=DIAG_GET_LOG_REQ, wIndex.low == DIAG_ITF_NUM. The host
     // gets back [lost_le32][snapshot_of_diag_ring_tail].
-    if (req->bmRequestType == 0xC1
-        && req->bRequest == DIAG_GET_LOG_REQ
-        && (req->wIndex & 0xFFu) == DIAG_ITF_NUM) {
+    if (req->bmRequestType == 0xC1 && req->bRequest == DIAG_GET_LOG_REQ &&
+        (req->wIndex & 0xFFu) == DIAG_ITF_NUM) {
         uint32_t lost = 0;
-        size_t n = diag_log_snapshot(diag_xfer_buf + 4,
-                                     sizeof(diag_xfer_buf) - 4, &lost);
+        size_t n = diag_log_snapshot(diag_xfer_buf + 4, sizeof(diag_xfer_buf) - 4, &lost);
         diag_xfer_buf[0] = (uint8_t)(lost & 0xFFu);
-        diag_xfer_buf[1] = (uint8_t)((lost >>  8) & 0xFFu);
+        diag_xfer_buf[1] = (uint8_t)((lost >> 8) & 0xFFu);
         diag_xfer_buf[2] = (uint8_t)((lost >> 16) & 0xFFu);
         diag_xfer_buf[3] = (uint8_t)((lost >> 24) & 0xFFu);
         uint16_t avail = (uint16_t)(4 + n);
         uint16_t want = req->wLength;
-        if (want > avail) want = avail;
+        if (want > avail)
+            want = avail;
         return tud_control_xfer(rhport, req, diag_xfer_buf, want);
     }
 
@@ -419,8 +495,7 @@ void tud_resume_cb(void) {
 // shows mount-without-line-state, the host opened the port but never
 // drove DTR -- check the bridge logs for an "asserted DTR" line.
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
-    diag_log_printf("cdc: line state itf=%u dtr=%d rts=%d",
-                    (unsigned)itf, (int)dtr, (int)rts);
+    diag_log_printf("cdc: line state itf=%u dtr=%d rts=%d", (unsigned)itf, (int)dtr, (int)rts);
 }
 
 // Fires whenever the host changes line coding (baud, parity, etc.).
@@ -428,8 +503,8 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
 void tud_cdc_line_coding_cb(uint8_t itf, cdc_line_coding_t const *coding) {
     static bool logged = false;
     if (!logged) {
-        diag_log_printf("cdc: line coding itf=%u baud=%u (logged once per boot)",
-                        (unsigned)itf, (unsigned)coding->bit_rate);
+        diag_log_printf("cdc: line coding itf=%u baud=%u (logged once per boot)", (unsigned)itf,
+                        (unsigned)coding->bit_rate);
         logged = true;
     }
 }

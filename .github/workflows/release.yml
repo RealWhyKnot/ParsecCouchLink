@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: changelog-append
   cancel-in-progress: false
 
 jobs:
@@ -33,6 +33,12 @@ jobs:
       - name: Test release base selection
         shell: pwsh
         run: ./.github/scripts/Test-ResolveReleaseBaseTag.ps1
+
+      - name: Test workflow scripts
+        shell: pwsh
+        run: |
+          ./.github/scripts/Test-WorkflowSyntax.ps1
+          ./.github/scripts/Test-UpdateChangelog.ps1
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -86,13 +92,28 @@ jobs:
             $tag = '${{ github.ref_name }}'
             $version = $tag.TrimStart('v')
           }
-          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Fa-f0-9]{4}|-beta)?$') {
+          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$') {
             throw "Invalid version '$version'. Expected YYYY.M.D.N, YYYY.M.D.N-XXXX, or YYYY.M.D.N-beta."
           }
           $isBeta = $tag -like '*-beta*'
           "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Promote changelog
+        id: changelog
+        shell: pwsh
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          ./.github/scripts/Update-Changelog.ps1 -Mode Promote -Version '${{ steps.version.outputs.tag }}'
+          New-Item -ItemType Directory -Force -Path .changelog-stash | Out-Null
+          Copy-Item CHANGELOG.md .changelog-stash/CHANGELOG.md -Force
+
+          $notes = ./.github/scripts/Update-Changelog.ps1 -Mode Notes -ForVersion -Version '${{ steps.version.outputs.tag }}'
+          $notesPath = Join-Path $env:RUNNER_TEMP "changelog-notes.md"
+          Set-Content -LiteralPath $notesPath -Value $notes -Encoding UTF8
+          "notes_path=$notesPath" >> $env:GITHUB_OUTPUT
 
       - name: Build release zip
         shell: pwsh
@@ -128,94 +149,27 @@ jobs:
           ZIP_NAME: ${{ steps.artifact.outputs.zip_name }}
           ZIP_SHA256: ${{ steps.artifact.outputs.sha256 }}
           MANIFEST_PATH: ${{ steps.artifact.outputs.manifest }}
+          CHANGELOG_NOTES_PATH: ${{ steps.changelog.outputs.notes_path }}
         shell: pwsh
         run: |
-          # Build the release body. Top section is a conventional-commit
-          # changelog grouped by type, extracted from `git log $prev..$tag`.
-          # Bottom section is the static install instructions.
-
           $prevTag = & ./.github/scripts/Resolve-ReleaseBaseTag.ps1 -Tag $env:TAG_NAME
-
-          $sections = [ordered]@{
-              feat     = 'Features'
-              fix      = 'Bug Fixes'
-              perf     = 'Performance'
-              refactor = 'Refactors'
-              docs     = 'Documentation'
-              test     = 'Tests'
-              ci       = 'CI'
-              build    = 'Build'
-              chore    = 'Chores'
-              style    = 'Style'
-              revert   = 'Reverts'
-              other    = 'Other'
-          }
-          $groups = @{}
-          $breaking = @()
-
-          if ($prevTag) {
-              $range = "$prevTag..$env:TAG_NAME"
-              $logLines = git log $range --pretty=format:"%h%x09%s" --no-merges
-              foreach ($line in $logLines) {
-                  if ([string]::IsNullOrWhiteSpace($line)) { continue }
-                  $parts = $line -split "`t", 2
-                  $sha = $parts[0]
-                  $subject = $parts[1]
-                  if ($subject -match '^(?<type>\w+)(\((?<scope>[^)]+)\))?(?<bang>!)?:\s*(?<desc>.+)$') {
-                      $type = $matches['type'].ToLowerInvariant()
-                      $scope = $matches['scope']
-                      $isBreaking = -not [string]::IsNullOrEmpty($matches['bang'])
-                      $desc = $matches['desc']
-                      if (-not $sections.Contains($type)) { $type = 'other' }
-                      if ($scope) {
-                          $entry = "- ``$sha`` **${scope}**: $desc"
-                      } else {
-                          $entry = "- ``$sha`` $desc"
-                      }
-                      if ($isBreaking) {
-                          if ($scope) {
-                              $breaking += "- ``$sha`` **${scope}**: $desc"
-                          } else {
-                              $breaking += "- ``$sha`` $desc"
-                          }
-                      }
-                      if (-not $groups.ContainsKey($type)) { $groups[$type] = @() }
-                      $groups[$type] += $entry
-                  } else {
-                      if (-not $groups.ContainsKey('other')) { $groups['other'] = @() }
-                      $groups['other'] += "- ``$sha`` $subject"
-                  }
-              }
+          $changelogNotes = Get-Content -LiteralPath $env:CHANGELOG_NOTES_PATH -Raw
+          if ([string]::IsNullOrWhiteSpace($changelogNotes)) {
+              $changelogNotes = "_Maintenance release; see commit log for details._"
           }
 
           $out = New-Object System.Collections.Generic.List[string]
           if ($prevTag) {
               $out.Add("## Changes since $prevTag")
               $out.Add("")
-              if ($breaking.Count -gt 0) {
-                  $out.Add("### Breaking Changes")
-                  $out.Add("")
-                  foreach ($e in $breaking) { $out.Add($e) }
-                  $out.Add("")
-              }
-              $emitted = $false
-              foreach ($key in $sections.Keys) {
-                  if ($groups.ContainsKey($key) -and $groups[$key].Count -gt 0) {
-                      $emitted = $true
-                      $out.Add("### $($sections[$key])")
-                      $out.Add("")
-                      foreach ($e in $groups[$key]) { $out.Add($e) }
-                      $out.Add("")
-                  }
-              }
-              if (-not $emitted) {
-                  $out.Add("_No conventional-commit changes since $prevTag._")
-                  $out.Add("")
-              }
+              $out.Add($changelogNotes.Trim())
+              $out.Add("")
               $out.Add("**Full diff:** https://github.com/$env:GITHUB_REPOSITORY/compare/$prevTag...$env:TAG_NAME")
               $out.Add("")
           } else {
-              $out.Add("Initial release.")
+              $out.Add("## Changes")
+              $out.Add("")
+              $out.Add($changelogNotes.Trim())
               $out.Add("")
           }
 
@@ -259,3 +213,61 @@ jobs:
           Write-Host "Draft release $env:TAG_NAME has all expected assets, promoting to published."
           gh release edit $env:TAG_NAME --draft=false
           if ($LASTEXITCODE -ne 0) { throw "gh release edit --draft=false failed (exit $LASTEXITCODE)" }
+
+      - name: Commit changelog promotion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git fetch origin main
+          expected_oid=$(git rev-parse origin/main)
+
+          if cmp -s .changelog-stash/CHANGELOG.md <(git show origin/main:CHANGELOG.md); then
+            echo "CHANGELOG.md already matches origin/main."
+            exit 0
+          fi
+
+          changelog_b64=$(base64 -w 0 .changelog-stash/CHANGELOG.md)
+          headline="docs(changelog): promote ${TAG_NAME} [skip changelog]"
+          body="Updated by .github/workflows/release.yml after publishing ${TAG_NAME}."
+
+          payload=$(jq -n \
+            --arg repo "$GITHUB_REPOSITORY" \
+            --arg branch "main" \
+            --arg headline "$headline" \
+            --arg body "$body" \
+            --arg oid "$expected_oid" \
+            --arg changelog "$changelog_b64" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid url } } }",
+              variables: {
+                input: {
+                  branch: { repositoryNameWithOwner: $repo, branchName: $branch },
+                  message: { headline: $headline, body: $body },
+                  fileChanges: {
+                    additions: [
+                      { path: "CHANGELOG.md", contents: $changelog }
+                    ]
+                  },
+                  expectedHeadOid: $oid
+                }
+              }
+            }')
+
+          response=$(printf '%s' "$payload" | gh api graphql --input -)
+          echo "$response" | jq .
+          if echo "$response" | jq -e '.errors // empty' >/dev/null; then
+            echo "::error::createCommitOnBranch returned GraphQL errors"
+            exit 1
+          fi
+
+          new_oid=$(echo "$response" | jq -r '.data.createCommitOnBranch.commit.oid')
+          if [[ -z "$new_oid" || "$new_oid" == "null" ]]; then
+            echo "::error::createCommitOnBranch did not return a commit oid"
+            exit 1
+          fi
+          echo "Committed changelog promotion: $new_oid"

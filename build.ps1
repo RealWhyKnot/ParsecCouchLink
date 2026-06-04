@@ -18,6 +18,33 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
+function Enable-RepoGitHooks {
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $git) { return }
+    if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot ".githooks"))) { return }
+
+    $currentHooksPath = & git config --get core.hooksPath 2>$null
+    if ($LASTEXITCODE -ne 0) { $currentHooksPath = "" }
+    if ($currentHooksPath -ne ".githooks") {
+        & git config core.hooksPath ".githooks"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Activated .githooks/ via core.hooksPath"
+        }
+    }
+}
+
+function Write-VersionStamp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+    [System.IO.File]::WriteAllText($Path, $Version, $encoding)
+}
+
 $RepoRoot = (Resolve-Path $PSScriptRoot).Path
 $DistRoot = if ($ArtifactsDir) {
     [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $ArtifactsDir))
@@ -26,6 +53,9 @@ $DistRoot = if ($ArtifactsDir) {
 }
 $StageDir = Join-Path $DistRoot "ParsecCouchLink"
 $StateFile = Join-Path $RepoRoot ".local_build_state.json"
+$VersionFile = Join-Path $RepoRoot "version.txt"
+
+Enable-RepoGitHooks
 
 if ($Version) {
     if ($Version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$') {
@@ -46,6 +76,7 @@ if ($Version) {
         Set-Content -LiteralPath $StateFile -Encoding UTF8
 }
 
+Write-VersionStamp -Path $VersionFile -Version $FullVersion
 Write-Host "Build version: $FullVersion" -ForegroundColor Magenta
 
 New-Item -ItemType Directory -Force -Path $DistRoot | Out-Null
@@ -103,6 +134,7 @@ foreach ($script in $ScriptFiles) {
 }
 Copy-Item -LiteralPath (Join-Path $RepoRoot "LICENSE") -Destination (Join-Path $StageDir "LICENSE") -Force
 Copy-Item -LiteralPath (Join-Path $RepoRoot "NOTICE") -Destination (Join-Path $StageDir "NOTICE") -Force
+Copy-Item -LiteralPath (Join-Path $RepoRoot "CHANGELOG.md") -Destination (Join-Path $StageDir "CHANGELOG.md") -Force
 
 $ReleaseReadme = @"
 Parsec CouchLink $FullVersion

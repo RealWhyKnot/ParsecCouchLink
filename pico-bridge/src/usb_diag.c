@@ -48,13 +48,15 @@ void usb_diag_note_resume(void) {
 }
 
 void usb_diag_note_xinput_in_queued(uint32_t bytes) {
-    if (bytes == 0) return;
+    if (bytes == 0)
+        return;
     state.xinput_in_queued_count++;
     state.last_in_queued_ms = now_ms();
 }
 
 void usb_diag_note_xinput_in_sent(uint32_t bytes) {
-    if (bytes == 0) return;
+    if (bytes == 0)
+        return;
     state.xinput_in_sent_count++;
     state.last_in_sent_ms = now_ms();
 }
@@ -68,7 +70,8 @@ void usb_diag_note_xinput_out(uint8_t const *buffer, uint16_t len) {
 }
 
 void usb_diag_snapshot(usb_diag_snapshot_t *out) {
-    if (!out) return;
+    if (!out)
+        return;
     *out = state;
     out->now_ms = now_ms();
     out->mounted = tud_mounted();

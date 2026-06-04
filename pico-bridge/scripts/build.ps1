@@ -30,6 +30,41 @@ $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Pa
 $RepoRoot    = Split-Path -Parent $ProjectRoot
 $DistDir     = Join-Path $ProjectRoot "dist"
 $StateFile   = Join-Path $RepoRoot ".local_build_state.json"
+$VersionFile = Join-Path $RepoRoot "version.txt"
+
+function Enable-RepoGitHooks {
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if (-not $git) { return }
+    if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot ".githooks"))) { return }
+
+    Push-Location $RepoRoot
+    try {
+        $currentHooksPath = & git config --get core.hooksPath 2>$null
+        if ($LASTEXITCODE -ne 0) { $currentHooksPath = "" }
+        if ($currentHooksPath -ne ".githooks") {
+            & git config core.hooksPath ".githooks"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Activated .githooks/ via core.hooksPath"
+            }
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Write-VersionStamp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Version
+    )
+
+    $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+    [System.IO.File]::WriteAllText($Path, $Version, $encoding)
+}
+
+Enable-RepoGitHooks
 
 # Board -> per-board build dir + canonical output filename.
 $BoardInfo = @{
@@ -61,6 +96,7 @@ if ($Version -ne "") {
         Set-Content -LiteralPath $StateFile -Encoding UTF8
 }
 
+Write-VersionStamp -Path $VersionFile -Version $FirmwareVersion
 Write-Host "Firmware version: $FirmwareVersion" -ForegroundColor Magenta
 
 # Toolchain pre-flight.

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Append the current build version to new commit subjects.
+
+set -eu
+
+msg_file="$1"
+source="${2:-}"
+
+case "$source" in
+  merge|squash) exit 0 ;;
+esac
+
+stamp_pattern='\([0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]{4})?\)'
+
+if [ "$source" != "commit" ]; then
+  subject="$(grep -m1 -vE '^(#|$)' "$msg_file" || true)"
+  if printf '%s\n' "$subject" | grep -qE "$stamp_pattern"; then
+    echo "" >&2
+    echo "prepare-commit-msg: subject already contains a build-version stamp." >&2
+    echo "" >&2
+    echo "  subject: $subject" >&2
+    echo "" >&2
+    echo "Let this hook append the current version from version.txt instead of copying" >&2
+    echo "a stamp from an older commit subject." >&2
+    echo "" >&2
+    exit 1
+  fi
+fi
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$repo_root" ] || exit 0
+
+version_file="$repo_root/version.txt"
+version=""
+if [ -f "$version_file" ]; then
+  version="$(tr -d '\r' < "$version_file" | sed 's/[^[:print:]]//g' | xargs)"
+fi
+
+today="$(date +%Y.%-m.%-d)"
+if ! printf '%s\n' "$version" | grep -qE "^${today}\."; then
+  short_head="$(git rev-parse --short=4 HEAD 2>/dev/null | tr 'a-z' 'A-Z')"
+  [ -n "$short_head" ] || short_head="0000"
+  version="${today}.0-${short_head}"
+  printf '%s' "$version" > "$version_file"
+fi
+
+[ -n "$version" ] || exit 0
+
+if ! grep -qE "$stamp_pattern" "$msg_file"; then
+  sed -i "1s/\$/ ($version)/" "$msg_file"
+fi

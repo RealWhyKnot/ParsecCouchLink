@@ -8,9 +8,13 @@ on:
       - 'bridge/**'
       - 'pico-bridge/**'
       - 'scripts/**'
+      - 'tools/**'
       - 'build.ps1'
       - 'setup.ps1'
-      - '.github/workflows/ci.yml'
+      - '.clang-format'
+      - '.editorconfig'
+      - '.github/scripts/**'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
@@ -40,11 +44,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bridge-
 
-      - name: Rust format
-        run: cargo fmt --manifest-path bridge/Cargo.toml -- --check
-
-      - name: Rust clippy
-        run: cargo clippy --manifest-path bridge/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Lint Rust and scripts
+        shell: pwsh
+        run: ./tools/lint.ps1 -SkipFirmware
 
       - name: Rust tests
         run: cargo test --manifest-path bridge/Cargo.toml --locked
@@ -70,7 +72,11 @@ jobs:
       - name: Install Pico toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi clang-format
+
+      - name: Firmware formatting
+        shell: pwsh
+        run: ./tools/lint.ps1 -SkipRust -SkipPowerShell
 
       - name: Host unit tests (CDC framing)
         run: |

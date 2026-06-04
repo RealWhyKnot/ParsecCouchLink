@@ -33,8 +33,7 @@
 //   [5] LR (return address from the interrupted function)
 //   [6] PC (where the fault occurred)
 //   [7] xPSR
-__attribute__((used))
-static void fault_handler_c(uint32_t *frame) {
+__attribute__((used)) static void fault_handler_c(uint32_t *frame) {
     // Record the entire stacked basic frame plus the stack pointer
     // value at the time of the fault. reset_reason_record_fault peeks
     // at the Cortex-M33 SCB->CFSR/HFSR/MMFAR/BFAR internally when the
@@ -44,29 +43,27 @@ static void fault_handler_c(uint32_t *frame) {
     // around the volatile write, so an explicit dsb is added.
     volatile uint32_t *aircr = (volatile uint32_t *)SCB_AIRCR_ADDR;
     *aircr = SCB_AIRCR_VECTKEY_SYSRESETREQ;
-    __asm volatile ("dsb" ::: "memory");
-    for (;;) { /* unreachable */ }
+    __asm volatile("dsb" ::: "memory");
+    for (;;) { /* unreachable */
+    }
 }
 
 // Naked handler: figure out which stack the frame is on (MSP vs PSP),
 // pass it to fault_handler_c. The Pico SDK does not use PSP in
 // foreground code, but the EXC_RETURN check is cheap and means this
 // handler also works if a future RTOS port shows up.
-__attribute__((naked))
-void isr_hardfault(void) {
-    __asm volatile (
-        "movs r0, #4\n"
-        "mov  r1, lr\n"
-        "tst  r0, r1\n"
-        "beq  1f\n"
-        "mrs  r0, psp\n"
-        "b    2f\n"
-        "1:\n"
-        "mrs  r0, msp\n"
-        "2:\n"
-        "ldr  r1, =fault_handler_c\n"
-        "bx   r1\n"
-    );
+__attribute__((naked)) void isr_hardfault(void) {
+    __asm volatile("movs r0, #4\n"
+                   "mov  r1, lr\n"
+                   "tst  r0, r1\n"
+                   "beq  1f\n"
+                   "mrs  r0, psp\n"
+                   "b    2f\n"
+                   "1:\n"
+                   "mrs  r0, msp\n"
+                   "2:\n"
+                   "ldr  r1, =fault_handler_c\n"
+                   "bx   r1\n");
 }
 
 // RP2350 (Cortex-M33) splits faults into multiple vectors. Override
@@ -77,55 +74,46 @@ void isr_hardfault(void) {
 // match.
 #if !PICO_RP2040
 
-__attribute__((naked))
-void isr_busfault(void) {
-    __asm volatile (
-        "movs r0, #4\n"
-        "mov  r1, lr\n"
-        "tst  r0, r1\n"
-        "beq  1f\n"
-        "mrs  r0, psp\n"
-        "b    2f\n"
-        "1:\n"
-        "mrs  r0, msp\n"
-        "2:\n"
-        "ldr  r1, =fault_handler_c\n"
-        "bx   r1\n"
-    );
+__attribute__((naked)) void isr_busfault(void) {
+    __asm volatile("movs r0, #4\n"
+                   "mov  r1, lr\n"
+                   "tst  r0, r1\n"
+                   "beq  1f\n"
+                   "mrs  r0, psp\n"
+                   "b    2f\n"
+                   "1:\n"
+                   "mrs  r0, msp\n"
+                   "2:\n"
+                   "ldr  r1, =fault_handler_c\n"
+                   "bx   r1\n");
 }
 
-__attribute__((naked))
-void isr_usagefault(void) {
-    __asm volatile (
-        "movs r0, #4\n"
-        "mov  r1, lr\n"
-        "tst  r0, r1\n"
-        "beq  1f\n"
-        "mrs  r0, psp\n"
-        "b    2f\n"
-        "1:\n"
-        "mrs  r0, msp\n"
-        "2:\n"
-        "ldr  r1, =fault_handler_c\n"
-        "bx   r1\n"
-    );
+__attribute__((naked)) void isr_usagefault(void) {
+    __asm volatile("movs r0, #4\n"
+                   "mov  r1, lr\n"
+                   "tst  r0, r1\n"
+                   "beq  1f\n"
+                   "mrs  r0, psp\n"
+                   "b    2f\n"
+                   "1:\n"
+                   "mrs  r0, msp\n"
+                   "2:\n"
+                   "ldr  r1, =fault_handler_c\n"
+                   "bx   r1\n");
 }
 
-__attribute__((naked))
-void isr_memmanage(void) {
-    __asm volatile (
-        "movs r0, #4\n"
-        "mov  r1, lr\n"
-        "tst  r0, r1\n"
-        "beq  1f\n"
-        "mrs  r0, psp\n"
-        "b    2f\n"
-        "1:\n"
-        "mrs  r0, msp\n"
-        "2:\n"
-        "ldr  r1, =fault_handler_c\n"
-        "bx   r1\n"
-    );
+__attribute__((naked)) void isr_memmanage(void) {
+    __asm volatile("movs r0, #4\n"
+                   "mov  r1, lr\n"
+                   "tst  r0, r1\n"
+                   "beq  1f\n"
+                   "mrs  r0, psp\n"
+                   "b    2f\n"
+                   "1:\n"
+                   "mrs  r0, msp\n"
+                   "2:\n"
+                   "ldr  r1, =fault_handler_c\n"
+                   "bx   r1\n");
 }
 
-#endif  // !PICO_RP2040
+#endif // !PICO_RP2040
