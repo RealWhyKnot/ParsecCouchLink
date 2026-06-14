@@ -10,9 +10,7 @@
 //! each via a fan-in channel. The first reply on any socket wins.
 
 use std::collections::BTreeMap;
-#[cfg(windows)]
-use std::net::Ipv4Addr;
-use std::net::{IpAddr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,22 +33,14 @@ pub async fn collect(
         protocol::PORT,
     ));
 
-    let extra_sockets: Vec<Arc<UdpSocket>> = bind_per_interface_sockets()
-        .await
-        .into_iter()
-        .map(Arc::new)
-        .collect();
+    let extra_sockets = bind_per_interface_sockets().await;
 
     let (rx_tx, mut rx_rx) = mpsc::channel::<(String, usize, SocketAddr, [u8; 64])>(8);
     let mut iface_tasks = Vec::with_capacity(extra_sockets.len());
-    for s in &extra_sockets {
-        let s = Arc::clone(s);
+    for target in &extra_sockets {
+        let s = Arc::clone(&target.socket);
         let tx = rx_tx.clone();
-        let label = s
-            .local_addr()
-            .ok()
-            .map(|a| format!("iface={a}"))
-            .unwrap_or_else(|| "iface=?".to_string());
+        let label = target.label.clone();
         iface_tasks.push(tokio::spawn(async move {
             let mut buf = [0u8; 64];
             loop {
@@ -81,8 +71,8 @@ pub async fn collect(
                 seq = seq.wrapping_add(1);
                 let bytes = pkt.encode();
                 let _ = socket.send_to(&bytes, broadcast_addr).await;
-                for s in &extra_sockets {
-                    let _ = s.send_to(&bytes, broadcast_addr).await;
+                for target in &extra_sockets {
+                    let _ = target.socket.send_to(&bytes, target.broadcast_addr).await;
                 }
             }
             r = socket.recv_from(&mut main_buf) => {
@@ -107,6 +97,12 @@ pub async fn collect(
     }
 
     Ok(found.into_values().collect())
+}
+
+struct InterfaceBroadcastSocket {
+    socket: Arc<UdpSocket>,
+    broadcast_addr: SocketAddr,
+    label: String,
 }
 
 pub async fn probe_ip(
@@ -171,24 +167,43 @@ fn handle_recv(
 }
 
 #[cfg(windows)]
-async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
+async fn bind_per_interface_sockets() -> Vec<InterfaceBroadcastSocket> {
     let addrs = enumerate_ipv4_unicast_addresses();
     let mut out = Vec::new();
-    for addr in addrs {
-        if addr.is_loopback() || addr.is_unspecified() {
+    for iface in addrs {
+        if iface.addr.is_loopback() || iface.addr.is_unspecified() {
             continue;
         }
-        let bind = SocketAddr::V4(SocketAddrV4::new(addr, 0));
+        let Some(broadcast) = directed_broadcast_addr(iface.addr, iface.prefix_len) else {
+            tracing::debug!(
+                "discovery: no directed broadcast for {}/{}; skipping",
+                iface.addr,
+                iface.prefix_len
+            );
+            continue;
+        };
+        let bind = SocketAddr::V4(SocketAddrV4::new(iface.addr, 0));
         match crate::net::bind_udp(bind).await {
             Ok(s) => {
                 if let Err(e) = s.set_broadcast(true) {
-                    tracing::debug!("discovery: set_broadcast on {addr} failed: {e}; skipping");
+                    tracing::debug!(
+                        "discovery: set_broadcast on {} failed: {e}; skipping",
+                        iface.addr
+                    );
                     continue;
                 }
-                out.push(s);
+                let local = s
+                    .local_addr()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|_| format!("{}:?", iface.addr));
+                out.push(InterfaceBroadcastSocket {
+                    socket: Arc::new(s),
+                    broadcast_addr: SocketAddr::V4(SocketAddrV4::new(broadcast, protocol::PORT)),
+                    label: format!("iface={local}->{broadcast}"),
+                });
             }
             Err(e) => {
-                tracing::debug!("discovery: bind on {addr} failed: {e}; skipping");
+                tracing::debug!("discovery: bind on {} failed: {e}; skipping", iface.addr);
             }
         }
     }
@@ -196,12 +211,19 @@ async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
 }
 
 #[cfg(not(windows))]
-async fn bind_per_interface_sockets() -> Vec<UdpSocket> {
+async fn bind_per_interface_sockets() -> Vec<InterfaceBroadcastSocket> {
     Vec::new()
 }
 
 #[cfg(windows)]
-fn enumerate_ipv4_unicast_addresses() -> Vec<Ipv4Addr> {
+#[derive(Clone, Copy, Debug)]
+struct Ipv4Interface {
+    addr: Ipv4Addr,
+    prefix_len: u8,
+}
+
+#[cfg(windows)]
+fn enumerate_ipv4_unicast_addresses() -> Vec<Ipv4Interface> {
     use windows::Win32::NetworkManagement::IpHelper::{
         GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
         GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
@@ -256,7 +278,10 @@ fn enumerate_ipv4_unicast_addresses() -> Vec<Ipv4Addr> {
                     let sa_in = sa as *const SOCKADDR_IN;
                     let octets = (*sa_in).sin_addr.S_un.S_addr.to_ne_bytes();
                     let addr = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-                    out.push(addr);
+                    out.push(Ipv4Interface {
+                        addr,
+                        prefix_len: u.OnLinkPrefixLength,
+                    });
                 }
                 uni = u.Next;
             }
@@ -264,6 +289,20 @@ fn enumerate_ipv4_unicast_addresses() -> Vec<Ipv4Addr> {
         }
     }
     out
+}
+
+fn directed_broadcast_addr(addr: Ipv4Addr, prefix_len: u8) -> Option<Ipv4Addr> {
+    if prefix_len > 30 {
+        return None;
+    }
+    let host_bits = 32u32.checked_sub(prefix_len as u32)?;
+    let mask = if prefix_len == 0 {
+        0
+    } else {
+        u32::MAX << host_bits
+    };
+    let ip = u32::from(addr);
+    Some(Ipv4Addr::from((ip & mask) | !mask))
 }
 
 #[cfg(test)]
@@ -314,6 +353,22 @@ mod tests {
         assert!(
             !captured.contains("ack received"),
             "per-packet discovery ACKs should not print at the default info level: {captured:?}",
+        );
+    }
+
+    #[test]
+    fn directed_broadcast_uses_interface_prefix() {
+        assert_eq!(
+            directed_broadcast_addr(Ipv4Addr::new(192, 168, 50, 100), 24),
+            Some(Ipv4Addr::new(192, 168, 50, 255))
+        );
+        assert_eq!(
+            directed_broadcast_addr(Ipv4Addr::new(172, 16, 5, 20), 20),
+            Some(Ipv4Addr::new(172, 16, 15, 255))
+        );
+        assert_eq!(
+            directed_broadcast_addr(Ipv4Addr::new(10, 73, 20, 2), 32),
+            None
         );
     }
 

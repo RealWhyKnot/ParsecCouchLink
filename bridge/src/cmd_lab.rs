@@ -1,7 +1,7 @@
 //! `couchlink lab` -- unattended hardware bench checks for plugged-in Picos.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -11,13 +11,16 @@ use clap::ValueEnum;
 use serde::Serialize;
 use zeroize::Zeroize;
 
-use crate::{cdc, cmd_flash, cmd_run, cmd_usb_diag, config, pico_mode, protocol, xinput};
+use crate::{cdc, cmd_flash, cmd_run, cmd_usb_diag, config, net, pico_mode, protocol, xinput};
 
 const DISCOVER_TIMEOUT: Duration = Duration::from_secs(5);
 const SETUP_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const WIFI_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const BOOTSEL_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const POWER_OFF_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+const SIGNAL_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+const SIGNAL_SEND_INTERVAL: Duration = Duration::from_millis(16);
+const SIGNAL_NEUTRALIZE_DURATION: Duration = Duration::from_millis(350);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -298,7 +301,8 @@ impl LabHarness {
             }
             .await;
             match result {
-                Ok(probe) => {
+                Ok(mut probe) => {
+                    probe.last_ip = Some(target.peer.ip());
                     self.report.pass(
                         "normalize Wi-Fi to setup",
                         Some(uid),
@@ -369,13 +373,29 @@ impl LabHarness {
             Ok(target) => target,
             Err(e) => return Err((probe, e)),
         };
+        let last_ip = Some(target.peer.ip());
 
         if let Err(e) = pico_mode::request_reboot_to_setup(&target).await {
             return Err((probe, e));
         }
 
-        match wait_for_setup_uid(probe.uid, SETUP_WAIT_TIMEOUT).await {
-            Ok(updated) => Ok(updated),
+        match wait_for_setup_or_wifi_uid(probe.uid, last_ip, SETUP_WAIT_TIMEOUT).await {
+            Ok(SetupOrWifiMode::Setup(mut updated)) => {
+                updated.last_ip = last_ip;
+                Ok(updated)
+            }
+            Ok(SetupOrWifiMode::Wifi(target)) => {
+                if let Err(e) = pico_mode::request_reboot_to_setup(&target).await {
+                    return Err((probe, e));
+                }
+                match wait_for_setup_uid(probe.uid, SETUP_WAIT_TIMEOUT).await {
+                    Ok(mut updated) => {
+                        updated.last_ip = Some(target.peer.ip());
+                        Ok(updated)
+                    }
+                    Err(e) => Err((probe, e)),
+                }
+            }
             Err(e) => Err((probe, e)),
         }
     }
@@ -578,13 +598,29 @@ impl LabHarness {
             return Err((probe, e));
         }
 
-        match wait_for_setup_uid(probe.uid, SETUP_WAIT_TIMEOUT).await {
-            Ok(updated) => Ok(updated),
+        match wait_for_setup_or_wifi_uid(probe.uid, probe.last_ip, SETUP_WAIT_TIMEOUT).await {
+            Ok(SetupOrWifiMode::Setup(mut updated)) => {
+                updated.last_ip = probe.last_ip;
+                Ok(updated)
+            }
+            Ok(SetupOrWifiMode::Wifi(target)) => {
+                if let Err(e) = pico_mode::request_reboot_to_setup(&target).await {
+                    return Err((probe, e));
+                }
+                match wait_for_setup_uid(probe.uid, SETUP_WAIT_TIMEOUT).await {
+                    Ok(mut updated) => {
+                        updated.last_ip = Some(target.peer.ip());
+                        Ok(updated)
+                    }
+                    Err(e) => Err((probe, e)),
+                }
+            }
             Err(e) => Err((probe, e)),
         }
     }
 
     async fn run_final_run_checks(&mut self, probes: Vec<SetupLabProbe>) {
+        let mut run_targets = Vec::new();
         for probe in probes {
             let uid = probe.uid;
             let started = Instant::now();
@@ -612,9 +648,46 @@ impl LabHarness {
                         ),
                         started.elapsed().as_millis(),
                     );
+                    run_targets.push(target);
                 }
                 Err(e) => self.report.fail(
                     "final run check",
+                    Some(uid),
+                    format!("{e:#}"),
+                    started.elapsed().as_millis(),
+                ),
+            }
+        }
+        self.run_signal_checks(&run_targets).await;
+    }
+
+    async fn run_signal_checks(&mut self, targets: &[cmd_run::PicoTarget]) {
+        neutralize_targets(targets).await;
+        for (idx, target) in targets.iter().enumerate() {
+            let uid = target.info.unique_id_short;
+            let state = lab_signal_state(idx);
+            let started = Instant::now();
+            let result = verify_signal_roundtrip(target, state).await;
+            match result {
+                Ok(slot) => self.report.pass(
+                    "signal check",
+                    Some(uid),
+                    format!(
+                        "{} -> {} exact buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
+                        target.peer,
+                        xinput::user_slot_label(slot),
+                        state.buttons,
+                        state.left_trigger,
+                        state.right_trigger,
+                        state.left_x,
+                        state.left_y,
+                        state.right_x,
+                        state.right_y
+                    ),
+                    started.elapsed().as_millis(),
+                ),
+                Err(e) => self.report.fail(
+                    "signal check",
                     Some(uid),
                     format!("{e:#}"),
                     started.elapsed().as_millis(),
@@ -630,6 +703,7 @@ struct SetupLabProbe {
     hello: cdc::HelloAck,
     self_test: cdc::SelfTestAck,
     uid: u32,
+    last_ip: Option<IpAddr>,
     log_bytes: usize,
     log_lost: u32,
 }
@@ -675,6 +749,7 @@ async fn probe_setup_port(port: String) -> Result<SetupLabProbe> {
             hello,
             self_test,
             uid,
+            last_ip: None,
             log_bytes: log_text.len(),
             log_lost,
         })
@@ -761,6 +836,275 @@ async fn wait_for_setup_uid(uid: u32, timeout: Duration) -> Result<SetupLabProbe
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+}
+
+enum SetupOrWifiMode {
+    Setup(SetupLabProbe),
+    Wifi(cmd_run::PicoTarget),
+}
+
+async fn wait_for_setup_or_wifi_uid(
+    uid: u32,
+    last_ip: Option<IpAddr>,
+    timeout: Duration,
+) -> Result<SetupOrWifiMode> {
+    let started = Instant::now();
+    let deadline = started + timeout;
+    loop {
+        let probes = probe_setup_ports().await?;
+        if let Some(probe) = probes.into_iter().find(|p| p.uid == uid) {
+            return Ok(SetupOrWifiMode::Setup(probe));
+        }
+
+        let now = Instant::now();
+        if now >= deadline {
+            bail!(
+                "Pico {uid:08X} did not appear in setup USB or Wi-Fi within {} s",
+                timeout.as_secs()
+            );
+        }
+
+        let remaining = deadline.saturating_duration_since(now);
+        let discover_for = remaining.min(Duration::from_millis(750));
+        let picos = cmd_run::discover_picos(discover_for).await?;
+        if let Some(target) = picos.into_iter().find(|p| p.info.unique_id_short == uid) {
+            return Ok(SetupOrWifiMode::Wifi(target));
+        }
+
+        if let Some(ip) = last_ip {
+            if let Some(target) = probe_known_ip_for_uid(ip, uid, discover_for).await? {
+                return Ok(SetupOrWifiMode::Wifi(target));
+            }
+        }
+    }
+}
+
+async fn probe_known_ip_for_uid(
+    ip: IpAddr,
+    uid: u32,
+    timeout: Duration,
+) -> Result<Option<cmd_run::PicoTarget>> {
+    match cmd_run::probe_pico_ip(ip, timeout).await {
+        Ok(target) if target.info.unique_id_short == uid => Ok(Some(target)),
+        Ok(target) => {
+            tracing::debug!(
+                "lab: known IP {ip} replied as {:08X}, expected {uid:08X}",
+                target.info.unique_id_short
+            );
+            Ok(None)
+        }
+        Err(e) => {
+            tracing::debug!("lab: known IP {ip} did not answer for {uid:08X}: {e:#}");
+            Ok(None)
+        }
+    }
+}
+
+async fn neutralize_targets(targets: &[cmd_run::PicoTarget]) {
+    let Ok(socket) = net::bind_udp("0.0.0.0:0").await else {
+        return;
+    };
+    for target in targets {
+        let _ = send_state_burst(
+            &socket,
+            target.peer,
+            protocol::GamepadState::default(),
+            0,
+            SIGNAL_NEUTRALIZE_DURATION,
+        )
+        .await;
+    }
+}
+
+async fn verify_signal_roundtrip(
+    target: &cmd_run::PicoTarget,
+    state: protocol::GamepadState,
+) -> Result<u32> {
+    let socket = net::bind_udp("0.0.0.0:0")
+        .await
+        .context("binding UDP signal-test socket")?;
+    let matched = send_until_xinput_match(&socket, target.peer, state).await;
+    let neutralized = send_state_burst(
+        &socket,
+        target.peer,
+        protocol::GamepadState::default(),
+        0,
+        SIGNAL_NEUTRALIZE_DURATION,
+    )
+    .await;
+
+    let slot = matched?;
+    neutralized?;
+    wait_for_slot_state(
+        slot,
+        protocol::GamepadState::default(),
+        Duration::from_secs(2),
+    )
+    .await?;
+    Ok(slot)
+}
+
+async fn send_until_xinput_match(
+    socket: &tokio::net::UdpSocket,
+    target: SocketAddr,
+    state: protocol::GamepadState,
+) -> Result<u32> {
+    let started = Instant::now();
+    let mut seq = 0u8;
+    loop {
+        send_state_once(socket, target, seq, state, protocol::FLAG_PARSEC_CONNECTED).await?;
+        seq = seq.wrapping_add(1);
+
+        let matches = slots_matching_state(state);
+        if matches.len() == 1 {
+            return Ok(matches[0]);
+        }
+        if matches.len() > 1 {
+            bail!(
+                "multiple XInput slots matched synthetic state: {:?}",
+                matches
+            );
+        }
+
+        if started.elapsed() >= SIGNAL_WAIT_TIMEOUT {
+            bail!(
+                "no XInput slot reported synthetic state within {} s; live slots: {}",
+                SIGNAL_WAIT_TIMEOUT.as_secs(),
+                slot_state_summary()
+            );
+        }
+        tokio::time::sleep(SIGNAL_SEND_INTERVAL).await;
+    }
+}
+
+async fn send_state_burst(
+    socket: &tokio::net::UdpSocket,
+    target: SocketAddr,
+    state: protocol::GamepadState,
+    flags: u8,
+    duration: Duration,
+) -> Result<()> {
+    let started = Instant::now();
+    let mut seq = 0u8;
+    while started.elapsed() < duration {
+        send_state_once(socket, target, seq, state, flags).await?;
+        seq = seq.wrapping_add(1);
+        tokio::time::sleep(SIGNAL_SEND_INTERVAL).await;
+    }
+    Ok(())
+}
+
+async fn send_state_once(
+    socket: &tokio::net::UdpSocket,
+    target: SocketAddr,
+    seq: u8,
+    state: protocol::GamepadState,
+    flags: u8,
+) -> Result<()> {
+    let packet = protocol::Packet::state(seq, flags, state);
+    socket
+        .send_to(&packet.encode(), target)
+        .await
+        .with_context(|| format!("sending synthetic state to {target}"))?;
+    Ok(())
+}
+
+async fn wait_for_slot_state(
+    slot: u32,
+    state: protocol::GamepadState,
+    timeout: Duration,
+) -> Result<()> {
+    let started = Instant::now();
+    loop {
+        if let Some(snapshot) = xinput::read_slot(slot) {
+            if snapshot.state == state {
+                return Ok(());
+            }
+        }
+        if started.elapsed() >= timeout {
+            bail!(
+                "{} did not return to neutral within {} s; live slots: {}",
+                xinput::user_slot_label(slot),
+                timeout.as_secs(),
+                slot_state_summary()
+            );
+        }
+        tokio::time::sleep(SIGNAL_SEND_INTERVAL).await;
+    }
+}
+
+fn slots_matching_state(state: protocol::GamepadState) -> Vec<u32> {
+    xinput::connected_slots()
+        .into_iter()
+        .filter(|slot| slot.state == state)
+        .map(|slot| slot.slot)
+        .collect()
+}
+
+fn slot_state_summary() -> String {
+    let slots = xinput::connected_slots();
+    if slots.is_empty() {
+        return "none".to_string();
+    }
+    slots
+        .iter()
+        .map(|slot| {
+            format!(
+                "{} buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
+                xinput::user_slot_label(slot.slot),
+                slot.state.buttons,
+                slot.state.left_trigger,
+                slot.state.right_trigger,
+                slot.state.left_x,
+                slot.state.left_y,
+                slot.state.right_x,
+                slot.state.right_y
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn lab_signal_state(index: usize) -> protocol::GamepadState {
+    let states = [
+        protocol::GamepadState {
+            buttons: 0x1100,
+            left_trigger: 77,
+            right_trigger: 133,
+            left_x: 12000,
+            left_y: -8000,
+            right_x: 6000,
+            right_y: -4000,
+        },
+        protocol::GamepadState {
+            buttons: 0x2200,
+            left_trigger: 33,
+            right_trigger: 201,
+            left_x: -16000,
+            left_y: 7000,
+            right_x: -9000,
+            right_y: 15000,
+        },
+        protocol::GamepadState {
+            buttons: 0x0043,
+            left_trigger: 149,
+            right_trigger: 19,
+            left_x: 21000,
+            left_y: 9000,
+            right_x: -12000,
+            right_y: -16000,
+        },
+        protocol::GamepadState {
+            buttons: 0x208C,
+            left_trigger: 8,
+            right_trigger: 240,
+            left_x: -23000,
+            left_y: -3000,
+            right_x: 13000,
+            right_y: 4000,
+        },
+    ];
+    states[index % states.len()]
 }
 
 async fn wait_for_setup_uids(
@@ -1390,6 +1734,15 @@ mod tests {
         let selected = select_power_backend(LabPower::Auto, None, &mut report);
         assert_eq!(selected.kind, SelectedPowerKind::Reset);
         assert_eq!(selected.name(), "reset");
+    }
+
+    #[test]
+    fn lab_signal_states_are_distinct() {
+        let states: Vec<_> = (0..4).map(lab_signal_state).collect();
+        for (idx, state) in states.iter().enumerate() {
+            assert_ne!(*state, protocol::GamepadState::default());
+            assert!(!states[..idx].contains(state));
+        }
     }
 
     #[test]
