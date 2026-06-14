@@ -6,6 +6,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ### Added
 - **cli:** Read configure-wifi credentials from environment variables (900d862)
+- **ui:** Add device-first terminal tabs (5ffc6aa)
+- **cli:** Add hardware lab harness (41bf9e7)
 
 ### Fixed
 - **cli:** Don't report a false join failure after configure-wifi (3f6f2aa)
