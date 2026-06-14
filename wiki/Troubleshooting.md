@@ -16,8 +16,9 @@ For the normal guided view, run:
 .\couchlink.exe
 ```
 
-The **My Picos** section shows saved Picos and whether each one is currently
-ready on Wi-Fi, visible in USB debug mode, or not seen.
+The **Basic** tab shows each saved or detected Pico separately. Each Pico has
+its own commands for streaming, Wi-Fi setup, recovery, firmware flashing, USB
+checks, saving, or removal depending on its current state.
 
 For a live log view:
 
@@ -122,15 +123,14 @@ If the guided menu says `No Pico replied on Wi-Fi`, that is not a
 controller problem. It means the PC did not receive a UDP discovery reply
 from a running Pico.
 
-Before showing that message, Start streaming automatically checks whether a
-Pico is visible in USB debug mode with saved Wi-Fi. If it is, CouchLink asks
-the Pico to reboot back into Wi-Fi/controller mode and retries discovery.
+The **Basic** tab shows setup USB Picos separately. If a Pico has saved Wi-Fi,
+use that Pico's **Recover to Wi-Fi/controller mode** command before streaming.
 
 Try this in order:
 
 1. Confirm the Pico is powered and not sitting in BOOTSEL. If it appears
    as setup-mode USB, use `configure-wifi` first.
-2. Run `.\couchlink.exe recover`, then choose **Start streaming** again.
+2. Run `.\couchlink.exe recover`, then choose that Pico's streaming command on the **Basic** tab.
 3. Run `.\couchlink.exe test discover --all`.
 4. If the router admin page shows the Pico's IP, probe it directly:
 
@@ -139,7 +139,7 @@ Try this in order:
    .\couchlink.exe run --pico 192.168.50.4
    ```
 
-   The guided menu also offers **Enter Pico IP manually** when automatic
+   The guided menu also shows saved Picos with a last-IP probe when automatic
    Wi-Fi discovery finds nothing.
 5. If the router name or password changed, run `.\couchlink.exe
    configure-wifi`.
@@ -202,7 +202,7 @@ If streaming starts but the console does not react, run the guided menu again:
 .\couchlink.exe
 ```
 
-Choose **Start streaming**. If you need a specific controller layout, choose **Change controller routing** and verify that the right Controller 1-4 source is mapped to the right Pico. While streaming, the terminal should show outbound packet counts increasing and recent Pico replies. If the source says `waiting for source`, Windows does not currently see that XInput slot.
+On the **Basic** tab, choose the Pico, then use **Start streaming with Controller 1** or **Choose controller and stream**. Verify that the right Controller 1-4 source is mapped to the right Pico. While streaming, the terminal should show outbound packet counts increasing and recent Pico replies. If the source says `waiting for source`, Windows does not currently see that XInput slot.
 
 ## USB Adapter Does Not See The Pico
 

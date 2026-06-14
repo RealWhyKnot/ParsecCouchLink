@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use dialoguer::theme::ColorfulTheme;
-use dialoguer::{Confirm, Input, MultiSelect, Select};
+use dialoguer::{Confirm, Input, Select};
 
 /// Free-text line input. Empty input is allowed (callers treat it as "cancel").
 pub async fn input_text(prompt: &str) -> Result<String> {
@@ -31,22 +31,6 @@ pub async fn select(prompt: &str, items: &[impl ToString], default: usize) -> Re
             .with_prompt(prompt)
             .items(&items)
             .default(default.min(items.len().saturating_sub(1)))
-            .interact()
-    })
-    .await?
-    .context("reading menu selection")
-}
-
-/// Multi-choice menu. Returns the indices of the checked items.
-pub async fn multiselect(prompt: &str, items: &[String], defaults: &[bool]) -> Result<Vec<usize>> {
-    let prompt = prompt.to_string();
-    let items = items.to_vec();
-    let defaults = defaults.to_vec();
-    tokio::task::spawn_blocking(move || {
-        MultiSelect::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .items(&items)
-            .defaults(&defaults)
             .interact()
     })
     .await?

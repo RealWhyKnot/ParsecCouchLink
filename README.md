@@ -30,7 +30,7 @@ The Windows host reads the Parsec virtual Xbox controller, sends the button stat
 
 5. Follow the prompts. The script flashes the Pico, provisions Wi-Fi, checks that the PC can find it, and can add `couchlink.exe` to Windows startup. No controller is needed for setup.
 
-After setup, have the remote player join through Parsec, run `couchlink.exe`, and choose **Start streaming**. The guided menu opens in a simple **My Picos** view that shows saved Picos, whether each one is on Wi-Fi, USB debug, or missing, and clear actions for **Add new Pico** or **Add existing Pico**. Advanced diagnostics are still available under **Advanced tools**. If a Pico is accidentally left in USB debug mode with saved Wi-Fi, Start streaming will try to reboot it back to Wi-Fi automatically.
+After setup, have the remote player join through Parsec and run `couchlink.exe`. The app opens on the **Basic** tab, scans Wi-Fi, setup USB, and BOOTSEL, then shows each Pico with commands under that Pico only. Use the Pico's **Start streaming with Controller 1** or **Choose controller and stream** command for normal play. One-off diagnostics and fixes are under the **Advanced** tab.
 
 ## Release Contents
 

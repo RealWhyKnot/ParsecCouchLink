@@ -6,21 +6,20 @@ Run:
 .\couchlink.exe
 ```
 
-Choose **Start streaming**. The app searches for every Pico that is running on Wi-Fi, shows the controllers Windows can currently see, then offers the best streaming layout first.
+On the **Basic** tab, choose the Pico you want to use. Pick **Start streaming with Controller 1** for the normal one-controller path, or **Choose controller and stream** to select Controller 1, 2, 3, or 4 for that Pico.
 
 ## Common Layouts
 
-For one Pico, the recommended option maps Controller 1 to that Pico.
+For one Pico, use **Start streaming with Controller 1**.
 
-For two or more Picos, the recommended option maps Controller 1 to the first Pico, Controller 2 to the second Pico, and so on.
+For two or more Picos, Basic keeps actions under each Pico so you do not run a broad multi-Pico action by accident. Start the Pico you want, or use direct commands for scripted multi-Pico layouts:
 
-If you need something else:
+```powershell
+.\couchlink.exe run --all
+.\couchlink.exe run --route 1=07D37EB6 --route 2=523861E6
+```
 
-1. Choose **Change controller routing**.
-2. Choose **Use one controller**, **Use one controller per Pico**, or **Choose each controller manually**.
-3. Start streaming.
-
-The app saves the layout. After that, `couchlink.exe run` uses the saved layout without asking again, which is what the Startup shortcut uses.
+Basic streaming actions save the selected layout. After that, `couchlink.exe run` uses the saved layout without asking again, which is what the Startup shortcut uses. Direct `run --all` and `run --route ...` commands use the layout on the command line.
 
 ## What Parsec Provides
 

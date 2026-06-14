@@ -71,6 +71,24 @@ pub async fn run(options: DebugOptions) -> Result<()> {
     }
 }
 
+pub async fn switch_wifi_target_to_usb_debug(target: cmd_run::PicoTarget) -> Result<()> {
+    switch_wifi_targets_to_usb_debug(vec![target]).await
+}
+
+pub async fn switch_setup_port_to_wifi_target(port: String) -> Result<()> {
+    switch_setup_ports_to_wifi(vec![port]).await
+}
+
+pub async fn switch_setup_port_to_bootsel_target(
+    port: String,
+) -> Result<Vec<(PathBuf, cmd_flash::BootselBoard)>> {
+    switch_setup_ports_to_bootsel_collect(vec![port]).await
+}
+
+pub async fn print_setup_port_log(port: String) -> Result<()> {
+    print_setup_logs(vec![port]).await
+}
+
 async fn run_interactive() -> Result<()> {
     loop {
         println!();
@@ -261,6 +279,13 @@ async fn switch_one_setup_port_to_bootsel() -> Result<()> {
 }
 
 async fn switch_setup_ports_to_bootsel(ports: Vec<String>) -> Result<()> {
+    switch_setup_ports_to_bootsel_collect(ports).await?;
+    Ok(())
+}
+
+async fn switch_setup_ports_to_bootsel_collect(
+    ports: Vec<String>,
+) -> Result<Vec<(PathBuf, cmd_flash::BootselBoard)>> {
     if ports.is_empty() {
         bail!("no setup-mode USB Pico selected");
     }
@@ -272,10 +297,10 @@ async fn switch_setup_ports_to_bootsel(ports: Vec<String>) -> Result<()> {
     println!("Waiting for BOOTSEL drive...");
     let mounts = wait_for_bootsel_mounts_after(&before, MODE_SWITCH_TIMEOUT).await?;
     println!("BOOTSEL firmware mode is available:");
-    for (mount, board) in mounts {
+    for (mount, board) in &mounts {
         println!("  {}  {}", mount.display(), board.label());
     }
-    Ok(())
+    Ok(mounts)
 }
 
 async fn read_one_setup_log() -> Result<()> {
@@ -595,12 +620,13 @@ async fn wait_for_bootsel_mounts_after(
     let mut next_beat = started + Duration::from_secs(10);
     loop {
         let mounts = cmd_flash::visible_bootsel_mounts();
-        let current: BTreeSet<String> = mounts
+        let new_mounts: Vec<(PathBuf, cmd_flash::BootselBoard)> = mounts
             .iter()
-            .map(|(path, _board)| path.display().to_string())
+            .filter(|(path, _board)| !before.contains(&path.display().to_string()))
+            .cloned()
             .collect();
-        if !mounts.is_empty() && &current != before {
-            return Ok(mounts);
+        if !new_mounts.is_empty() {
+            return Ok(new_mounts);
         }
         if before.is_empty() && !mounts.is_empty() {
             return Ok(mounts);

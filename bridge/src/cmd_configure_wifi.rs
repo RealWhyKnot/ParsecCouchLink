@@ -28,6 +28,16 @@ pub async fn run() -> Result<()> {
     let Some(port) = find_setup_port_or_recover().await? else {
         return Ok(());
     };
+    configure_setup_port(port).await
+}
+
+pub async fn run_for_port(port: String) -> Result<()> {
+    println!("couchlink configure-wifi");
+    println!();
+    configure_setup_port(port).await
+}
+
+async fn configure_setup_port(port: String) -> Result<()> {
     println!("Found Pico on {port}");
 
     // dialoguer is blocking; isolate it from the async runtime.

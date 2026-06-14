@@ -38,7 +38,7 @@ The script explains each step before it starts. In short:
 8. Setup waits for the Pico to join Wi-Fi and answer discovery.
 9. Accept the Startup shortcut if you want the bridge to run at every logon.
 
-No controller is needed during setup. Controller detection and routing happen later, when you choose **Start streaming** from the guided menu or run `couchlink.exe run`.
+No controller is needed during setup. Controller detection and routing happen later, when you choose a Pico's streaming command on the **Basic** tab or run `couchlink.exe run`.
 
 ## What Success Looks Like
 
@@ -49,7 +49,7 @@ Setup is complete. From now on, couchlink runs at logon.
 Confirmed Pico IP: 192.168.50.4
 ```
 
-Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose **Start streaming**.
+Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose the Pico's streaming command on the **Basic** tab.
 
 If automatic Wi-Fi discovery fails later, choose **Enter Pico IP manually** in the guided menu and enter the confirmed IP from setup.
 
@@ -61,22 +61,20 @@ Run the app from the release folder:
 .\couchlink.exe
 ```
 
-The app opens in **Simple mode**. It shows **My Picos** first, like a saved
-device list, with each saved Pico's current state when it can be detected.
-Use **Add new Pico** for a fresh install, or **Add existing Pico** to scan
-Wi-Fi, setup USB, and BOOTSEL for a Pico you already have.
+The app opens on the **Basic** tab. It scans Wi-Fi, setup USB, and BOOTSEL,
+then shows each saved or detected Pico as its own device entry. Commands are
+listed under the Pico they affect, so Basic never runs a multi-Pico fix or
+flash by accident.
 
 The guided menu can:
 
-- Start streaming.
-- Show saved Pico state: Wi-Fi ready, USB debug, or not seen.
-- Show connected BOOTSEL drives separately when firmware flashing is needed.
-- Add a new Pico by walking through flashing, Wi-Fi setup, and saving.
-- Add an existing Pico by scanning the network and USB.
-- Automatically recover a Pico left in USB debug mode when it already has saved Wi-Fi.
-- Pick one Pico or all detected Picos.
-- Route Controller 1, 2, 3, or 4 to the Pico you choose.
-- Open **Advanced tools** for firmware updates, status, Wi-Fi finder, controller check, Pico debug/recovery, USB adapter checks, logs, and support bundles.
+- Start streaming for one selected Pico.
+- Choose which Windows controller feeds one selected Pico.
+- Show each Pico state: Wi-Fi ready, USB debug, BOOTSEL, or not seen.
+- Save a detected Pico or remove a missing saved Pico.
+- Recover one Pico left in USB debug mode when it already has saved Wi-Fi.
+- Set up Wi-Fi, update firmware, read USB logs, or check the console USB adapter for one selected Pico.
+- Open **Advanced** for one-off tools, status, Wi-Fi finder, controller check, Pico debug/recovery, USB adapter checks, logs, support bundles, and command reference.
 
 When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
 

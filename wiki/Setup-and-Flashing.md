@@ -88,7 +88,7 @@ If the Pico is already running CouchLink setup mode, the app can ask it to reboo
 From the guided menu:
 
 1. Run `.\couchlink.exe`.
-2. Choose **Advanced tools**.
+2. Open the **Advanced** tab.
 3. Choose **Firmware update**.
 4. Choose **Update firmware (recommended)**.
 

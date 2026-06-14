@@ -18,6 +18,10 @@ pub async fn run(all: bool, ips: Vec<String>) -> Result<()> {
     query_and_print(&picos).await
 }
 
+pub async fn run_for_targets(picos: &[cmd_run::PicoTarget]) -> Result<()> {
+    query_and_print(picos).await
+}
+
 pub async fn run_interactive() -> Result<()> {
     loop {
         println!("Looking for running Pico boards on Wi-Fi...");
