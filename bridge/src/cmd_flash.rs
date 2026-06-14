@@ -159,7 +159,7 @@ pub async fn flash_uf2_to_bootsel(uf2: &Path, wait_timeout: Duration) -> Result<
     flash_uf2_to_mount(uf2, mount, board, wait_seconds).await
 }
 
-async fn flash_uf2_to_mount(
+pub async fn flash_uf2_to_mount(
     uf2: &Path,
     mount: PathBuf,
     board: BootselBoard,
@@ -389,7 +389,7 @@ fn print_outcome(outcome: &FlashOutcome) {
 
 /// Resolve which UF2 file to flash, given an optional user override and
 /// the detected BOOTSEL board.
-fn resolve_uf2_path(uf2: Option<&Path>, board: BootselBoard) -> Result<PathBuf> {
+pub fn resolve_uf2_path(uf2: Option<&Path>, board: BootselBoard) -> Result<PathBuf> {
     if let Some(p) = uf2 {
         if !p.exists() {
             bail!("UF2 path not found: {}", p.display());

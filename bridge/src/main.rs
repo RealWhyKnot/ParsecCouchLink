@@ -5,6 +5,7 @@ mod cmd_debug;
 mod cmd_doctor;
 mod cmd_flash;
 mod cmd_home;
+mod cmd_lab;
 mod cmd_logs;
 mod cmd_run;
 mod cmd_setup;
@@ -49,7 +50,7 @@ struct Cli {
     command: Option<Command>,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Command {
     /// Run the bridge directly. With no saved layout, this streams one controller to one Pico.
     Run {
@@ -175,6 +176,40 @@ enum Command {
         #[arg(long = "ip")]
         ips: Vec<String>,
     },
+    /// Run unattended Pico hardware bench scenarios.
+    Lab {
+        /// Probe every visible Pico. This is also the default when no --pico selector is provided.
+        #[arg(long)]
+        all: bool,
+
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Hardware scenario to run.
+        #[arg(long, value_enum, default_value = "full")]
+        scenario: cmd_lab::LabScenario,
+
+        /// Number of times to repeat the selected scenario.
+        #[arg(long, default_value_t = 1)]
+        cycles: u32,
+
+        /// Power-cycle method. Auto uses external power only when a configured probe passes.
+        #[arg(long, value_enum, default_value = "auto")]
+        power: cmd_lab::LabPower,
+
+        /// Path to a .uf2 file, or a directory containing board-specific UF2 files.
+        #[arg(long)]
+        uf2: Option<PathBuf>,
+
+        /// Write a machine-readable JSON report.
+        #[arg(long)]
+        json: Option<PathBuf>,
+
+        /// Skip the BOOTSEL flash leg.
+        #[arg(long)]
+        no_flash: bool,
+    },
     /// Print where logs live, or tail the active log file.
     Logs {
         /// Tail the current log file instead of printing its path.
@@ -279,6 +314,29 @@ fn main() {
                 reboot_to_run,
                 ips,
             }) => cmd_test::run(&which, all, reboot_to_run, ips).await,
+            Some(Command::Lab {
+                all,
+                picos,
+                scenario,
+                cycles,
+                power,
+                uf2,
+                json,
+                no_flash,
+            }) => {
+                let all = all || picos.is_empty();
+                cmd_lab::run(cmd_lab::LabOptions {
+                    all,
+                    picos,
+                    scenario,
+                    cycles,
+                    power,
+                    uf2,
+                    json,
+                    no_flash,
+                })
+                .await
+            }
             Some(Command::Logs { tail }) => cmd_logs::run(tail).await,
             Some(Command::Bundle { output }) => cmd_bundle::run(output).await,
         }
@@ -336,4 +394,47 @@ fn write_crash_file(info: &std::panic::PanicHookInfo<'_>) -> std::io::Result<()>
     writeln!(f, "---- backtrace ----")?;
     writeln!(f, "{}", std::backtrace::Backtrace::force_capture())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lab_command_parses_defaults_and_overrides() {
+        let cli = Cli::try_parse_from([
+            "couchlink",
+            "lab",
+            "--scenario",
+            "power-cycle",
+            "--cycles",
+            "3",
+            "--power",
+            "pnp-restart",
+            "--pico",
+            "07D37EB6",
+            "--no-flash",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Some(Command::Lab {
+                all,
+                picos,
+                scenario,
+                cycles,
+                power,
+                no_flash,
+                ..
+            }) => {
+                assert!(!all);
+                assert_eq!(picos, vec!["07D37EB6"]);
+                assert_eq!(scenario, cmd_lab::LabScenario::PowerCycle);
+                assert_eq!(cycles, 3);
+                assert_eq!(power, cmd_lab::LabPower::PnpRestart);
+                assert!(no_flash);
+            }
+            other => panic!("expected lab command, got {other:?}"),
+        }
+    }
 }

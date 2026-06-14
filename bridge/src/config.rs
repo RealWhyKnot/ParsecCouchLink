@@ -63,6 +63,10 @@ pub struct Config {
     /// layout start without asking questions every logon.
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
+    /// Optional external power controls for `couchlink lab`. Each command is
+    /// an argv vector: first item is the executable, remaining items are args.
+    #[serde(default)]
+    pub lab_power: Option<LabPowerConfig>,
 }
 
 impl Config {
@@ -141,6 +145,14 @@ pub struct RouteConfig {
     pub label: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LabPowerConfig {
+    pub off: Vec<String>,
+    pub on: Vec<String>,
+    #[serde(default)]
+    pub probe: Option<Vec<String>>,
+}
+
 pub fn load() -> Result<Config> {
     let path = config_path()?;
     match fs::read_to_string(&path) {
@@ -207,6 +219,11 @@ mod tests {
             pico_uid: 0x523861E6,
             label: Some("Pico W".to_string()),
         });
+        cfg.lab_power = Some(LabPowerConfig {
+            off: vec!["hubctl.exe".to_string(), "off".to_string()],
+            on: vec!["hubctl.exe".to_string(), "on".to_string()],
+            probe: Some(vec!["hubctl.exe".to_string(), "status".to_string()]),
+        });
 
         let serialized = toml::to_string_pretty(&cfg).unwrap();
         let restored: Config = toml::from_str(&serialized).unwrap();
@@ -216,6 +233,7 @@ mod tests {
         assert_eq!(restored.last_pico, cfg.last_pico);
         assert_eq!(restored.setup_complete, cfg.setup_complete);
         assert_eq!(restored.last_uf2, cfg.last_uf2);
+        assert_eq!(restored.lab_power, cfg.lab_power);
     }
 
     #[test]

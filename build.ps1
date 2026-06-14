@@ -122,6 +122,7 @@ $ScriptFiles = @(
     "flash.ps1",
     "bootsel.ps1",
     "debug.ps1",
+    "lab.ps1",
     "configure-wifi.ps1",
     "logs.ps1"
 )
@@ -162,6 +163,7 @@ Each subcommand also has a one-shot wrapper script. Right-click and
   flash.ps1              re-flash without re-running setup
   bootsel.ps1            switch setup-mode USB Pico to BOOTSEL
   debug.ps1              Pico debug and recovery menu
+  lab.ps1                unattended Pico hardware bench checks
   configure-wifi.ps1     re-send Wi-Fi credentials
 
 The wrappers record a transcript under
