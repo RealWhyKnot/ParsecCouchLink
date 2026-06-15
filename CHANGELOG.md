@@ -4,6 +4,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+### Added
+- Keyboard passthrough mode for keyboard-only games (bbdfc4c)
+
 ### Fixed
 - **build:** Keep version stamp out of worktree (da8de33)
 
