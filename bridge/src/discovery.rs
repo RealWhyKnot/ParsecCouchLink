@@ -16,12 +16,14 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tokio::time::{interval, timeout};
+use tokio::time::{interval, sleep, MissedTickBehavior};
 
 use crate::protocol::{self, AckInfo, Packet, PacketKind, Persona};
 
 const BROADCAST_INTERVAL: Duration = Duration::from_secs(1);
 const UNICAST_INTERVAL: Duration = Duration::from_millis(500);
+const VERSION_QUERY_TIMEOUT: Duration = Duration::from_millis(900);
+const VERSION_QUERY_RETRY_INTERVAL: Duration = Duration::from_millis(125);
 
 pub async fn collect(
     socket: &UdpSocket,
@@ -35,9 +37,9 @@ pub async fn collect(
 
     let extra_sockets = bind_per_interface_sockets().await;
 
-    let (rx_tx, mut rx_rx) = mpsc::channel::<(String, usize, SocketAddr, [u8; 64])>(8);
+    let (rx_tx, mut rx_rx) = mpsc::channel::<(usize, String, usize, SocketAddr, [u8; 64])>(8);
     let mut iface_tasks = Vec::with_capacity(extra_sockets.len());
-    for target in &extra_sockets {
+    for (source_idx, target) in extra_sockets.iter().enumerate() {
         let s = Arc::clone(&target.socket);
         let tx = rx_tx.clone();
         let label = target.label.clone();
@@ -46,7 +48,11 @@ pub async fn collect(
             loop {
                 match s.recv_from(&mut buf).await {
                     Ok((n, peer)) => {
-                        if tx.send((label.clone(), n, peer, buf)).await.is_err() {
+                        if tx
+                            .send((source_idx, label.clone(), n, peer, buf))
+                            .await
+                            .is_err()
+                        {
                             return;
                         }
                     }
@@ -57,7 +63,7 @@ pub async fn collect(
     }
     drop(rx_tx);
 
-    let mut found = BTreeMap::<u32, (SocketAddr, AckInfo, Persona, u8)>::new();
+    let mut found = BTreeMap::<u32, FoundPico>::new();
     let mut seq: u8 = 0;
     let mut tick = interval(BROADCAST_INTERVAL);
     let mut main_buf = [0u8; 64];
@@ -77,43 +83,57 @@ pub async fn collect(
             }
             r = socket.recv_from(&mut main_buf) => {
                 if let Some((peer, info, persona, flags)) = handle_recv("main", r, &main_buf) {
-                    found.entry(info.unique_id_short).or_insert((peer, info, persona, flags));
+                    found.entry(info.unique_id_short).or_insert(FoundPico {
+                        peer,
+                        info,
+                        persona,
+                        flags,
+                        source_idx: None,
+                    });
                 }
             }
             iface_msg = rx_rx.recv() => {
-                let Some((label, n, peer, buf)) = iface_msg else { continue };
+                let Some((source_idx, label, n, peer, buf)) = iface_msg else { continue };
                 if let Some((peer, info, persona, flags)) = handle_recv(&label, Ok((n, peer)), &buf) {
-                    found.entry(info.unique_id_short).or_insert((peer, info, persona, flags));
+                    found.entry(info.unique_id_short).or_insert(FoundPico {
+                        peer,
+                        info,
+                        persona,
+                        flags,
+                        source_idx: Some(source_idx),
+                    });
                 }
             }
             _ = &mut deadline => break,
         }
     }
 
-    drop(extra_sockets);
     for t in iface_tasks {
         t.abort();
         let _ = t.await;
     }
 
-    let mut out = Vec::new();
-    for (peer, mut info, persona, flags) in found.into_values() {
-        if flags & protocol::ACK_FLAG_FULL_VERSION_SUPPORTED != 0 {
-            if let Ok(Some(version)) =
-                query_full_version(socket, peer, Duration::from_millis(800)).await
-            {
-                info.full_version = Some(version.version);
-            }
-        }
-        out.push((peer, info, persona));
-    }
-    Ok(out)
+    let mut found: Vec<FoundPico> = found.into_values().collect();
+    enrich_full_versions(socket, &extra_sockets, &mut found).await;
+    Ok(found
+        .into_iter()
+        .map(|pico| (pico.peer, pico.info, pico.persona))
+        .collect())
 }
 
 struct InterfaceBroadcastSocket {
     socket: Arc<UdpSocket>,
     broadcast_addr: SocketAddr,
     label: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FoundPico {
+    peer: SocketAddr,
+    info: AckInfo,
+    persona: Persona,
+    flags: u8,
+    source_idx: Option<usize>,
 }
 
 pub async fn probe_ip(
@@ -141,10 +161,13 @@ pub async fn probe_ip(
                 };
                 if peer.ip() == ip {
                     if flags & protocol::ACK_FLAG_FULL_VERSION_SUPPORTED != 0 {
-                        if let Ok(Some(version)) =
-                            query_full_version(socket, peer, Duration::from_millis(800)).await
+                        let requests = [(peer, 0xF1)];
+                        if let Ok(versions) =
+                            query_full_versions(socket, &requests, VERSION_QUERY_TIMEOUT).await
                         {
-                            info.full_version = Some(version.version);
+                            if let Some(version) = versions.get(&peer) {
+                                info.full_version = Some(version.version);
+                            }
                         }
                     }
                     return Ok(Some((peer, info, persona)));
@@ -184,29 +207,111 @@ fn handle_recv(
     }
 }
 
-async fn query_full_version(
-    socket: &UdpSocket,
-    peer: SocketAddr,
-    duration: Duration,
-) -> std::io::Result<Option<protocol::VersionInfo>> {
-    let req = protocol::encode_get_version(0xF1);
-    socket.send_to(&req, peer).await?;
-    let mut buf = [0u8; 64];
-    let deadline = tokio::time::Instant::now() + duration;
-    loop {
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            return Ok(None);
+async fn enrich_full_versions(
+    main_socket: &UdpSocket,
+    iface_sockets: &[InterfaceBroadcastSocket],
+    found: &mut [FoundPico],
+) {
+    let mut by_source = BTreeMap::<Option<usize>, Vec<(SocketAddr, u8)>>::new();
+    let mut seq = 0xF0;
+    for pico in found.iter() {
+        if pico.flags & protocol::ACK_FLAG_FULL_VERSION_SUPPORTED != 0 {
+            by_source
+                .entry(pico.source_idx)
+                .or_default()
+                .push((pico.peer, seq));
+            seq = seq.wrapping_add(1);
         }
-        let recv = timeout(deadline - now, socket.recv_from(&mut buf)).await;
-        let Ok(Ok((n, from))) = recv else {
-            return Ok(None);
-        };
-        if from.ip() != peer.ip() {
+    }
+
+    for (source_idx, requests) in by_source {
+        let Some(socket) = socket_for_version_query(main_socket, iface_sockets, source_idx) else {
+            tracing::debug!("discovery: missing interface socket for version query");
             continue;
+        };
+        match query_full_versions(socket, &requests, VERSION_QUERY_TIMEOUT).await {
+            Ok(versions) => {
+                for pico in found.iter_mut() {
+                    if let Some(version) = versions.get(&pico.peer) {
+                        pico.info.full_version = Some(version.version);
+                    }
+                }
+            }
+            Err(e) => tracing::debug!("discovery: version query failed: {e}"),
         }
-        if let Ok(version) = protocol::VersionInfo::decode(&buf[..n]) {
-            return Ok(Some(version));
+    }
+}
+
+fn socket_for_version_query<'a>(
+    main_socket: &'a UdpSocket,
+    iface_sockets: &'a [InterfaceBroadcastSocket],
+    source_idx: Option<usize>,
+) -> Option<&'a UdpSocket> {
+    match source_idx {
+        None => Some(main_socket),
+        Some(idx) => iface_sockets.get(idx).map(|s| s.socket.as_ref()),
+    }
+}
+
+async fn query_full_versions(
+    socket: &UdpSocket,
+    requests: &[(SocketAddr, u8)],
+    duration: Duration,
+) -> std::io::Result<BTreeMap<SocketAddr, protocol::VersionInfo>> {
+    let mut pending: BTreeMap<SocketAddr, u8> = requests.iter().copied().collect();
+    let mut versions = BTreeMap::new();
+    if pending.is_empty() {
+        return Ok(versions);
+    }
+
+    send_pending_version_requests(socket, &pending).await;
+    let mut retry = interval(VERSION_QUERY_RETRY_INTERVAL);
+    retry.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    retry.tick().await;
+
+    let mut buf = [0u8; 64];
+    let deadline = sleep(duration);
+    tokio::pin!(deadline);
+    loop {
+        if pending.is_empty() {
+            break;
+        }
+        tokio::select! {
+            _ = retry.tick() => {
+                send_pending_version_requests(socket, &pending).await;
+            }
+            r = socket.recv_from(&mut buf) => {
+                let (n, from) = r?;
+                let Some(expected_seq) = pending.get(&from).copied() else {
+                    continue;
+                };
+                match protocol::VersionInfo::decode_with_header(&buf[..n]) {
+                    Ok((seq, _flags, version)) if seq == expected_seq => {
+                        versions.insert(from, version);
+                        pending.remove(&from);
+                    }
+                    Ok((seq, _flags, _version)) => {
+                        tracing::trace!(
+                            "discovery: ignored version reply from {from} with stale seq={seq} expected={expected_seq}"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::trace!("discovery: ignored non-version reply from {from}: {e}");
+                    }
+                }
+            }
+            _ = &mut deadline => break,
+        }
+    }
+    Ok(versions)
+}
+
+async fn send_pending_version_requests(socket: &UdpSocket, pending: &BTreeMap<SocketAddr, u8>) {
+    let requests: Vec<(SocketAddr, u8)> = pending.iter().map(|(peer, seq)| (*peer, *seq)).collect();
+    for (peer, seq) in requests {
+        let req = protocol::encode_get_version(seq);
+        if let Err(e) = socket.send_to(&req, peer).await {
+            tracing::debug!("discovery: version request to {peer} failed: {e}");
         }
     }
 }
@@ -415,6 +520,57 @@ mod tests {
         assert_eq!(
             directed_broadcast_addr(Ipv4Addr::new(10, 73, 20, 2), 32),
             None
+        );
+    }
+
+    #[tokio::test]
+    async fn version_query_retries_and_requires_matching_seq() {
+        let bridge = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let pico = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer = pico.local_addr().unwrap();
+        let expected_seq: u8 = 0x42;
+
+        let responder = tokio::spawn(async move {
+            let mut buf = [0u8; 64];
+
+            let (_n, _from) = pico.recv_from(&mut buf).await.unwrap();
+            // Simulate a dropped first reply.
+
+            let (_n, from) = pico.recv_from(&mut buf).await.unwrap();
+            let wrong_seq = protocol::VersionInfo {
+                version: crate::firmware_version::FirmwareVersion::Release {
+                    year: 2026,
+                    month: 6,
+                    day: 15,
+                    revision: Some(1),
+                    suffix: Some(*b"4204"),
+                },
+            }
+            .encode(expected_seq.wrapping_add(1), 0);
+            pico.send_to(&wrong_seq, from).await.unwrap();
+
+            let (_n, from) = pico.recv_from(&mut buf).await.unwrap();
+            let right_seq = protocol::VersionInfo {
+                version: crate::firmware_version::FirmwareVersion::Release {
+                    year: 2026,
+                    month: 6,
+                    day: 15,
+                    revision: Some(1),
+                    suffix: Some(*b"4204"),
+                },
+            }
+            .encode(expected_seq, 0);
+            pico.send_to(&right_seq, from).await.unwrap();
+        });
+
+        let got = query_full_versions(&bridge, &[(peer, expected_seq)], Duration::from_millis(700))
+            .await
+            .unwrap();
+        responder.await.unwrap();
+
+        assert_eq!(
+            got.get(&peer).map(|v| v.version.to_string()),
+            Some("2026.6.15.1-4204".to_string())
         );
     }
 

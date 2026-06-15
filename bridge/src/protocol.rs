@@ -511,6 +511,10 @@ impl VersionInfo {
     }
 
     pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
+        Ok(Self::decode_with_header(buf)?.2)
+    }
+
+    pub fn decode_with_header(buf: &[u8]) -> Result<(u8, u8, Self), DecodeError> {
         if buf.len() != PACKET_SIZE {
             return Err(DecodeError::WrongSize);
         }
@@ -544,15 +548,19 @@ impl VersionInfo {
         } else {
             None
         };
-        Ok(Self {
-            version: FirmwareVersion::Release {
-                year,
-                month,
-                day,
-                revision: Some(revision),
-                suffix,
+        Ok((
+            buf[2],
+            buf[3],
+            Self {
+                version: FirmwareVersion::Release {
+                    year,
+                    month,
+                    day,
+                    revision: Some(revision),
+                    suffix,
+                },
             },
-        })
+        ))
     }
 }
 
@@ -1109,6 +1117,10 @@ mod tests {
         let buf = info.encode(12, 0);
         assert_eq!(buf[1], TYPE_VERSION);
         assert_eq!(buf[5], 0x07);
+        let (seq, flags, decoded) = VersionInfo::decode_with_header(&buf).unwrap();
+        assert_eq!(seq, 12);
+        assert_eq!(flags, 0);
+        assert_eq!(decoded.version.to_string(), "2026.6.15.0-0030");
         let decoded = VersionInfo::decode(&buf).unwrap();
         assert_eq!(decoded.version.to_string(), "2026.6.15.0-0030");
     }
