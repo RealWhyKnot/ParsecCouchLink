@@ -53,7 +53,29 @@ A keyboard adapter is required on the console side: the Pico presents a standard
 Keyboard -> 07D37EB6 | source live | out +60 total 900 | in 30 (reply 0.2s ago) | keys mods=0x02 keys=[0x04]
 ```
 
-For USB4MAPLE controller games, leave the Pico in controller mode. The adapter handles the Dreamcast-side Maple bus while CouchLink presents a wired Xbox 360-compatible controller over USB.
+## Maple Mode
+
+Maple mode is for Dreamcast adapters that already accept wired Xbox 360 controllers and translate them to Dreamcast Maple. It uses the same Parsec/XInput controller source and the same Xbox 360-compatible USB reports as normal controller mode, but keeps a separate persisted mode and status label for Dreamcast setups.
+
+Switch a Pico to Maple mode and start streaming:
+
+```powershell
+.\couchlink.exe maple
+```
+
+With several Picos, pick one:
+
+```powershell
+.\couchlink.exe maple --pico 07D37EB6
+```
+
+Switch back to USB XInput controller mode with:
+
+```powershell
+.\couchlink.exe controller
+```
+
+Add `--no-stream` to change the persona without starting a stream. While streaming, Maple mode status still shows a controller source and the live XInput button/axis values because those are the values sent to the Maple-capable adapter.
 
 ### If the player's typing isn't reaching the game
 

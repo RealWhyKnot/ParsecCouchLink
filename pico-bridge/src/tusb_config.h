@@ -1,9 +1,10 @@
 #pragma once
 
-// TinyUSB configuration. We host two different USB personas at runtime:
+// TinyUSB configuration. We host three different USB personas at runtime:
 //   - setup mode:          CDC ACM under Raspberry Pi VID 0x2E8A / PID 0xCAF0
 //   - run / controller:    wired Xbox 360 (XUSB, vendor class) VID 0x045E / PID 0x028E
 //   - run / keyboard:      USB HID boot keyboard under VID 0x2E8A / PID 0xCAF1
+//   - run / maple:         wired Xbox 360 (XUSB) for Dreamcast Maple adapters
 // Only one persona is presented at a time, fixed at boot before
 // tusb_init(). Every class must be enabled so the build includes the
 // relevant TinyUSB code paths.

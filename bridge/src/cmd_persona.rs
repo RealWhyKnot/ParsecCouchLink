@@ -1,4 +1,4 @@
-//! `couchlink keyboard` / `couchlink controller` --
+//! `couchlink keyboard` / `couchlink controller` / `couchlink maple` --
 //! switch a Pico's output persona over Wi-Fi and optionally start
 //! streaming to it.
 //!

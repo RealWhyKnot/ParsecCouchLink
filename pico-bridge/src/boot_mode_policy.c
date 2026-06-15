@@ -21,9 +21,11 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
         return RUN_PERSONA_CONTROLLER;
     if (persona_byte == (uint8_t)RUN_PERSONA_KEYBOARD)
         return RUN_PERSONA_KEYBOARD;
+    if (persona_byte == (uint8_t)RUN_PERSONA_MAPLE)
+        return RUN_PERSONA_MAPLE;
     return RUN_PERSONA_CONTROLLER;
 }
 
 bool boot_mode_persona_uses_xinput_usb(run_persona_t persona) {
-    return persona == RUN_PERSONA_CONTROLLER;
+    return persona == RUN_PERSONA_CONTROLLER || persona == RUN_PERSONA_MAPLE;
 }
