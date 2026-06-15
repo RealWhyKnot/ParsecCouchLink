@@ -19,6 +19,9 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
     // host-compilable for the unit tests.
     if (!have_creds)
         return RUN_PERSONA_CONTROLLER;
-    return (persona_byte == (uint8_t)RUN_PERSONA_KEYBOARD) ? RUN_PERSONA_KEYBOARD
-                                                           : RUN_PERSONA_CONTROLLER;
+    if (persona_byte == (uint8_t)RUN_PERSONA_KEYBOARD)
+        return RUN_PERSONA_KEYBOARD;
+    if (persona_byte == (uint8_t)RUN_PERSONA_MAPLE)
+        return RUN_PERSONA_MAPLE;
+    return RUN_PERSONA_CONTROLLER;
 }

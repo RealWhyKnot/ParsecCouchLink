@@ -26,3 +26,11 @@ add_executable(test_boot_mode_policy
 target_include_directories(test_boot_mode_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 add_test(NAME boot_mode_policy COMMAND test_boot_mode_policy)
+
+add_executable(test_maple_proto
+    test_maple_proto.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/maple_proto.c
+)
+target_include_directories(test_maple_proto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+add_test(NAME maple_proto COMMAND test_maple_proto)

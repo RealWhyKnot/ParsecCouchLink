@@ -41,10 +41,11 @@ static void persona_reads_stored_byte_with_credentials(void) {
     // Byte 0 is the controller default a pre-persona record reads back as.
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_CONTROLLER) == RUN_PERSONA_CONTROLLER);
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_KEYBOARD) == RUN_PERSONA_KEYBOARD);
+    assert(boot_mode_persona_from_flash(true, RUN_PERSONA_MAPLE) == RUN_PERSONA_MAPLE);
 }
 
 static void persona_unknown_byte_falls_back_to_controller(void) {
-    // A corrupt/garbage byte must never strand the device as a keyboard.
+    // A corrupt/garbage byte must never strand the device in a non-controller mode.
     assert(boot_mode_persona_from_flash(true, 0x5A) == RUN_PERSONA_CONTROLLER);
     assert(boot_mode_persona_from_flash(true, 0xFF) == RUN_PERSONA_CONTROLLER);
 }

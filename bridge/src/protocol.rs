@@ -24,7 +24,7 @@ pub const TYPE_ACK: u8 = 0x04;
 /// firmware's existing on_recv() RX path accepts it. The reply is a
 /// sequence of variable-length `TYPE_LOG_CHUNK` datagrams.
 pub const TYPE_GET_LOG: u8 = 0x05;
-/// Request for the firmware's current USB/XInput status over UDP.
+/// Request for the firmware's current USB status over UDP.
 pub const TYPE_GET_USB_DIAG: u8 = 0x06;
 /// Request for run-mode firmware to reboot into setup-mode USB-CDC.
 pub const TYPE_REBOOT_TO_SETUP: u8 = 0x07;
@@ -35,7 +35,7 @@ pub const TYPE_KEY_STATE: u8 = 0x08;
 /// Keyboard heartbeat, sent when the report is unchanged so the firmware
 /// watchdog stays fed. Mirrors `TYPE_HEARTBEAT` for the pad path.
 pub const TYPE_KEY_HEARTBEAT: u8 = 0x09;
-/// Ask a run-mode Pico to persist a new USB persona and reboot into it.
+/// Ask a run-mode Pico to persist a new output persona and reboot into it.
 /// `body[0]` carries the desired persona's flash byte (see `Persona`).
 pub const TYPE_SET_PERSONA: u8 = 0x0A;
 /// Request the full firmware version from run-mode firmware. The ACK keeps a
@@ -47,7 +47,7 @@ pub const TYPE_GET_VERSION: u8 = 0x0B;
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
 /// for response opcodes.
 pub const TYPE_LOG_CHUNK: u8 = 0x85;
-/// USB/XInput status reply sent by run-mode firmware.
+/// USB status reply sent by run-mode firmware.
 pub const TYPE_USB_DIAG: u8 = 0x86;
 /// Fixed 17-byte reply to `TYPE_GET_VERSION`.
 pub const TYPE_VERSION: u8 = 0x87;
@@ -75,6 +75,10 @@ pub const ACK_FLAG_KEYBOARD_PERSONA: u8 = 1 << 3;
 /// Set in the ACK flags byte when firmware supports `TYPE_GET_VERSION` /
 /// `TYPE_VERSION`.
 pub const ACK_FLAG_FULL_VERSION_SUPPORTED: u8 = 1 << 4;
+/// Set in the ACK flags byte when the Pico is presenting the Dreamcast
+/// Maple controller output persona. The bridge still streams normal
+/// controller STATE packets; the Pico maps them to Maple.
+pub const ACK_FLAG_MAPLE_PERSONA: u8 = 1 << 5;
 
 pub const USB_DIAG_WIRE_SIZE: usize = 78;
 pub const USB_DIAG_VERSION: u8 = 1;
@@ -135,6 +139,7 @@ pub enum Persona {
     #[default]
     Controller,
     Keyboard,
+    Maple,
 }
 
 impl Persona {
@@ -142,6 +147,8 @@ impl Persona {
     pub fn from_ack_flags(flags: u8) -> Self {
         if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
             Persona::Keyboard
+        } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 {
+            Persona::Maple
         } else {
             Persona::Controller
         }
@@ -153,6 +160,7 @@ impl Persona {
         match self {
             Persona::Controller => 0,
             Persona::Keyboard => 1,
+            Persona::Maple => 2,
         }
     }
 
@@ -160,6 +168,7 @@ impl Persona {
         match self {
             Persona::Controller => "controller",
             Persona::Keyboard => "keyboard",
+            Persona::Maple => "maple",
         }
     }
 }
@@ -1061,8 +1070,17 @@ mod tests {
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_USB_DIAG_SUPPORTED),
             Persona::Keyboard
         );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_USB_DIAG_SUPPORTED),
+            Persona::Maple
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_MAPLE_PERSONA),
+            Persona::Keyboard
+        );
         assert_eq!(Persona::Controller.flash_byte(), 0);
         assert_eq!(Persona::Keyboard.flash_byte(), 1);
+        assert_eq!(Persona::Maple.flash_byte(), 2);
     }
 
     #[test]

@@ -20,6 +20,7 @@ typedef enum {
 typedef enum {
     RUN_PERSONA_CONTROLLER = 0, // wired Xbox 360 / XInput (default)
     RUN_PERSONA_KEYBOARD = 1,   // USB HID boot keyboard
+    RUN_PERSONA_MAPLE = 2,      // Dreamcast Maple controller
 } run_persona_t;
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);

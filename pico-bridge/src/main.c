@@ -1,11 +1,10 @@
 // pico-bridge firmware entry point.
 //
-// One binary, two USB personas, mode decided at boot from flash:
+// One binary, setup mode plus runtime output personas, decided at boot from flash:
 //   setup mode (no creds): CDC ACM, accepts SET_WIFI, persists to flash,
 //     then REBOOT_TO_RUN.
-//   run mode (creds present): wired Xbox 360 (XUSB) over USB, Wi-Fi via
-//     cyw43, UDP listener on 4242, forwards state from bridge.exe into
-//     a shared gamepad struct that the XInput report builder consumes.
+//   run mode (creds present): Wi-Fi via cyw43, UDP listener on 4242,
+//     forwards state from bridge.exe into the selected output persona.
 
 #include <stdio.h>
 
@@ -25,6 +24,7 @@
 #include "heartbeat.h"
 #include "hid_kbd.h"
 #include "keyboard_state.h"
+#include "maple_output.h"
 #include "net_udp.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
@@ -139,7 +139,7 @@ static void run_mode_main_loop(void) {
     // Load creds (already verified by boot_mode_decide), bring up Wi-Fi,
     // bring up UDP, then poll forever.
     //
-    // Wi-Fi is the payload, but the USB controller persona is the
+    // Wi-Fi is the payload, but the selected output persona is the
     // device's identity: once we hold valid credentials we never give up
     // either. A radio that will not initialise, or an AP that will not
     // associate, must not cost the user their controller -- we stay
@@ -184,8 +184,12 @@ static void run_mode_main_loop(void) {
     if (persona == RUN_PERSONA_KEYBOARD) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
+    } else if (persona == RUN_PERSONA_MAPLE) {
+        maple_output_init(MAPLE_MAP_STANDARD);
+        diag_log_msg("run: output persona = Dreamcast Maple controller");
     } else {
         xinput_init();
+        diag_log_msg("run: USB persona = XInput controller");
     }
     watchdog_init();
     heartbeat_init();
@@ -247,6 +251,8 @@ static void run_mode_main_loop(void) {
 
         if (persona == RUN_PERSONA_KEYBOARD)
             hid_kbd_task();
+        else if (persona == RUN_PERSONA_MAPLE)
+            maple_output_task();
         else
             xinput_task();
         watchdog_tick();
@@ -325,8 +331,21 @@ int main(void) {
     // post-enum poll (called from each main loop) handles the 3-second
     // wipe escalation after USB is up.
     boot_mode_t mode = boot_mode_decide(&rr);
-    diag_log_printf("boot: mode decided: %s persona will be advertised",
-                    mode == BOOT_MODE_RUN ? "XInput" : "CDC+diag");
+    const char *persona_name = "CDC+diag";
+    if (mode == BOOT_MODE_RUN) {
+        switch (boot_mode_run_persona()) {
+        case RUN_PERSONA_CONTROLLER:
+            persona_name = "XInput";
+            break;
+        case RUN_PERSONA_KEYBOARD:
+            persona_name = "HID keyboard";
+            break;
+        case RUN_PERSONA_MAPLE:
+            persona_name = "Maple";
+            break;
+        }
+    }
+    diag_log_printf("boot: mode decided: %s persona will be advertised", persona_name);
 
     // Now that the correct persona is fixed, raise D+ once and keep it
     // there. The host sees a single clean connect event.

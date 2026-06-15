@@ -1172,7 +1172,7 @@ async fn show_direct_commands() -> Result<()> {
     );
     print_command(
         "couchlink test usb --all",
-        "check Pico USB/XInput host status over Wi-Fi",
+        "check Pico USB host status over Wi-Fi",
     );
     print_command(
         "couchlink test usb --ip 192.168.50.4",

@@ -1,4 +1,4 @@
-//! Run-mode Pico USB/XInput diagnostics over Wi-Fi.
+//! Run-mode Pico USB diagnostics over Wi-Fi.
 
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
@@ -172,8 +172,12 @@ fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
     let device_label = match persona {
         protocol::Persona::Controller => "XInput",
         protocol::Persona::Keyboard => "HID keyboard",
+        protocol::Persona::Maple => "Maple USB marker",
     };
-    println!("  {}", usb_verdict(diag, device_label));
+    println!(
+        "  {}",
+        usb_verdict(diag, device_label, persona != protocol::Persona::Maple)
+    );
     println!(
         "  USB: {}{}  mounts={} unmounts={} suspends={} resumes={}",
         if diag.mounted() {
@@ -215,13 +219,15 @@ fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
     );
 }
 
-fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str) -> String {
+fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str, expects_reports: bool) -> String {
     if !diag.mounted() {
         if diag.device_desc_count > 0 || diag.config_desc_count > 0 {
             format!("FAIL  USB host started enumeration but did not configure the {device_label} device.")
         } else {
             "FAIL  Pico sees no USB host enumeration traffic.".to_string()
         }
+    } else if !expects_reports {
+        "PASS  USB marker is configured. Maple controller output uses the Dreamcast controller-port wiring, not USB reports.".to_string()
     } else if !diag.xinput_report_sent() {
         format!(
             "WARN  USB is configured, but the host has not accepted a {device_label} report yet."
@@ -296,19 +302,26 @@ mod tests {
 
     #[test]
     fn verdict_identifies_usb_enumeration_shapes() {
-        assert!(usb_verdict(&diag(false, false, false, false), "XInput").starts_with("FAIL"));
+        assert!(usb_verdict(&diag(false, false, false, false), "XInput", true).starts_with("FAIL"));
         assert!(
-            usb_verdict(&diag(false, false, false, true), "XInput").contains("started enumeration")
+            usb_verdict(&diag(false, false, false, true), "XInput", true)
+                .contains("started enumeration")
         );
-        assert!(usb_verdict(&diag(true, false, false, true), "XInput").starts_with("WARN"));
-        assert!(usb_verdict(&diag(true, true, false, true), "XInput").starts_with("PASS"));
-        assert!(usb_verdict(&diag(true, true, true, true), "XInput").contains("OUT traffic"));
+        assert!(usb_verdict(&diag(true, false, false, true), "XInput", true).starts_with("WARN"));
+        assert!(usb_verdict(&diag(true, true, false, true), "XInput", true).starts_with("PASS"));
+        assert!(usb_verdict(&diag(true, true, true, true), "XInput", true).contains("OUT traffic"));
     }
 
     #[test]
     fn verdict_uses_persona_label() {
-        let warn = usb_verdict(&diag(true, false, false, true), "HID keyboard");
+        let warn = usb_verdict(&diag(true, false, false, true), "HID keyboard", true);
         assert!(warn.contains("HID keyboard report"));
+    }
+
+    #[test]
+    fn verdict_explains_maple_marker() {
+        let verdict = usb_verdict(&diag(true, false, false, true), "Maple USB marker", false);
+        assert!(verdict.contains("Dreamcast controller-port wiring"));
     }
 
     #[test]

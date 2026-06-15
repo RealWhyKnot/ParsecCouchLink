@@ -1,7 +1,9 @@
-// USB descriptors for both Pico personas:
+// USB descriptors for Pico setup mode and runtime personas:
 //
 //   setup mode: CDC ACM + WinUSB diag (Raspberry Pi VID 0x2E8A, PID 0xCAF0)
-//   run mode:   wired Xbox 360 / XUSB (Microsoft VID 0x045E, PID 0x028E)
+//   run / controller: wired Xbox 360 / XUSB (Microsoft VID 0x045E, PID 0x028E)
+//   run / keyboard:   USB HID boot keyboard (Raspberry Pi VID 0x2E8A, PID 0xCAF1)
+//   run / maple:      vendor marker interface (Raspberry Pi VID 0x2E8A, PID 0xCAF2)
 //
 // Only one persona is presented at a time. main() calls boot_mode_decide()
 // before tusb_init(), so D+ is raised exactly once with the final mode
@@ -104,11 +106,34 @@ static const tusb_desc_device_t desc_device_keyboard = {
     .bNumConfigurations = 0x01,
 };
 
+static const tusb_desc_device_t desc_device_maple = {
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = 0x00,
+    .bDeviceSubClass = 0x00,
+    .bDeviceProtocol = 0x00,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+
+    .idVendor = 0x2E8A,  // Raspberry Pi
+    .idProduct = 0xCAF2, // CouchLink Maple persona
+    .bcdDevice = BCD_DEVICE_VERSION,
+
+    .iManufacturer = 0x01,
+    .iProduct = 0x02,
+    .iSerialNumber = 0x03,
+    .bNumConfigurations = 0x01,
+};
+
 // True only when run mode is presenting the HID keyboard. Setup mode
 // always reports the controller persona (boot_mode_run_persona() is
 // pinned to the controller default), so this is false outside run mode.
 static bool is_keyboard_persona(void) {
     return boot_mode_current() == BOOT_MODE_RUN && boot_mode_run_persona() == RUN_PERSONA_KEYBOARD;
+}
+
+static bool is_maple_persona(void) {
+    return boot_mode_current() == BOOT_MODE_RUN && boot_mode_run_persona() == RUN_PERSONA_MAPLE;
 }
 
 uint8_t const *tud_descriptor_device_cb(void) {
@@ -120,6 +145,8 @@ uint8_t const *tud_descriptor_device_cb(void) {
     }
     if (boot_mode_current() != BOOT_MODE_RUN)
         return (uint8_t const *)&desc_device_cdc;
+    if (is_maple_persona())
+        return (uint8_t const *)&desc_device_maple;
     return (uint8_t const *)(is_keyboard_persona() ? &desc_device_keyboard : &desc_device_xinput);
 }
 
@@ -241,6 +268,28 @@ _Static_assert(sizeof(desc_configuration_keyboard) == KBD_CONFIG_TOTAL_LEN,
 _Static_assert(CFG_TUD_HID_EP_BUFSIZE >= 8,
                "CFG_TUD_HID_EP_BUFSIZE too small for the 8-byte boot keyboard report");
 
+// Maple output is not a USB endpoint. If USB is connected while the
+// Maple persona is running, expose a marker interface with no endpoints
+// instead of enumerating as a controller.
+#define MAPLE_ITF_NUM 0
+#define MAPLE_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 9 /*interface*/)
+
+static const uint8_t desc_configuration_maple[] = {
+    TUD_CONFIG_DESCRIPTOR(1, 1, 0, MAPLE_CONFIG_TOTAL_LEN, 0xA0, 100),
+    9,
+    TUSB_DESC_INTERFACE,
+    MAPLE_ITF_NUM,
+    0,
+    0,
+    0xFF,
+    0x00,
+    0x00,
+    0,
+};
+
+_Static_assert(sizeof(desc_configuration_maple) == MAPLE_CONFIG_TOTAL_LEN,
+               "maple configuration descriptor length mismatch");
+
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
     static bool logged = false;
@@ -251,6 +300,8 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     }
     if (boot_mode_current() != BOOT_MODE_RUN)
         return desc_configuration_cdc;
+    if (is_maple_persona())
+        return desc_configuration_maple;
     return is_keyboard_persona() ? desc_configuration_keyboard : desc_configuration_xinput;
 }
 
@@ -303,9 +354,10 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     }
 
     // Only the XInput controller persona needs the Microsoft-y strings
-    // that keep xusb22.sys happy. The keyboard persona is a generic HID
-    // device and uses the default CouchLink strings, same as setup mode.
-    bool xinput = (boot_mode_current() == BOOT_MODE_RUN) && !is_keyboard_persona();
+    // that keep xusb22.sys happy. The keyboard and Maple personas use
+    // the default CouchLink strings, same as setup mode.
+    bool xinput =
+        (boot_mode_current() == BOOT_MODE_RUN) && !is_keyboard_persona() && !is_maple_persona();
     const char *const *arr = xinput ? string_desc_arr_xinput : string_desc_arr;
     size_t arr_count = xinput ? (sizeof(string_desc_arr_xinput) / sizeof(string_desc_arr_xinput[0]))
                               : (sizeof(string_desc_arr) / sizeof(string_desc_arr[0]));

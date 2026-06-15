@@ -1,5 +1,6 @@
-//! `couchlink keyboard` / `couchlink controller` -- switch a Pico's USB
-//! persona over Wi-Fi and optionally start streaming to it.
+//! `couchlink keyboard` / `couchlink controller` / `couchlink maple` --
+//! switch a Pico's output persona over Wi-Fi and optionally start
+//! streaming to it.
 //!
 //! The persona is persisted on the Pico and applied at the next boot, so
 //! switching reboots the board. Because the Pico lives plugged into the

@@ -100,6 +100,10 @@ static const char *lwip_err_name(err_t e) {
 // Set when this firmware answers TYPE_GET_VERSION with the exact build
 // revision and optional four-character development suffix.
 #define ACK_FLAG_FULL_VERSION_SUPPORTED 0x10
+// Set when this Pico is currently presenting the Dreamcast Maple
+// controller persona. It consumes the same STATE packets as the XInput
+// persona, but the output side is Maple instead of USB.
+#define ACK_FLAG_MAPLE_PERSONA 0x20
 
 #define USB_DIAG_WIRE_SIZE 78
 #define USB_DIAG_VERSION 1
@@ -190,6 +194,8 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
                         ACK_FLAG_REBOOT_SETUP_SUPPORTED | ACK_FLAG_FULL_VERSION_SUPPORTED;
     if (boot_mode_run_persona() == RUN_PERSONA_KEYBOARD)
         ack_flags |= ACK_FLAG_KEYBOARD_PERSONA;
+    if (boot_mode_run_persona() == RUN_PERSONA_MAPLE)
+        ack_flags |= ACK_FLAG_MAPLE_PERSONA;
     buf[3] = ack_flags;
     // body[0..11]
     buf[4] = PICO_BRIDGE_UDP_PROTO_VERSION;
@@ -420,14 +426,17 @@ static void apply_key_body(const uint8_t *body, uint8_t flags) {
     g_last_packet_ms = to_ms_since_boot(get_absolute_time());
 }
 
-// Persist a new USB persona and reboot so the correct descriptors come up
-// at the next boot. Called from the main loop (net_udp_task), never the
-// lwIP callback, so flash_safe_execute can coordinate with the cyw43
-// core. A no-op when the persona already matches, to avoid needless flash
-// wear and a session-dropping reboot.
+// Persist a new output persona and reboot so the correct runtime path comes
+// up at the next boot. Called from the main loop (net_udp_task), never the
+// lwIP callback, so flash_safe_execute can coordinate with the cyw43 core.
+// A no-op when the persona already matches, to avoid needless flash wear
+// and a session-dropping reboot.
 static void apply_set_persona(uint8_t persona) {
-    uint8_t want =
-        (persona == FLASH_PERSONA_KEYBOARD) ? FLASH_PERSONA_KEYBOARD : FLASH_PERSONA_CONTROLLER;
+    uint8_t want = FLASH_PERSONA_CONTROLLER;
+    if (persona == FLASH_PERSONA_KEYBOARD)
+        want = FLASH_PERSONA_KEYBOARD;
+    else if (persona == FLASH_PERSONA_MAPLE)
+        want = FLASH_PERSONA_MAPLE;
 
     flash_creds_t rec;
     if (!flash_creds_load(&rec)) {

@@ -23,7 +23,7 @@ pub async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
     Ok(())
 }
 
-/// Ask a run-mode Pico to persist a new USB persona and reboot into it.
+/// Ask a run-mode Pico to persist a new output persona and reboot into it.
 /// The firmware ignores the request when it's already in the requested
 /// persona, so this is safe to send unconditionally. Several datagrams go
 /// out to cover UDP loss; a transient send error after the Pico starts
