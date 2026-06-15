@@ -12,6 +12,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ### Fixed
 - **build:** Keep version stamp out of worktree (da8de33)
+- **protocol:** Harden full version discovery (e0a847b)
+- **protocol:** Report full Wi-Fi firmware versions (3d884be)
 
 ---
 
