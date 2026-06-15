@@ -1223,6 +1223,7 @@ mod tests {
                 board_type: board,
                 uptime_seconds: 12,
                 unique_id_short: uid,
+                full_version: None,
             },
             persona: protocol::Persona::Controller,
         }

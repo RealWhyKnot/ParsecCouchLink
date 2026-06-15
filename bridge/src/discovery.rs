@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tokio::time::interval;
+use tokio::time::{interval, timeout};
 
 use crate::protocol::{self, AckInfo, Packet, PacketKind, Persona};
 
@@ -57,7 +57,7 @@ pub async fn collect(
     }
     drop(rx_tx);
 
-    let mut found = BTreeMap::<u32, (SocketAddr, AckInfo, Persona)>::new();
+    let mut found = BTreeMap::<u32, (SocketAddr, AckInfo, Persona, u8)>::new();
     let mut seq: u8 = 0;
     let mut tick = interval(BROADCAST_INTERVAL);
     let mut main_buf = [0u8; 64];
@@ -76,14 +76,14 @@ pub async fn collect(
                 }
             }
             r = socket.recv_from(&mut main_buf) => {
-                if let Some((peer, info, persona)) = handle_recv("main", r, &main_buf) {
-                    found.entry(info.unique_id_short).or_insert((peer, info, persona));
+                if let Some((peer, info, persona, flags)) = handle_recv("main", r, &main_buf) {
+                    found.entry(info.unique_id_short).or_insert((peer, info, persona, flags));
                 }
             }
             iface_msg = rx_rx.recv() => {
                 let Some((label, n, peer, buf)) = iface_msg else { continue };
-                if let Some((peer, info, persona)) = handle_recv(&label, Ok((n, peer)), &buf) {
-                    found.entry(info.unique_id_short).or_insert((peer, info, persona));
+                if let Some((peer, info, persona, flags)) = handle_recv(&label, Ok((n, peer)), &buf) {
+                    found.entry(info.unique_id_short).or_insert((peer, info, persona, flags));
                 }
             }
             _ = &mut deadline => break,
@@ -96,7 +96,18 @@ pub async fn collect(
         let _ = t.await;
     }
 
-    Ok(found.into_values().collect())
+    let mut out = Vec::new();
+    for (peer, mut info, persona, flags) in found.into_values() {
+        if flags & protocol::ACK_FLAG_FULL_VERSION_SUPPORTED != 0 {
+            if let Ok(Some(version)) =
+                query_full_version(socket, peer, Duration::from_millis(800)).await
+            {
+                info.full_version = Some(version.version);
+            }
+        }
+        out.push((peer, info, persona));
+    }
+    Ok(out)
 }
 
 struct InterfaceBroadcastSocket {
@@ -125,10 +136,17 @@ pub async fn probe_ip(
                 socket.send_to(&pkt.encode(), target).await?;
             }
             r = socket.recv_from(&mut buf) => {
-                let Some((peer, info, persona)) = handle_recv("manual-ip", r, &buf) else {
+                let Some((peer, mut info, persona, flags)) = handle_recv("manual-ip", r, &buf) else {
                     continue;
                 };
                 if peer.ip() == ip {
+                    if flags & protocol::ACK_FLAG_FULL_VERSION_SUPPORTED != 0 {
+                        if let Ok(Some(version)) =
+                            query_full_version(socket, peer, Duration::from_millis(800)).await
+                        {
+                            info.full_version = Some(version.version);
+                        }
+                    }
                     return Ok(Some((peer, info, persona)));
                 }
                 tracing::debug!("discovery(manual-ip): ignoring reply from non-target {peer}");
@@ -142,13 +160,13 @@ fn handle_recv(
     src_label: &str,
     r: std::io::Result<(usize, SocketAddr)>,
     buf: &[u8; 64],
-) -> Option<(SocketAddr, AckInfo, Persona)> {
+) -> Option<(SocketAddr, AckInfo, Persona, u8)> {
     match r {
         Ok((n, peer)) => match Packet::decode(&buf[..n]) {
             Ok(pkt) => {
                 if let PacketKind::Ack(info) = pkt.kind {
                     tracing::trace!("discovery: ack received via {src_label} from {peer}");
-                    Some((peer, info, Persona::from_ack_flags(pkt.flags)))
+                    Some((peer, info, Persona::from_ack_flags(pkt.flags), pkt.flags))
                 } else {
                     tracing::debug!("discovery({src_label}): non-ack packet from {peer}, ignoring");
                     None
@@ -162,6 +180,33 @@ fn handle_recv(
         Err(e) => {
             tracing::debug!("discovery({src_label}): recv error: {e}");
             None
+        }
+    }
+}
+
+async fn query_full_version(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    duration: Duration,
+) -> std::io::Result<Option<protocol::VersionInfo>> {
+    let req = protocol::encode_get_version(0xF1);
+    socket.send_to(&req, peer).await?;
+    let mut buf = [0u8; 64];
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return Ok(None);
+        }
+        let recv = timeout(deadline - now, socket.recv_from(&mut buf)).await;
+        let Ok(Ok((n, from))) = recv else {
+            return Ok(None);
+        };
+        if from.ip() != peer.ip() {
+            continue;
+        }
+        if let Ok(version) = protocol::VersionInfo::decode(&buf[..n]) {
+            return Ok(Some(version));
         }
     }
 }
@@ -337,6 +382,7 @@ mod tests {
                 board_type: protocol::BOARD_PICO_2_W,
                 uptime_seconds: 12,
                 unique_id_short: 0x1234ABCD,
+                full_version: None,
             },
         )
         .encode();

@@ -28,12 +28,16 @@ Packet types:
 | `0x08` | `KEY_STATE` -- keyboard report for the keyboard persona. The 8-byte USB HID boot report sits in the first 8 body bytes: modifier bitmap, reserved, then six key usage codes. |
 | `0x09` | `KEY_HEARTBEAT` -- keyboard heartbeat, sent when the report is unchanged so the firmware watchdog stays fed. |
 | `0x0A` | `SET_PERSONA` -- bridge asks run-mode firmware to persist a USB persona and reboot into it. `body[0]` is the persona (`0` = controller, `1` = keyboard). Ignored if the Pico is already in that persona. |
+| `0x0B` | `GET_VERSION` -- bridge requests the exact runtime firmware build. Same 17-byte request shape as the others; body is reserved. |
 | `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
 | `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, IN/OUT report counters, recent timestamps, and CRC-16. |
+| `0x87` | `VERSION` -- fixed 17-byte reply to `GET_VERSION` with `year`, `month`, `day`, `revision`, and optional four-character development suffix. |
 
 The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body. Keyboard packets carry a standard USB HID boot-keyboard report, so a Pico in the keyboard persona only processes `KEY_STATE`/`KEY_HEARTBEAT` and a Pico in the controller persona only processes `STATE`/`HEARTBEAT`; the bridge sends whichever matches the persona the Pico advertised in its ack.
 
-Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`; bit 2 (`REBOOT_TO_SETUP_SUPPORTED`) means it accepts `REBOOT_TO_SETUP`; bit 3 (`KEYBOARD_PERSONA`) means the Pico is currently presenting the USB keyboard and accepts `SET_PERSONA` plus the keyboard packet types. Older firmware leaves these flags clear, and the bridge gates behaviour accordingly.
+Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`; bit 2 (`REBOOT_TO_SETUP_SUPPORTED`) means it accepts `REBOOT_TO_SETUP`; bit 3 (`KEYBOARD_PERSONA`) means the Pico is currently presenting the USB keyboard and accepts `SET_PERSONA` plus the keyboard packet types; bit 4 (`FULL_VERSION_SUPPORTED`) means it will reply to `GET_VERSION`. Older firmware leaves these flags clear, and the bridge gates behaviour accordingly.
+
+The ACK keeps its compact legacy body for compatibility: protocol version, date triplet, board type, uptime, and short UID. When `FULL_VERSION_SUPPORTED` is set, the bridge immediately follows discovery with `GET_VERSION` so user-facing Wi-Fi status can show the exact firmware string, including suffixes such as `2026.6.15.0-0030`.
 
 ## USB-CDC Setup
 

@@ -80,8 +80,10 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_KEY_STATE 0x08
 #define TYPE_KEY_HEARTBEAT 0x09
 #define TYPE_SET_PERSONA 0x0A
+#define TYPE_GET_VERSION 0x0B
 #define TYPE_LOG_CHUNK 0x85
 #define TYPE_USB_DIAG 0x86
+#define TYPE_VERSION 0x87
 
 #define FLAG_PARSEC_CONNECTED 0x01
 // Capability bit set in ACK[3] (the flags byte, formerly always zero)
@@ -95,6 +97,9 @@ static const char *lwip_err_name(err_t e) {
 // so the bridge knows to stream key reports instead of pad state. Also
 // implicitly advertises that SET_PERSONA is understood.
 #define ACK_FLAG_KEYBOARD_PERSONA 0x08
+// Set when this firmware answers TYPE_GET_VERSION with the exact build
+// revision and optional four-character development suffix.
+#define ACK_FLAG_FULL_VERSION_SUPPORTED 0x10
 
 #define USB_DIAG_WIRE_SIZE 78
 #define USB_DIAG_VERSION 1
@@ -182,7 +187,7 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     // decode the flags field but ignore unknown bits; new bridges gate
     // their CMD_GET_LOG attempt on this bit being set.
     uint8_t ack_flags = ACK_FLAG_LOG_CHUNK_SUPPORTED | ACK_FLAG_USB_DIAG_SUPPORTED |
-                        ACK_FLAG_REBOOT_SETUP_SUPPORTED;
+                        ACK_FLAG_REBOOT_SETUP_SUPPORTED | ACK_FLAG_FULL_VERSION_SUPPORTED;
     if (boot_mode_run_persona() == RUN_PERSONA_KEYBOARD)
         ack_flags |= ACK_FLAG_KEYBOARD_PERSONA;
     buf[3] = ack_flags;
@@ -359,6 +364,39 @@ static void send_usb_diag(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_se
     }
 }
 
+static void send_version(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
+    uint8_t buf[WIRE_PKT_SIZE];
+    memset(buf, 0, sizeof(buf));
+    buf[0] = MAGIC;
+    buf[1] = TYPE_VERSION;
+    buf[2] = in_seq;
+    buf[3] = 0;
+    buf[4] = (uint8_t)(PICO_BRIDGE_FW_YEAR & 0xFFu);
+    buf[5] = (uint8_t)((PICO_BRIDGE_FW_YEAR >> 8) & 0xFFu);
+    buf[6] = (uint8_t)PICO_BRIDGE_FW_MONTH;
+    buf[7] = (uint8_t)PICO_BRIDGE_FW_DAY;
+    buf[8] = (uint8_t)PICO_BRIDGE_FW_REVISION;
+    buf[9] = (uint8_t)PICO_BRIDGE_FW_SUFFIX_LEN;
+#if PICO_BRIDGE_FW_SUFFIX_LEN == 4
+    memcpy(&buf[10], PICO_BRIDGE_FW_SUFFIX, 4);
+#endif
+    buf[16] = crc8(buf, 16);
+
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, WIRE_PKT_SIZE, PBUF_RAM);
+    if (!p) {
+        diag_log_msg("net_udp: version pbuf_alloc failed (ERR_MEM)");
+        return;
+    }
+    memcpy(p->payload, buf, WIRE_PKT_SIZE);
+    err_t e = udp_sendto(pcb, p, to_addr, to_port);
+    pbuf_free(p);
+    if (e != ERR_OK) {
+        diag_log_printf("net_udp: version send err=%d (%s)", (int)e, lwip_err_name(e));
+    } else {
+        tx_count++;
+    }
+}
+
 static void apply_state_body(const uint8_t *body, uint8_t flags) {
     g_gamepad_state.buttons = (uint16_t)body[0] | ((uint16_t)body[1] << 8);
     g_gamepad_state.left_trigger = body[2];
@@ -457,6 +495,8 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
         send_log_chunks(addr, port, seq);
     } else if (type == TYPE_GET_USB_DIAG) {
         send_usb_diag(addr, port, seq);
+    } else if (type == TYPE_GET_VERSION) {
+        send_version(addr, port, seq);
     } else if (type == TYPE_REBOOT_TO_SETUP) {
         send_ack(addr, port, seq);
         reboot_to_setup_pending = true;

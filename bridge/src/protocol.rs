@@ -38,6 +38,10 @@ pub const TYPE_KEY_HEARTBEAT: u8 = 0x09;
 /// Ask a run-mode Pico to persist a new USB persona and reboot into it.
 /// `body[0]` carries the desired persona's flash byte (see `Persona`).
 pub const TYPE_SET_PERSONA: u8 = 0x0A;
+/// Request the full firmware version from run-mode firmware. The ACK keeps a
+/// compact legacy date triplet; this optional follow-up carries revision and
+/// development suffix without changing the ACK shape.
+pub const TYPE_GET_VERSION: u8 = 0x0B;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
@@ -45,6 +49,8 @@ pub const TYPE_SET_PERSONA: u8 = 0x0A;
 pub const TYPE_LOG_CHUNK: u8 = 0x85;
 /// USB/XInput status reply sent by run-mode firmware.
 pub const TYPE_USB_DIAG: u8 = 0x86;
+/// Fixed 17-byte reply to `TYPE_GET_VERSION`.
+pub const TYPE_VERSION: u8 = 0x87;
 
 pub const FLAG_PARSEC_CONNECTED: u8 = 1 << 0;
 pub const FLAG_NEUTRALIZE: u8 = 1 << 1;
@@ -66,6 +72,9 @@ pub const ACK_FLAG_REBOOT_TO_SETUP_SUPPORTED: u8 = 1 << 2;
 /// streaming types are understood; the bridge streams key reports rather
 /// than pad state to this Pico.
 pub const ACK_FLAG_KEYBOARD_PERSONA: u8 = 1 << 3;
+/// Set in the ACK flags byte when firmware supports `TYPE_GET_VERSION` /
+/// `TYPE_VERSION`.
+pub const ACK_FLAG_FULL_VERSION_SUPPORTED: u8 = 1 << 4;
 
 pub const USB_DIAG_WIRE_SIZE: usize = 78;
 pub const USB_DIAG_VERSION: u8 = 1;
@@ -164,12 +173,20 @@ pub struct AckInfo {
     pub board_type: u8,
     pub uptime_seconds: u32, // wire is u24 LE; high byte must be zero
     pub unique_id_short: u32,
+    pub full_version: Option<FirmwareVersion>,
 }
 
 impl AckInfo {
     pub fn firmware_version(&self) -> FirmwareVersion {
-        FirmwareVersion::from_triplet(self.fw_major, self.fw_minor, self.fw_patch)
+        self.full_version.unwrap_or_else(|| {
+            FirmwareVersion::from_triplet(self.fw_major, self.fw_minor, self.fw_patch)
+        })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VersionInfo {
+    pub version: FirmwareVersion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -305,6 +322,7 @@ impl Packet {
                 board_type: body[4],
                 uptime_seconds: u32::from_le_bytes([body[5], body[6], body[7], 0]),
                 unique_id_short: u32::from_le_bytes([body[8], body[9], body[10], body[11]]),
+                full_version: None,
             }),
             other => return Err(DecodeError::UnknownType(other)),
         };
@@ -450,6 +468,92 @@ pub fn encode_set_persona(seq: u8, persona: Persona) -> [u8; PACKET_SIZE] {
     buf[4] = persona.flash_byte();
     buf[16] = crc8(&buf[..16]);
     buf
+}
+
+/// Build a `TYPE_GET_VERSION` request datagram. The response is decoded with
+/// `VersionInfo::decode`.
+pub fn encode_get_version(seq: u8) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_GET_VERSION;
+    buf[2] = seq;
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+impl VersionInfo {
+    pub fn encode(&self, seq: u8, flags: u8) -> [u8; PACKET_SIZE] {
+        let mut buf = [0u8; PACKET_SIZE];
+        buf[0] = MAGIC;
+        buf[1] = TYPE_VERSION;
+        buf[2] = seq;
+        buf[3] = flags;
+        if let FirmwareVersion::Release {
+            year,
+            month,
+            day,
+            revision: Some(revision),
+            suffix,
+        } = self.version
+        {
+            let body: &mut [u8; 12] = (&mut buf[4..16]).try_into().unwrap();
+            body[0..2].copy_from_slice(&year.to_le_bytes());
+            body[2] = month;
+            body[3] = day;
+            body[4] = revision;
+            if let Some(suffix) = suffix {
+                body[5] = 4;
+                body[6..10].copy_from_slice(&suffix);
+            }
+        }
+        buf[16] = crc8(&buf[..16]);
+        buf
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, DecodeError> {
+        if buf.len() != PACKET_SIZE {
+            return Err(DecodeError::WrongSize);
+        }
+        if buf[0] != MAGIC {
+            return Err(DecodeError::WrongMagic);
+        }
+        let computed = crc8(&buf[..16]);
+        if buf[16] != computed {
+            return Err(DecodeError::BadCrc);
+        }
+        if buf[1] != TYPE_VERSION {
+            return Err(DecodeError::UnknownType(buf[1]));
+        }
+        let body: &[u8; 12] = buf[4..16].try_into().unwrap();
+        let year = u16::from_le_bytes([body[0], body[1]]);
+        let month = body[2];
+        let day = body[3];
+        let revision = body[4];
+        if !(2020..=2099).contains(&year) || !(1..=12).contains(&month) || !(1..=31).contains(&day)
+        {
+            return Err(DecodeError::UnknownType(TYPE_VERSION));
+        }
+        let suffix = if body[5] == 4 {
+            let mut suffix = [0u8; 4];
+            suffix.copy_from_slice(&body[6..10]);
+            if suffix.iter().all(|b| b.is_ascii_alphanumeric()) {
+                Some(suffix)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        Ok(Self {
+            version: FirmwareVersion::Release {
+                year,
+                month,
+                day,
+                revision: Some(revision),
+                suffix,
+            },
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -963,6 +1067,7 @@ mod tests {
             board_type: BOARD_PICO_2_W,
             uptime_seconds: 0x123456, // fits in u24
             unique_id_short: 0xDEADBEEF,
+            full_version: None,
         };
         let pkt = Packet::ack(99, info);
         let buf = pkt.encode();
@@ -974,6 +1079,74 @@ mod tests {
         } else {
             panic!("decoded ack as wrong kind");
         }
+    }
+
+    #[test]
+    fn version_request_encode_shape() {
+        let buf = encode_get_version(7);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_GET_VERSION);
+        assert_eq!(buf[2], 7);
+        assert_eq!(buf[16], crc8(&buf[..16]));
+        assert_eq!(
+            Packet::decode(&buf),
+            Err(DecodeError::UnknownType(TYPE_GET_VERSION))
+        );
+    }
+
+    #[test]
+    fn version_reply_roundtrip_with_suffix() {
+        let info = VersionInfo {
+            version: FirmwareVersion::Release {
+                year: 2026,
+                month: 6,
+                day: 15,
+                revision: Some(0),
+                suffix: Some(*b"0030"),
+            },
+        };
+        let buf = info.encode(12, 0);
+        assert_eq!(buf[1], TYPE_VERSION);
+        assert_eq!(buf[5], 0x07);
+        let decoded = VersionInfo::decode(&buf).unwrap();
+        assert_eq!(decoded.version.to_string(), "2026.6.15.0-0030");
+    }
+
+    #[test]
+    fn version_reply_roundtrip_without_suffix() {
+        let info = VersionInfo {
+            version: FirmwareVersion::Release {
+                year: 2026,
+                month: 6,
+                day: 15,
+                revision: Some(1),
+                suffix: None,
+            },
+        };
+        let decoded = VersionInfo::decode(&info.encode(0, 0)).unwrap();
+        assert_eq!(decoded.version.to_string(), "2026.6.15.1");
+    }
+
+    #[test]
+    fn ack_prefers_full_version_when_available() {
+        let ack = AckInfo {
+            proto_version: PROTO_VERSION,
+            fw_major: 26,
+            fw_minor: 6,
+            fw_patch: 15,
+            board_type: BOARD_PICO_2_W,
+            uptime_seconds: 1,
+            unique_id_short: 0xDEADBEEF,
+            full_version: Some(FirmwareVersion::Release {
+                year: 2026,
+                month: 6,
+                day: 15,
+                revision: Some(0),
+                suffix: Some(*b"0030"),
+            }),
+        };
+        assert_eq!(ack.firmware_version().to_string(), "2026.6.15.0-0030");
     }
 
     #[test]
@@ -1263,6 +1436,7 @@ mod tests {
             board_type: BOARD_PICO_W_RP2040,
             uptime_seconds: 60,
             unique_id_short: 0xABCD1234,
+            full_version: None,
         };
         let mut buf = Packet::ack(7, info).encode();
         // Stomp the flags byte with the capability bit and re-CRC.
