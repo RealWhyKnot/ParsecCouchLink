@@ -3,7 +3,6 @@
 //   setup mode: CDC ACM + WinUSB diag (Raspberry Pi VID 0x2E8A, PID 0xCAF0)
 //   run / controller: wired Xbox 360 / XUSB (Microsoft VID 0x045E, PID 0x028E)
 //   run / keyboard:   USB HID boot keyboard (Raspberry Pi VID 0x2E8A, PID 0xCAF1)
-//   run / maple:      wired Xbox 360 / XUSB for Dreamcast Maple adapters
 //
 // Only one persona is presented at a time. main() calls boot_mode_decide()
 // before tusb_init(), so D+ is raised exactly once with the final mode

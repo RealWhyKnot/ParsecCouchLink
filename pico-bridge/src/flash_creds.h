@@ -24,9 +24,9 @@
 // where the pad used to be all-zero, so a record written before this
 // field existed reads back as the controller persona with its CRC still
 // valid -- no version bump or migration needed.
-#define FLASH_PERSONA_CONTROLLER 0 // wired Xbox 360 / XInput (default)
-#define FLASH_PERSONA_KEYBOARD 1   // USB HID boot keyboard
-#define FLASH_PERSONA_MAPLE 2      // Xbox-compatible Dreamcast Maple adapter mode
+#define FLASH_PERSONA_CONTROLLER 0     // wired Xbox 360 / XInput (default)
+#define FLASH_PERSONA_KEYBOARD 1       // USB HID boot keyboard
+#define FLASH_PERSONA_RESERVED_MAPLE 2 // reserved; treated as controller
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;  // FLASH_CREDS_MAGIC

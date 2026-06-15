@@ -183,9 +183,6 @@ static void run_mode_main_loop(void) {
     if (persona == RUN_PERSONA_KEYBOARD) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
-    } else if (persona == RUN_PERSONA_MAPLE) {
-        xinput_init();
-        diag_log_msg("run: USB persona = XInput controller for Maple adapter");
     } else {
         xinput_init();
         diag_log_msg("run: USB persona = XInput controller");
@@ -336,9 +333,6 @@ int main(void) {
             break;
         case RUN_PERSONA_KEYBOARD:
             persona_name = "HID keyboard";
-            break;
-        case RUN_PERSONA_MAPLE:
-            persona_name = "Maple";
             break;
         }
     }

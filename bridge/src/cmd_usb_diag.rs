@@ -172,7 +172,6 @@ fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
     let device_label = match persona {
         protocol::Persona::Controller => "XInput",
         protocol::Persona::Keyboard => "HID keyboard",
-        protocol::Persona::Maple => "XInput (Maple mode)",
     };
     println!("  {}", usb_verdict(diag, device_label));
     println!(
@@ -310,12 +309,6 @@ mod tests {
     fn verdict_uses_persona_label() {
         let warn = usb_verdict(&diag(true, false, false, true), "HID keyboard");
         assert!(warn.contains("HID keyboard report"));
-    }
-
-    #[test]
-    fn verdict_expects_xinput_reports_for_maple_mode() {
-        let verdict = usb_verdict(&diag(true, false, false, true), "XInput (Maple mode)");
-        assert!(verdict.contains("XInput (Maple mode) report"));
     }
 
     #[test]
