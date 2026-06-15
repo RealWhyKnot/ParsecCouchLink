@@ -30,7 +30,7 @@ $ProjectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Pa
 $RepoRoot    = Split-Path -Parent $ProjectRoot
 $DistDir     = Join-Path $ProjectRoot "dist"
 $StateFile   = Join-Path $RepoRoot ".local_build_state.json"
-$VersionFile = Join-Path $RepoRoot "version.txt"
+$VersionFile = $null
 
 function Enable-RepoGitHooks {
     $git = Get-Command git -ErrorAction SilentlyContinue
@@ -60,11 +60,49 @@ function Write-VersionStamp {
         [string]$Version
     )
 
+    $parent = Split-Path -Parent $Path
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
     $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
     [System.IO.File]::WriteAllText($Path, $Version, $encoding)
 }
 
+function Get-PrivateVersionFile {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $git = Get-Command git -ErrorAction SilentlyContinue
+    if ($git) {
+        Push-Location $RepoRoot
+        try {
+            $path = (& git rev-parse --git-path couchlink-version.txt 2>$null)
+            if ($LASTEXITCODE -eq 0 -and $path) {
+                $path = $path.Trim()
+                if ([System.IO.Path]::IsPathRooted($path)) {
+                    return [System.IO.Path]::GetFullPath($path)
+                }
+                return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $path))
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    return (Join-Path (Join-Path $RepoRoot ".git") "couchlink-version.txt")
+}
+
+function Remove-LegacyVersionFile {
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    $legacy = Join-Path $RepoRoot "version.txt"
+    if (Test-Path -LiteralPath $legacy) {
+        Remove-Item -LiteralPath $legacy -Force
+    }
+}
+
 Enable-RepoGitHooks
+Remove-LegacyVersionFile -RepoRoot $RepoRoot
+$VersionFile = Get-PrivateVersionFile -RepoRoot $RepoRoot
 
 # Board -> per-board build dir + canonical output filename.
 $BoardInfo = @{

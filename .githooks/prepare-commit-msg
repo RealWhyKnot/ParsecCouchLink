@@ -20,7 +20,7 @@ if [ "$source" != "commit" ]; then
     echo "" >&2
     echo "  subject: $subject" >&2
     echo "" >&2
-    echo "Let this hook append the current version from version.txt instead of copying" >&2
+    echo "Let this hook append the current generated version instead of copying" >&2
     echo "a stamp from an older commit subject." >&2
     echo "" >&2
     exit 1
@@ -30,7 +30,20 @@ fi
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$repo_root" ] || exit 0
 
-version_file="$repo_root/version.txt"
+version_file="$(git rev-parse --git-path couchlink-version.txt 2>/dev/null || true)"
+if [ -z "$version_file" ]; then
+  version_file="$repo_root/.git/couchlink-version.txt"
+fi
+case "$version_file" in
+  /*|[A-Za-z]:*) ;;
+  *) version_file="$repo_root/$version_file" ;;
+esac
+
+legacy_version_file="$repo_root/version.txt"
+if [ -f "$legacy_version_file" ]; then
+  rm -f "$legacy_version_file"
+fi
+
 version=""
 if [ -f "$version_file" ]; then
   version="$(tr -d '\r' < "$version_file" | sed 's/[^[:print:]]//g' | xargs)"
@@ -41,6 +54,7 @@ if ! printf '%s\n' "$version" | grep -qE "^${today}\."; then
   short_head="$(git rev-parse --short=4 HEAD 2>/dev/null | tr 'a-z' 'A-Z')"
   [ -n "$short_head" ] || short_head="0000"
   version="${today}.0-${short_head}"
+  mkdir -p "$(dirname "$version_file")"
   printf '%s' "$version" > "$version_file"
 fi
 

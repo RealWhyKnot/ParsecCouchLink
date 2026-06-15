@@ -68,6 +68,13 @@ if (-not $SkipPowerShell) {
         "-File",
         ".\.github\scripts\Test-UpdateChangelog.ps1"
     )
+    Invoke-Native -FilePath "powershell" -Arguments @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        ".\.github\scripts\Test-CommitHooks.ps1"
+    )
 }
 
 if (-not $SkipRust) {
