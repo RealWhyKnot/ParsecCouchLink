@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Check firmware formatting before pushing firmware C sources.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$repo_root" ] || exit 0
+cd "$repo_root"
+
+if [ "${COUCHLINK_SKIP_PRE_PUSH_LINT:-}" = "1" ]; then
+  exit 0
+fi
+
+changed=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    ""|0000000000000000000000000000000000000000) continue ;;
+  esac
+
+  if [ -n "${remote_sha:-}" ] &&
+     [ "$remote_sha" != "0000000000000000000000000000000000000000" ]; then
+    changed="$changed"$'\n'"$(git diff --name-only "$remote_sha..$local_sha" -- || true)"
+  else
+    parent="$(git rev-parse --verify --quiet "$local_sha^" || true)"
+    if [ -n "$parent" ]; then
+      changed="$changed"$'\n'"$(git diff --name-only "$parent..$local_sha" -- || true)"
+    else
+      changed="$changed"$'\n'"$(git ls-tree -r --name-only "$local_sha" || true)"
+    fi
+  fi
+done
+
+if [ -z "$changed" ]; then
+  exit 0
+fi
+
+if ! printf '%s\n' "$changed" | grep -Eq '^(\.clang-format|tools/lint\.ps1|pico-bridge/(src|tests)/.*\.[ch])$'; then
+  exit 0
+fi
+
+if command -v powershell.exe >/dev/null 2>&1; then
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/lint.ps1 -SkipRust -SkipPowerShell
+elif command -v pwsh >/dev/null 2>&1; then
+  pwsh -NoProfile -ExecutionPolicy Bypass -File tools/lint.ps1 -SkipRust -SkipPowerShell
+elif command -v powershell >/dev/null 2>&1; then
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/lint.ps1 -SkipRust -SkipPowerShell
+else
+  echo "pre-push: PowerShell was not found; run tools/lint.ps1 -SkipRust -SkipPowerShell before pushing firmware changes." >&2
+  exit 1
+fi

@@ -62,6 +62,16 @@ try {
         throw "prepare-commit-msg did not keep the private version stamp."
     }
 
+    $prePushPath = Join-Path $repo ".githooks\pre-push"
+    if (-not (Test-Path -LiteralPath $prePushPath)) {
+        throw "Missing .githooks/pre-push."
+    }
+
+    $prePushText = Get-Content -LiteralPath $prePushPath -Raw
+    if ($prePushText -notmatch "tools/lint\.ps1" -or $prePushText -notmatch "-SkipRust" -or $prePushText -notmatch "-SkipPowerShell") {
+        throw "pre-push hook must run the firmware formatting lint path."
+    }
+
     Write-Host "Commit hook tests passed."
 } finally {
     if ($pushedLocation) {

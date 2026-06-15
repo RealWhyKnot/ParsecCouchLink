@@ -197,8 +197,8 @@ function Get-NextBetaTag {
     }
 
     $escapedDate = [regex]::Escape($DateStamp)
-    $pattern = "^v$escapedDate\.(\d+)-beta$"
-    $existingTags = @(Invoke-Git -Arguments @("tag", "--list", "v$DateStamp.*-beta"))
+    $pattern = "^v$escapedDate\.(\d+)(-[A-Za-z0-9]{4})?$"
+    $existingTags = @(Invoke-Git -Arguments @("tag", "--list", "v$DateStamp.*"))
     $highest = -1
 
     foreach ($existingTag in $existingTags) {

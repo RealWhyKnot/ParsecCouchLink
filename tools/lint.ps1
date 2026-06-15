@@ -80,6 +80,13 @@ if (-not $SkipPowerShell) {
         "-ExecutionPolicy",
         "Bypass",
         "-File",
+        ".\.github\scripts\Test-ReleaseVersionSequence.ps1"
+    )
+    Invoke-Native -FilePath "powershell" -Arguments @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
         ".\.github\scripts\Test-NightlyPrereleasePlan.ps1"
     )
     Invoke-Native -FilePath "powershell" -Arguments @(

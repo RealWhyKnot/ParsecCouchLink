@@ -39,6 +39,7 @@ jobs:
         run: |
           ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
+          ./.github/scripts/Test-ReleaseVersionSequence.ps1
           ./.github/scripts/Test-NightlyPrereleasePlan.ps1
 
       - name: Rust toolchain
@@ -100,6 +101,10 @@ jobs:
           "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Validate release version sequence
+        shell: pwsh
+        run: ./.github/scripts/Assert-ReleaseVersionSequence.ps1 -Tag '${{ steps.version.outputs.tag }}'
 
       - name: Promote changelog
         id: changelog
