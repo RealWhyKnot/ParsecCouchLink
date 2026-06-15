@@ -7,6 +7,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 ### Added
 - Keyboard passthrough mode for keyboard-only games (bbdfc4c)
 
+### Changed
+- **firmware:** Clang-format keyboard persona helper (273d694)
+
 ### Fixed
 - **build:** Keep version stamp out of worktree (da8de33)
 
