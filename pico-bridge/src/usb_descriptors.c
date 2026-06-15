@@ -108,8 +108,7 @@ static const tusb_desc_device_t desc_device_keyboard = {
 // always reports the controller persona (boot_mode_run_persona() is
 // pinned to the controller default), so this is false outside run mode.
 static bool is_keyboard_persona(void) {
-    return boot_mode_current() == BOOT_MODE_RUN &&
-           boot_mode_run_persona() == RUN_PERSONA_KEYBOARD;
+    return boot_mode_current() == BOOT_MODE_RUN && boot_mode_run_persona() == RUN_PERSONA_KEYBOARD;
 }
 
 uint8_t const *tud_descriptor_device_cb(void) {
