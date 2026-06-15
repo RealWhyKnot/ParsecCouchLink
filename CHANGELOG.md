@@ -4,7 +4,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Fixed
+- **build:** Keep version stamp out of worktree (da8de33)
 
 ---
 
