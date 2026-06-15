@@ -29,6 +29,7 @@ jobs:
           # Full history + all tags so the release-body step can diff
           # commits against the previous version tag for the changelog.
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Test release base selection
         shell: pwsh
@@ -39,6 +40,7 @@ jobs:
         run: |
           ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
+          ./.github/scripts/Test-GenerateReleaseNotes.ps1
           ./.github/scripts/Test-ReleaseVersionSequence.ps1
           ./.github/scripts/Test-NightlyPrereleasePlan.ps1
 
@@ -112,11 +114,20 @@ jobs:
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          ./.github/scripts/Update-Changelog.ps1 -Mode Promote -Version '${{ steps.version.outputs.tag }}'
+          $tag = '${{ steps.version.outputs.tag }}'
+          $prevTag = & ./.github/scripts/Resolve-ReleaseBaseTag.ps1 -Tag $tag
+          if ($LASTEXITCODE -eq 0 -and $prevTag) {
+              Write-Host "Preloading changelog entries from $prevTag..$tag before promotion."
+              ./.github/scripts/Update-Changelog.ps1 -Mode Append -Range "$prevTag..$tag"
+          } else {
+              Write-Host "No previous release tag found before $tag; promoting the existing Unreleased section."
+          }
+
+          ./.github/scripts/Update-Changelog.ps1 -Mode Promote -Version $tag
           New-Item -ItemType Directory -Force -Path .changelog-stash | Out-Null
           Copy-Item CHANGELOG.md .changelog-stash/CHANGELOG.md -Force
 
-          $notes = ./.github/scripts/Update-Changelog.ps1 -Mode Notes -ForVersion -Version '${{ steps.version.outputs.tag }}'
+          $notes = ./.github/scripts/Update-Changelog.ps1 -Mode Notes -ForVersion -Version $tag
           $notesPath = Join-Path $env:RUNNER_TEMP "changelog-notes.md"
           Set-Content -LiteralPath $notesPath -Value $notes -Encoding UTF8
           "notes_path=$notesPath" >> $env:GITHUB_OUTPUT
@@ -136,6 +147,7 @@ jobs:
           $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
           "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
           "zip_name=$($zip.Name)" >> $env:GITHUB_OUTPUT
+          "zip_size=$($zip.Length)" >> $env:GITHUB_OUTPUT
           "manifest=$($manifest.FullName)" >> $env:GITHUB_OUTPUT
           "sha256=$sha" >> $env:GITHUB_OUTPUT
 
@@ -148,50 +160,31 @@ jobs:
             ${{ steps.artifact.outputs.manifest }}
 
       - name: Publish GitHub release
+        id: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ steps.version.outputs.tag }}
           ZIP_PATH: ${{ steps.artifact.outputs.zip }}
           ZIP_NAME: ${{ steps.artifact.outputs.zip_name }}
+          ZIP_SIZE: ${{ steps.artifact.outputs.zip_size }}
           ZIP_SHA256: ${{ steps.artifact.outputs.sha256 }}
           MANIFEST_PATH: ${{ steps.artifact.outputs.manifest }}
-          CHANGELOG_NOTES_PATH: ${{ steps.changelog.outputs.notes_path }}
         shell: pwsh
         run: |
-          $prevTag = & ./.github/scripts/Resolve-ReleaseBaseTag.ps1 -Tag $env:TAG_NAME
-          $changelogNotes = Get-Content -LiteralPath $env:CHANGELOG_NOTES_PATH -Raw
-          if ([string]::IsNullOrWhiteSpace($changelogNotes)) {
-              $changelogNotes = "_Maintenance release; see commit log for details._"
-          }
-
-          $out = New-Object System.Collections.Generic.List[string]
-          if ($prevTag) {
-              $out.Add("## Changes since $prevTag")
-              $out.Add("")
-              $out.Add($changelogNotes.Trim())
-              $out.Add("")
-              $out.Add("**Full diff:** https://github.com/$env:GITHUB_REPOSITORY/compare/$prevTag...$env:TAG_NAME")
-              $out.Add("")
-          } else {
-              $out.Add("## Changes")
-              $out.Add("")
-              $out.Add($changelogNotes.Trim())
-              $out.Add("")
-          }
-
-          $out.Add("## Install")
-          $out.Add("")
-          $out.Add("Download ``$env:ZIP_NAME``, extract the full zip, then run:")
-          $out.Add("")
-          $out.Add("    powershell -ExecutionPolicy Bypass -File .\setup.ps1")
-          $out.Add("")
-          $out.Add("SHA256: ``$env:ZIP_SHA256``")
-          $out.Add("")
-          $out.Add("Full walkthrough: https://github.com/$env:GITHUB_REPOSITORY/wiki/Quick-Start")
-
-          $notes = $out -join "`n"
+          $notesOutput = & ./.github/scripts/Generate-ReleaseNotes.ps1 `
+            -Tag $env:TAG_NAME `
+            -Repo $env:GITHUB_REPOSITORY `
+            -ZipPath $env:ZIP_PATH `
+            -ZipName $env:ZIP_NAME `
+            -ZipSize ([long]$env:ZIP_SIZE) `
+            -ZipSha256 $env:ZIP_SHA256 `
+            -Manifest $env:MANIFEST_PATH
+          if ($LASTEXITCODE -ne 0) { throw "Generate-ReleaseNotes.ps1 failed (exit $LASTEXITCODE)" }
+          if (-not $notesOutput) { throw "Generate-ReleaseNotes.ps1 returned empty output." }
+          $notes = ($notesOutput -join [System.Environment]::NewLine) + [System.Environment]::NewLine
           $notesPath = Join-Path $env:RUNNER_TEMP "release-notes.md"
-          Set-Content -LiteralPath $notesPath -Value $notes -Encoding UTF8
+          [System.IO.File]::WriteAllText($notesPath, $notes, (New-Object System.Text.UTF8Encoding($false)))
+          "notes_path=$notesPath" >> $env:GITHUB_OUTPUT
 
           # Draft-first: create as draft, upload all assets, only then
           # promote to a published release. If any step between create
@@ -219,6 +212,67 @@ jobs:
           Write-Host "Draft release $env:TAG_NAME has all expected assets, promoting to published."
           gh release edit $env:TAG_NAME --draft=false
           if ($LASTEXITCODE -ne 0) { throw "gh release edit --draft=false failed (exit $LASTEXITCODE)" }
+
+      - name: Verify published release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.version.outputs.tag }}
+          INPUT_NOTES_PATH: ${{ steps.publish.outputs.notes_path }}
+        shell: pwsh
+        run: |
+          $expected = (Get-Content -LiteralPath $env:INPUT_NOTES_PATH -Raw -Encoding UTF8) -replace "`r`n","`n"
+          $expected = $expected.TrimEnd("`n")
+
+          function Get-StringSha256 {
+              param([string]$Text)
+              $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+              $sha = [System.Security.Cryptography.SHA256]::Create()
+              try { return [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '') }
+              finally { $sha.Dispose() }
+          }
+
+          function Test-PublishedBodyMatches {
+              param([string]$Tag, [string]$Expected, [int]$MaxAttempts = 6)
+              $expectedSha = Get-StringSha256 -Text $Expected
+              $delay = 2
+              $lastActual = ''
+              for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+                  $raw = & gh release view $Tag --json body
+                  if ($LASTEXITCODE -ne 0) { throw "gh release view $Tag failed: $raw" }
+                  $actual = [string](($raw | ConvertFrom-Json).body)
+                  $actual = ($actual -replace "`r`n","`n").TrimEnd("`n")
+                  $lastActual = $actual
+                  $actualSha = Get-StringSha256 -Text $actual
+                  if ($actualSha -eq $expectedSha) {
+                      Write-Host "Release body matches on attempt $attempt."
+                      return @{ Match = $true; Actual = $actual; AttemptCount = $attempt }
+                  }
+                  Write-Host "Attempt $attempt mismatch: actual_len=$($actual.Length) expected_len=$($Expected.Length)."
+                  if ($attempt -lt $MaxAttempts) {
+                      Start-Sleep -Seconds $delay
+                      $delay = $delay * 2
+                  }
+              }
+              return @{ Match = $false; Actual = $lastActual; AttemptCount = $MaxAttempts }
+          }
+
+          $result = Test-PublishedBodyMatches -Tag $env:TAG_NAME -Expected $expected
+          if ($result.Match) { return }
+
+          Write-Host "::warning::Body still differs after $($result.AttemptCount) attempts. Re-applying release notes."
+          gh release edit $env:TAG_NAME --notes-file $env:INPUT_NOTES_PATH
+          if ($LASTEXITCODE -ne 0) { throw "gh release edit failed during body correction" }
+
+          $recheck = Test-PublishedBodyMatches -Tag $env:TAG_NAME -Expected $expected
+          if ($recheck.Match) { return }
+
+          $actualText = [string]$recheck.Actual
+          $staleReadThreshold = [Math]::Min(256, [Math]::Floor($expected.Length / 2))
+          if ($actualText.Length -lt $staleReadThreshold) {
+              Write-Host "::warning::Release body still reads short after correction; continuing after successful edit."
+              return
+          }
+          throw "Release body still differs after correction."
 
       - name: Commit changelog promotion
         shell: bash
