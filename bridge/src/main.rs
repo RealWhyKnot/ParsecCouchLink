@@ -115,7 +115,7 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to Dreamcast Maple controller mode and stream controller input to it.
+    /// Switch a Pico to Xbox-compatible mode for Dreamcast Maple adapters.
     Maple {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
         #[arg(long = "pico")]

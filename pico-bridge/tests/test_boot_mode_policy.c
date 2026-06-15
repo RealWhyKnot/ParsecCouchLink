@@ -50,6 +50,12 @@ static void persona_unknown_byte_falls_back_to_controller(void) {
     assert(boot_mode_persona_from_flash(true, 0xFF) == RUN_PERSONA_CONTROLLER);
 }
 
+static void maple_persona_uses_xinput_usb_shape(void) {
+    assert(boot_mode_persona_uses_xinput_usb(RUN_PERSONA_CONTROLLER));
+    assert(boot_mode_persona_uses_xinput_usb(RUN_PERSONA_MAPLE));
+    assert(!boot_mode_persona_uses_xinput_usb(RUN_PERSONA_KEYBOARD));
+}
+
 int main(void) {
     released_bootsel_finishes_setup_without_wipe();
     held_bootsel_waits_until_threshold();
@@ -59,6 +65,7 @@ int main(void) {
     persona_defaults_to_controller_without_credentials();
     persona_reads_stored_byte_with_credentials();
     persona_unknown_byte_falls_back_to_controller();
+    maple_persona_uses_xinput_usb_shape();
     puts("boot_mode_policy tests passed");
     return 0;
 }

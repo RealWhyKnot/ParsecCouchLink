@@ -100,9 +100,9 @@ static const char *lwip_err_name(err_t e) {
 // Set when this firmware answers TYPE_GET_VERSION with the exact build
 // revision and optional four-character development suffix.
 #define ACK_FLAG_FULL_VERSION_SUPPORTED 0x10
-// Set when this Pico is currently presenting the Dreamcast Maple
-// controller persona. It consumes the same STATE packets as the XInput
-// persona, but the output side is Maple instead of USB.
+// Set when this Pico is currently in Dreamcast Maple adapter mode. It
+// consumes the same STATE packets and emits the same Xbox-compatible USB
+// reports as the controller persona.
 #define ACK_FLAG_MAPLE_PERSONA 0x20
 
 #define USB_DIAG_WIRE_SIZE 78

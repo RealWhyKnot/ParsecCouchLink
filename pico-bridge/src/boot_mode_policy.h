@@ -20,7 +20,7 @@ typedef enum {
 typedef enum {
     RUN_PERSONA_CONTROLLER = 0, // wired Xbox 360 / XInput (default)
     RUN_PERSONA_KEYBOARD = 1,   // USB HID boot keyboard
-    RUN_PERSONA_MAPLE = 2,      // Dreamcast Maple controller
+    RUN_PERSONA_MAPLE = 2,      // Xbox-compatible Dreamcast Maple adapter mode
 } run_persona_t;
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);
@@ -30,3 +30,9 @@ boot_cold_action_t boot_mode_cold_boot_action(bool have_creds);
 // unrecognised value falls back to the controller persona, so a blank or
 // corrupt slot can never strand the device as a keyboard with no pad.
 run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte);
+
+// True for runtime personas that present the wired Xbox 360 USB device
+// shape. Maple mode keeps a separate persisted label, but deliberately
+// matches this USB shape for Dreamcast Maple adapters that already
+// support Xbox 360 controllers.
+bool boot_mode_persona_uses_xinput_usb(run_persona_t persona);

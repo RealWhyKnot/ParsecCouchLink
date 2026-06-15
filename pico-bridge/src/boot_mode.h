@@ -7,7 +7,7 @@
 
 typedef enum {
     BOOT_MODE_SETUP = 0, // CDC, no Wi-Fi
-    BOOT_MODE_RUN = 1,   // controller, keyboard, or Maple output with Wi-Fi
+    BOOT_MODE_RUN = 1,   // controller, keyboard, or Maple adapter mode with Wi-Fi
 } boot_mode_t;
 
 // Decide which mode to boot into. Reads reset context from `rr`

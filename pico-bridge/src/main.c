@@ -24,7 +24,6 @@
 #include "heartbeat.h"
 #include "hid_kbd.h"
 #include "keyboard_state.h"
-#include "maple_output.h"
 #include "net_udp.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
@@ -185,8 +184,8 @@ static void run_mode_main_loop(void) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
     } else if (persona == RUN_PERSONA_MAPLE) {
-        maple_output_init(MAPLE_MAP_STANDARD);
-        diag_log_msg("run: output persona = Dreamcast Maple controller");
+        xinput_init();
+        diag_log_msg("run: USB persona = XInput controller for Maple adapter");
     } else {
         xinput_init();
         diag_log_msg("run: USB persona = XInput controller");
@@ -251,8 +250,6 @@ static void run_mode_main_loop(void) {
 
         if (persona == RUN_PERSONA_KEYBOARD)
             hid_kbd_task();
-        else if (persona == RUN_PERSONA_MAPLE)
-            maple_output_task();
         else
             xinput_task();
         watchdog_tick();

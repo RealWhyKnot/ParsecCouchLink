@@ -55,7 +55,7 @@ Keyboard -> 07D37EB6 | source live | out +60 total 900 | in 30 (reply 0.2s ago) 
 
 ## Maple Mode
 
-Maple mode is for a Pico wired to the Dreamcast controller port. It uses the same Parsec/XInput controller source as normal controller mode, but the Pico maps that state to a Dreamcast Maple controller condition instead of emitting USB XInput reports.
+Maple mode is for Dreamcast adapters that already accept wired Xbox 360 controllers and translate them to Dreamcast Maple. It uses the same Parsec/XInput controller source and the same Xbox 360-compatible USB reports as normal controller mode, but keeps a separate persisted mode and status label for Dreamcast setups.
 
 Switch a Pico to Maple mode and start streaming:
 
@@ -75,7 +75,7 @@ Switch back to USB XInput controller mode with:
 .\couchlink.exe controller
 ```
 
-Add `--no-stream` to change the persona without starting a stream. While streaming, Maple mode status still shows a controller source and the live XInput button/axis values because those are the values being translated to Maple.
+Add `--no-stream` to change the persona without starting a stream. While streaming, Maple mode status still shows a controller source and the live XInput button/axis values because those are the values sent to the Maple-capable adapter.
 
 ### If the player's typing isn't reaching the game
 

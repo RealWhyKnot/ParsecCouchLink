@@ -76,8 +76,8 @@ pub const ACK_FLAG_KEYBOARD_PERSONA: u8 = 1 << 3;
 /// `TYPE_VERSION`.
 pub const ACK_FLAG_FULL_VERSION_SUPPORTED: u8 = 1 << 4;
 /// Set in the ACK flags byte when the Pico is presenting the Dreamcast
-/// Maple controller output persona. The bridge still streams normal
-/// controller STATE packets; the Pico maps them to Maple.
+/// Dreamcast Maple adapter persona. The bridge still streams normal
+/// controller STATE packets; the Pico presents Xbox 360-compatible USB.
 pub const ACK_FLAG_MAPLE_PERSONA: u8 = 1 << 5;
 
 pub const USB_DIAG_WIRE_SIZE: usize = 78;

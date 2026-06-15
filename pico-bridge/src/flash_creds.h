@@ -26,7 +26,7 @@
 // valid -- no version bump or migration needed.
 #define FLASH_PERSONA_CONTROLLER 0 // wired Xbox 360 / XInput (default)
 #define FLASH_PERSONA_KEYBOARD 1   // USB HID boot keyboard
-#define FLASH_PERSONA_MAPLE 2      // Dreamcast Maple controller
+#define FLASH_PERSONA_MAPLE 2      // Xbox-compatible Dreamcast Maple adapter mode
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;  // FLASH_CREDS_MAGIC
