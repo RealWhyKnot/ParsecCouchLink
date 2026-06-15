@@ -210,6 +210,17 @@ enum Command {
         #[arg(long)]
         no_flash: bool,
     },
+    #[command(name = "lab-pnp-helper", hide = true)]
+    LabPnpHelper {
+        #[arg(long = "instance-id", required = true)]
+        instance_ids: Vec<String>,
+
+        #[arg(long, default_value_t = 2)]
+        hold_seconds: u64,
+
+        #[arg(long)]
+        result_file: Option<PathBuf>,
+    },
     /// Print where logs live, or tail the active log file.
     Logs {
         /// Tail the current log file instead of printing its path.
@@ -337,6 +348,11 @@ fn main() {
                 })
                 .await
             }
+            Some(Command::LabPnpHelper {
+                instance_ids,
+                hold_seconds,
+                result_file,
+            }) => cmd_lab::run_pnp_helper(instance_ids, hold_seconds, result_file),
             Some(Command::Logs { tail }) => cmd_logs::run(tail).await,
             Some(Command::Bundle { output }) => cmd_bundle::run(output).await,
         }
@@ -435,6 +451,35 @@ mod tests {
                 assert!(no_flash);
             }
             other => panic!("expected lab command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lab_pnp_helper_command_parses_instance_ids() {
+        let cli = Cli::try_parse_from([
+            "couchlink",
+            "lab-pnp-helper",
+            "--hold-seconds",
+            "3",
+            "--instance-id",
+            r"USB\VID_045E&PID_028E\E6613852837C242C",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Some(Command::LabPnpHelper {
+                instance_ids,
+                hold_seconds,
+                result_file,
+            }) => {
+                assert_eq!(hold_seconds, 3);
+                assert_eq!(result_file, None);
+                assert_eq!(
+                    instance_ids,
+                    vec![r"USB\VID_045E&PID_028E\E6613852837C242C"]
+                );
+            }
+            other => panic!("expected lab pnp helper command, got {other:?}"),
         }
     }
 }

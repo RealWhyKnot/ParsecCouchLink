@@ -1,9 +1,12 @@
 //! `couchlink lab` -- unattended hardware bench checks for plugged-in Picos.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::process::Command;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -18,9 +21,11 @@ const SETUP_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const WIFI_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const BOOTSEL_WAIT_TIMEOUT: Duration = Duration::from_secs(60);
 const POWER_OFF_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+const USB_READY_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const SIGNAL_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const SIGNAL_SEND_INTERVAL: Duration = Duration::from_millis(16);
 const SIGNAL_NEUTRALIZE_DURATION: Duration = Duration::from_millis(350);
+const PNP_RECONNECT_HOLD: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -115,6 +120,25 @@ pub async fn run(options: LabOptions) -> Result<()> {
         bail!("lab failed with {} failed step(s)", lab.report.fail_count());
     }
     Ok(())
+}
+
+pub fn run_pnp_helper(
+    instance_ids: Vec<String>,
+    hold_seconds: u64,
+    result_file: Option<PathBuf>,
+) -> Result<()> {
+    let result = (|| {
+        let ids = validate_pnp_instance_ids(&instance_ids)?;
+        run_pnp_disable_enable(&ids, Duration::from_secs(hold_seconds), false)
+    })();
+    if let Some(path) = result_file {
+        let text = match &result {
+            Ok(()) => "ok\n".to_string(),
+            Err(e) => format!("error: {e:#}\n"),
+        };
+        let _ = fs::write(path, text);
+    }
+    result
 }
 
 struct LabHarness {
@@ -500,7 +524,15 @@ impl LabHarness {
         let uids: BTreeSet<u32> = probes.iter().map(|p| p.uid).collect();
         let started = Instant::now();
         let result = async {
-            restart_setup_pnp_devices()?;
+            let instances = pnp_instances_for_uids(&uids, &[PnpPersona::Setup])?;
+            if instances.len() != uids.len() {
+                bail!(
+                    "found {} setup USB instance(s) for {} selected Pico(s)",
+                    instances.len(),
+                    uids.len()
+                );
+            }
+            pnp_disable_enable_with_elevation(&pnp_instance_ids(&instances))?;
             wait_for_setup_uids(&uids, SETUP_WAIT_TIMEOUT).await
         }
         .await;
@@ -509,7 +541,7 @@ impl LabHarness {
                 self.report.pass(
                     format!("power cycle {cycle}"),
                     None,
-                    "PnP device restart completed; USB power was not cut",
+                    "PnP disable/enable completed for setup USB devices; USB power was not cut",
                     started.elapsed().as_millis(),
                 );
                 updated
@@ -629,7 +661,7 @@ impl LabHarness {
                 ensure_wifi_ready(&probe).await?;
                 reboot_setup_to_run(probe.port.clone()).await?;
                 let target = wait_for_wifi_uid(uid, WIFI_WAIT_TIMEOUT).await?;
-                let diag = cmd_usb_diag::query_usb_diag(&target, Duration::from_secs(3)).await?;
+                let diag = wait_for_usb_controller_ready(&target, USB_READY_WAIT_TIMEOUT).await?;
                 Ok::<_, anyhow::Error>((target, diag))
             }
             .await;
@@ -1178,6 +1210,45 @@ async fn wait_for_wifi_uid(uid: u32, timeout: Duration) -> Result<cmd_run::PicoT
     }
 }
 
+async fn wait_for_usb_controller_ready(
+    target: &cmd_run::PicoTarget,
+    timeout: Duration,
+) -> Result<protocol::UsbDiag> {
+    let started = Instant::now();
+    let deadline = started + timeout;
+    let mut last_diag: Option<protocol::UsbDiag> = None;
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            if let Some(diag) = last_diag {
+                bail!(
+                    "{} did not become a ready USB controller within {} s (mounted={} reports_sent={})",
+                    target.peer,
+                    timeout.as_secs(),
+                    diag.mounted(),
+                    diag.xinput_report_sent()
+                );
+            }
+            bail!(
+                "{} did not answer USB diagnostics within {} s",
+                target.peer,
+                timeout.as_secs()
+            );
+        }
+
+        let remaining = deadline.saturating_duration_since(now);
+        match cmd_usb_diag::query_usb_diag(target, remaining.min(Duration::from_secs(3))).await {
+            Ok(diag) if diag.mounted() && diag.xinput_report_sent() => return Ok(diag),
+            Ok(diag) => last_diag = Some(diag),
+            Err(e) => tracing::debug!(
+                "lab: USB readiness probe for {:08X} failed: {e:#}",
+                target.info.unique_id_short
+            ),
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 async fn wait_for_new_bootsel_mount(
     before: &BTreeSet<String>,
     timeout: Duration,
@@ -1427,17 +1498,249 @@ fn command_label(command: &[String]) -> String {
     command.join(" ")
 }
 
-fn restart_setup_pnp_devices() -> Result<()> {
-    let status = Command::new("pnputil")
-        .args(["/restart-device", "/deviceid", r"USB\VID_2E8A&PID_CAF0"])
-        .status()
-        .context("starting pnputil")?;
-    if !status.success() {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PnpPersona {
+    Setup,
+    Xinput,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PnpInstance {
+    uid: u32,
+    persona: PnpPersona,
+    instance_id: String,
+}
+
+fn pnp_instances_for_uids(
+    uids: &BTreeSet<u32>,
+    personas: &[PnpPersona],
+) -> Result<Vec<PnpInstance>> {
+    let output = Command::new("pnputil")
+        .args(["/enum-devices", "/connected", "/ids"])
+        .output()
+        .context("starting pnputil /enum-devices")?;
+    if !output.status.success() {
         bail!(
-            "pnputil /restart-device failed with {status}. Run as administrator or use --power reset."
+            "pnputil /enum-devices failed with {}: {}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_pico_pnp_instances(&text)
+        .into_iter()
+        .filter(|instance| uids.contains(&instance.uid) && personas.contains(&instance.persona))
+        .collect())
+}
+
+fn pnp_instance_ids(instances: &[PnpInstance]) -> Vec<String> {
+    instances
+        .iter()
+        .map(|instance| instance.instance_id.clone())
+        .collect()
+}
+
+fn parse_pico_pnp_instances(text: &str) -> Vec<PnpInstance> {
+    text.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let id = trimmed
+                .strip_prefix("Instance ID:")
+                .or_else(|| trimmed.strip_prefix("Instance Id:"))?
+                .trim();
+            pnp_instance_from_id(id)
+        })
+        .collect()
+}
+
+fn pnp_instance_from_id(id: &str) -> Option<PnpInstance> {
+    let upper = id.to_ascii_uppercase();
+    let (persona, serial) = if let Some(serial) = upper.strip_prefix(r"USB\VID_2E8A&PID_CAF0\") {
+        (PnpPersona::Setup, serial)
+    } else if let Some(serial) = upper.strip_prefix(r"USB\VID_045E&PID_028E\") {
+        (PnpPersona::Xinput, serial)
+    } else {
+        return None;
+    };
+    let uid = uid_from_usb_serial(serial)?;
+    Some(PnpInstance {
+        uid,
+        persona,
+        instance_id: id.to_string(),
+    })
+}
+
+fn uid_from_usb_serial(serial: &str) -> Option<u32> {
+    if serial.len() < 8 {
+        return None;
+    }
+    let mut bytes = [0u8; 4];
+    for (idx, byte) in bytes.iter_mut().enumerate() {
+        let start = idx * 2;
+        *byte = u8::from_str_radix(&serial[start..start + 2], 16).ok()?;
+    }
+    Some(u32::from_le_bytes(bytes))
+}
+
+fn validate_pnp_instance_ids(instance_ids: &[String]) -> Result<Vec<String>> {
+    if instance_ids.is_empty() {
+        bail!("no PnP instance IDs supplied");
+    }
+    let mut validated = Vec::with_capacity(instance_ids.len());
+    for id in instance_ids {
+        if pnp_instance_from_id(id).is_none() {
+            bail!("refusing to touch non-CouchLink Pico PnP instance ID: {id}");
+        }
+        validated.push(id.clone());
+    }
+    Ok(validated)
+}
+
+fn pnp_disable_enable_with_elevation(instance_ids: &[String]) -> Result<()> {
+    let ids = validate_pnp_instance_ids(instance_ids)?;
+    match run_pnp_disable_enable(&ids, PNP_RECONNECT_HOLD, false) {
+        Ok(()) => Ok(()),
+        Err(first) => match run_elevated_pnp_helper(&ids) {
+            Ok(()) => Ok(()),
+            Err(elevated) => bail!(
+                "PnP disable/enable failed without elevation ({first:#}); elevated helper also failed ({elevated:#})"
+            ),
+        },
+    }
+}
+
+fn run_pnp_disable_enable(
+    instance_ids: &[String],
+    hold: Duration,
+    allow_force_disable: bool,
+) -> Result<()> {
+    if instance_ids.is_empty() {
+        bail!("no PnP instance IDs supplied");
+    }
+
+    let mut disabled = Vec::new();
+    let mut first_error = None;
+    for id in instance_ids {
+        match run_pnputil_device_action("/disable-device", id, allow_force_disable) {
+            Ok(()) => disabled.push(id.clone()),
+            Err(e) => {
+                let _ = run_pnputil_device_action("/enable-device", id, false);
+                first_error = Some(e);
+                break;
+            }
+        }
+    }
+
+    if let Some(e) = first_error {
+        for id in disabled.iter().rev() {
+            let _ = run_pnputil_device_action("/enable-device", id, false);
+        }
+        return Err(e);
+    }
+
+    thread::sleep(hold);
+
+    for id in disabled.iter().rev() {
+        run_pnputil_device_action("/enable-device", id, false)?;
+    }
+    Ok(())
+}
+
+fn run_pnputil_device_action(action: &str, instance_id: &str, allow_force: bool) -> Result<()> {
+    match run_pnputil_device_action_once(action, instance_id, false) {
+        Ok(()) => Ok(()),
+        Err(first) if allow_force && action == "/disable-device" => {
+            run_pnputil_device_action_once(action, instance_id, true)
+                .with_context(|| format!("normal {action} failed first: {first:#}"))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn run_pnputil_device_action_once(action: &str, instance_id: &str, force: bool) -> Result<()> {
+    let mut args = vec![action, instance_id];
+    if force {
+        args.push("/force");
+    }
+    let output = Command::new("pnputil")
+        .args(&args)
+        .output()
+        .with_context(|| format!("starting pnputil {action}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    if !output.status.success() || pnputil_output_failed(&combined) {
+        bail!(
+            "pnputil {action} {} failed with {}: {}",
+            instance_id,
+            output.status,
+            combined.trim()
         );
     }
     Ok(())
+}
+
+fn pnputil_output_failed(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("access is denied")
+        || lower.contains("generic failure")
+        || lower.contains("failed to ")
+        || lower.contains("failed.")
+}
+
+fn run_elevated_pnp_helper(instance_ids: &[String]) -> Result<()> {
+    let exe = env::current_exe().context("locating current executable")?;
+    let result_file = env::temp_dir().join(format!(
+        "couchlink-pnp-helper-{}-{}.txt",
+        std::process::id(),
+        chrono::Utc::now().timestamp_millis()
+    ));
+    let mut args = vec![
+        "--no-log-file".to_string(),
+        "lab-pnp-helper".to_string(),
+        "--hold-seconds".to_string(),
+        PNP_RECONNECT_HOLD.as_secs().to_string(),
+        "--result-file".to_string(),
+        result_file.display().to_string(),
+    ];
+    for id in instance_ids {
+        args.push("--instance-id".to_string());
+        args.push(id.clone());
+    }
+
+    let script = format!(
+        "$p = Start-Process -FilePath {} -ArgumentList @({}) -Verb RunAs -Wait -PassThru; if ($null -eq $p) {{ exit 1 }}; exit $p.ExitCode",
+        powershell_quote(&exe.display().to_string()),
+        args.iter()
+            .map(|arg| powershell_quote(arg))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let status = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .status()
+        .context("starting elevated PnP helper")?;
+    if !status.success() {
+        let helper_result = fs::read_to_string(&result_file)
+            .unwrap_or_else(|e| format!("could not read helper result file: {e}"));
+        bail!(
+            "elevated PnP helper exited with {status}; helper result: {}",
+            helper_result.trim()
+        );
+    }
+    let _ = fs::remove_file(&result_file);
+    Ok(())
+}
+
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn problem_usb_devices() -> Vec<String> {
@@ -1743,6 +2046,59 @@ mod tests {
             assert_ne!(*state, protocol::GamepadState::default());
             assert!(!states[..idx].contains(state));
         }
+    }
+
+    #[test]
+    fn usb_serial_prefix_maps_to_short_uid() {
+        assert_eq!(uid_from_usb_serial("B67ED307F4C44A3E"), Some(0x07D37EB6));
+        assert_eq!(uid_from_usb_serial("E6613852837C242C"), Some(0x523861E6));
+        assert_eq!(uid_from_usb_serial("123"), None);
+        assert_eq!(uid_from_usb_serial("not-hex-id"), None);
+    }
+
+    #[test]
+    fn pnp_parser_selects_only_pico_parent_instances() {
+        let text = r#"
+Instance ID:                USB\VID_2E8A&PID_CAF0\B67ED307F4C44A3E
+Instance ID:                USB\VID_2E8A&PID_CAF0&MI_00\8&22cf742d&0&0000
+Instance ID:                USB\VID_045E&PID_028E\E6613852837C242C
+Instance ID:                USB\VID_0000&PID_0008\8&18b4ea2b&0&3
+"#;
+        let instances = parse_pico_pnp_instances(text);
+        assert_eq!(
+            instances,
+            vec![
+                PnpInstance {
+                    uid: 0x07D37EB6,
+                    persona: PnpPersona::Setup,
+                    instance_id: r"USB\VID_2E8A&PID_CAF0\B67ED307F4C44A3E".to_string(),
+                },
+                PnpInstance {
+                    uid: 0x523861E6,
+                    persona: PnpPersona::Xinput,
+                    instance_id: r"USB\VID_045E&PID_028E\E6613852837C242C".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn validates_only_pico_pnp_instance_ids() {
+        assert!(validate_pnp_instance_ids(
+            &[r"USB\VID_045E&PID_028E\E6613852837C242C".to_string()]
+        )
+        .is_ok());
+        assert!(
+            validate_pnp_instance_ids(&[r"USB\VID_0000&PID_0008\8&18b4ea2b&0&3".to_string()])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn pnputil_failure_text_is_detected_even_with_zero_exit_status() {
+        assert!(pnputil_output_failed("Access is denied."));
+        assert!(pnputil_output_failed("Failed to restart device."));
+        assert!(!pnputil_output_failed("Device restarted successfully."));
     }
 
     #[test]
