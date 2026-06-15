@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.14.1](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.14.1) -- 2026-06-15
+
 ### Fixed
 - **firmware:** Keep provisioned picos in run mode (086e009)
 
