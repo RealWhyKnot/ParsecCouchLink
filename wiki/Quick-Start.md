@@ -32,7 +32,7 @@ The script explains each step before it starts. In short:
 2. With BOOTSEL still held, plug the Pico into the PC using a micro-USB **data** cable (charge-only cables will not work).
 3. **Release BOOTSEL** as soon as Windows shows a removable drive named `RPI-RP2` (Pico W or Pico WH) or `RP2350` (Pico 2 W). The Pico stays in flash mode after you let go -- you do not need to keep the button held while the firmware copies.
 4. Setup detects which Pico is in BOOTSEL and copies the matching firmware (`couchlink-pico2w.uf2` for the RP2350 board, `couchlink-picow.uf2` for the RP2040 board).
-5. The Pico reboots into our firmware. **Do not press BOOTSEL during the reboot** -- the firmware reads BOOTSEL during its first three seconds of run time as a "wipe saved Wi-Fi" signal, and a stray press will erase the credentials you are about to enter.
+5. The Pico reboots into the CouchLink firmware. After a firmware update it enters USB setup/debug mode and keeps any saved Wi-Fi credentials. On later normal replug, saved credentials make it boot as a controller.
 6. The Pico comes back as a USB serial setup device.
 7. Enter the 2.4 GHz Wi-Fi credentials when prompted.
 8. Setup waits for the Pico to join Wi-Fi and answer discovery.

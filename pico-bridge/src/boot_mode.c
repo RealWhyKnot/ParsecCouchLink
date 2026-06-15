@@ -5,9 +5,9 @@
 #include "hardware/structs/sio.h"
 #include "hardware/sync.h"
 #include "hardware/gpio.h"
-#include "hardware/watchdog.h"
 #include "tusb.h"
 
+#include "boot_mode_policy.h"
 #include "flash_creds.h"
 #include "diag_log.h"
 #include "reset_reason.h"
@@ -18,7 +18,7 @@ static boot_mode_t current = BOOT_MODE_SETUP;
 static bool bootsel_at_boot = false;
 
 // Absolute time when boot_mode_decide() returned. Used by the post-
-// enum poll to bound the 3-second wipe window.
+// enum poll to settle a BOOTSEL recovery hold after USB is visible.
 static absolute_time_t decide_time;
 
 // Read the BOOTSEL button at runtime by temporarily flipping QSPI CS to
@@ -74,25 +74,31 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
         return current;
     }
 
-    // Single instantaneous BOOTSEL sample -- no blocking delay.
-    // The post-enum poll tracks a 3-second hold after enumeration to
-    // decide whether to wipe credentials. This intentionally runs after
-    // reset-reason handling so an RP2350 UF2 reflash or firmware-driven
-    // reboot cannot be mistaken for a physical BOOTSEL hold.
+    flash_creds_t rec;
+    bool have_creds = flash_creds_load(&rec);
+
+    // Single instantaneous BOOTSEL sample -- no blocking delay. This
+    // intentionally runs after reset-reason handling so an RP2350 UF2
+    // reflash or firmware-driven reboot cannot be mistaken for a
+    // physical BOOTSEL hold. A provisioned cold boot still enters run
+    // mode; saved credentials are the stable controller path.
     bootsel_at_boot = read_bootsel_button();
 
     if (bootsel_at_boot) {
-        // BOOTSEL is pressed right now. Force setup mode immediately.
-        // Whether creds get wiped depends on how long BOOTSEL stays held:
-        //   < 3 s: setup mode, creds retained (brief-tap recovery tier).
-        //   >= 3 s: setup mode, creds wiped (post-enum poll fires).
-        diag_log_msg("boot: BOOTSEL at boot -- forcing setup mode (creds retained for now)");
-        current = BOOT_MODE_SETUP;
+        if (boot_mode_cold_boot_action(have_creds) == BOOT_COLD_RUN) {
+            diag_log_printf("boot: BOOTSEL at boot with saved credentials (ssid_len=%u, gen=%u); "
+                            "entering run mode",
+                            (unsigned)rec.ssid_len, (unsigned)rec.generation);
+            bootsel_at_boot = false;
+            current = BOOT_MODE_RUN;
+        } else {
+            diag_log_msg("boot: BOOTSEL at boot with no credentials -- entering setup mode");
+            current = BOOT_MODE_SETUP;
+        }
         return current;
     }
 
-    flash_creds_t rec;
-    if (flash_creds_load(&rec)) {
+    if (boot_mode_cold_boot_action(have_creds) == BOOT_COLD_RUN) {
         diag_log_printf("boot: credentials found (ssid_len=%u, gen=%u); entering run mode",
                         (unsigned)rec.ssid_len, (unsigned)rec.generation);
         current = BOOT_MODE_RUN;
@@ -112,29 +118,23 @@ bool boot_mode_bootsel_at_boot(void) {
 }
 
 void boot_mode_post_enum_bootsel_poll(void) {
-    // Fast-exit: if BOOTSEL was not pressed at boot, the 3-second wipe
-    // window is irrelevant. Also exit after 3 seconds -- decision settled.
+    // Fast-exit: if BOOTSEL was not pressed at boot, there is no
+    // post-enumeration recovery gesture to settle.
     if (!bootsel_at_boot)
         return;
 
     int64_t elapsed_us = absolute_time_diff_us(decide_time, get_absolute_time());
+    bool still_pressed = read_bootsel_button();
+    bootsel_setup_action_t action = boot_mode_bootsel_setup_action(still_pressed, elapsed_us);
 
-    if (!read_bootsel_button()) {
-        // User released BOOTSEL before the wipe threshold. Become a
-        // permanent no-op; setup mode remains active with creds retained.
-        diag_log_msg("boot: BOOTSEL released before wipe threshold -- setup mode, creds retained");
-        bootsel_at_boot = false;
+    if (action == BOOTSEL_SETUP_WAIT)
         return;
+
+    if (still_pressed) {
+        diag_log_msg("boot: BOOTSEL held >= 3s -- setup mode, creds retained");
+    } else {
+        diag_log_msg("boot: BOOTSEL released before wipe threshold -- setup mode, creds retained");
     }
 
-    if (elapsed_us < 3000000)
-        return;
-
-    // BOOTSEL has been held continuously since boot for >= 3 seconds.
-    // This matches the old blocking-wait behavior: wipe creds and reboot.
-    diag_log_msg("boot: BOOTSEL held >= 3s -- wiping creds and rebooting to setup mode");
-    flash_creds_clear();
-    watchdog_reboot(0, 0, 100);
-    for (;;)
-        tight_loop_contents();
+    bootsel_at_boot = false;
 }

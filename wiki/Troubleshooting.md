@@ -143,8 +143,8 @@ Try this in order:
    Wi-Fi discovery finds nothing.
 5. If the router name or password changed, run `.\couchlink.exe
    configure-wifi`.
-6. If `configure-wifi` cannot find the Pico, use the credential-wipe
-   recovery in [[Setup and Flashing]], then run `configure-wifi` again.
+6. If `configure-wifi` cannot find the Pico, use BOOTSEL flashing in
+   [[Setup and Flashing]], then run `configure-wifi` again.
 7. Run `.\couchlink.exe doctor`.
 8. Run `.\couchlink.exe bundle` and attach the ZIP to a bug report.
 

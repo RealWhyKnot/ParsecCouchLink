@@ -18,3 +18,11 @@ add_executable(test_cdc_proto
 target_include_directories(test_cdc_proto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 add_test(NAME cdc_proto COMMAND test_cdc_proto)
+
+add_executable(test_boot_mode_policy
+    test_boot_mode_policy.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/boot_mode_policy.c
+)
+target_include_directories(test_boot_mode_policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+add_test(NAME boot_mode_policy COMMAND test_boot_mode_policy)

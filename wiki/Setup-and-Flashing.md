@@ -38,7 +38,7 @@ Use this when setup asks for the Pico in BOOTSEL mode:
 
 The bridge looks for either drive label, picks the matching UF2 from the release folder, and copies it. The Pico usually reboots as soon as the copy completes.
 
-**Do not press BOOTSEL again while the Pico is rebooting into the new firmware.** The firmware reads BOOTSEL during its first three seconds of run time as a "wipe saved Wi-Fi credentials" signal. A stray press during reboot will erase any credentials that are saved and put you back at the provisioning prompt.
+After a firmware update, the Pico enters USB setup/debug mode and keeps any saved Wi-Fi credentials. On later normal replug, saved credentials make it boot as a controller.
 
 ## Setup Mode
 

@@ -85,6 +85,7 @@ configure_file(
 add_executable(pico_bridge
     src/main.c
     src/boot_mode.c
+    src/boot_mode_policy.c
     src/cdc_handlers.c
     src/cdc_proto.c
     src/diag_log.c

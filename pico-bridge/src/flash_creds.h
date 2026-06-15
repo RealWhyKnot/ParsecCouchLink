@@ -48,5 +48,6 @@ bool flash_creds_load(flash_creds_t *out);
 //   -3 = post-write verify (re-read + CRC) failed
 int flash_creds_store(const flash_creds_t *rec);
 
-// Erase both slots. Used by the physical BOOTSEL credential-wipe path.
+// Erase both slots. Kept for explicit recovery commands or future
+// maintenance paths; normal BOOTSEL setup recovery retains credentials.
 void flash_creds_clear(void);
