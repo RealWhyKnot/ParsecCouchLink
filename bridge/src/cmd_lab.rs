@@ -62,6 +62,29 @@ pub enum LabPower {
     Reset,
     External,
     PnpRestart,
+    PnpRemove,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum PnpHelperAction {
+    DisableEnable,
+    RemoveRescan,
+}
+
+impl PnpHelperAction {
+    fn cli_value(self) -> &'static str {
+        match self {
+            PnpHelperAction::DisableEnable => "disable-enable",
+            PnpHelperAction::RemoveRescan => "remove-rescan",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            PnpHelperAction::DisableEnable => "PnP disable/enable",
+            PnpHelperAction::RemoveRescan => "PnP remove/rescan",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -123,13 +146,14 @@ pub async fn run(options: LabOptions) -> Result<()> {
 }
 
 pub fn run_pnp_helper(
+    action: PnpHelperAction,
     instance_ids: Vec<String>,
     hold_seconds: u64,
     result_file: Option<PathBuf>,
 ) -> Result<()> {
     let result = (|| {
         let ids = validate_pnp_instance_ids(&instance_ids)?;
-        run_pnp_disable_enable(&ids, Duration::from_secs(hold_seconds), false)
+        run_pnp_action(&ids, action, Duration::from_secs(hold_seconds), true)
     })();
     if let Some(path) = result_file {
         let text = match &result {
@@ -432,6 +456,7 @@ impl LabHarness {
         match self.selected_power.kind {
             SelectedPowerKind::External => self.run_external_power_cycle(probes, cycle).await,
             SelectedPowerKind::PnpRestart => self.run_pnp_restart_cycle(probes, cycle).await,
+            SelectedPowerKind::PnpRemove => self.run_pnp_remove_cycle(probes, cycle).await,
             SelectedPowerKind::Reset => self.run_reset_power_cycle(probes, cycle).await,
         }
     }
@@ -542,6 +567,48 @@ impl LabHarness {
                     format!("power cycle {cycle}"),
                     None,
                     "PnP disable/enable completed for setup USB devices; USB power was not cut",
+                    started.elapsed().as_millis(),
+                );
+                updated
+            }
+            Err(e) => {
+                self.report.fail(
+                    format!("power cycle {cycle}"),
+                    None,
+                    format!("{e:#}"),
+                    started.elapsed().as_millis(),
+                );
+                probes
+            }
+        }
+    }
+
+    async fn run_pnp_remove_cycle(
+        &mut self,
+        probes: Vec<SetupLabProbe>,
+        cycle: u32,
+    ) -> Vec<SetupLabProbe> {
+        let uids: BTreeSet<u32> = probes.iter().map(|p| p.uid).collect();
+        let started = Instant::now();
+        let result = async {
+            let instances = pnp_instances_for_uids(&uids, &[PnpPersona::Setup])?;
+            if instances.len() != uids.len() {
+                bail!(
+                    "found {} setup USB instance(s) for {} selected Pico(s)",
+                    instances.len(),
+                    uids.len()
+                );
+            }
+            pnp_remove_rescan_with_elevation(&pnp_instance_ids(&instances))?;
+            wait_for_setup_uids(&uids, SETUP_WAIT_TIMEOUT).await
+        }
+        .await;
+        match result {
+            Ok(updated) => {
+                self.report.pass(
+                    format!("power cycle {cycle}"),
+                    None,
+                    "PnP remove/rescan completed for setup USB devices; USB power was not cut",
                     started.elapsed().as_millis(),
                 );
                 updated
@@ -691,6 +758,86 @@ impl LabHarness {
             }
         }
         self.run_signal_checks(&run_targets).await;
+        if self.selected_power.kind == SelectedPowerKind::PnpRemove {
+            let updated = self.run_run_mode_pnp_remove_cycle(run_targets).await;
+            self.run_signal_checks(&updated).await;
+        }
+    }
+
+    async fn run_run_mode_pnp_remove_cycle(
+        &mut self,
+        targets: Vec<cmd_run::PicoTarget>,
+    ) -> Vec<cmd_run::PicoTarget> {
+        let uids: BTreeSet<u32> = targets.iter().map(|p| p.info.unique_id_short).collect();
+        let last_ips: BTreeMap<u32, IpAddr> = targets
+            .iter()
+            .map(|p| (p.info.unique_id_short, p.peer.ip()))
+            .collect();
+        if uids.is_empty() {
+            return targets;
+        }
+
+        let started = Instant::now();
+        let result = async {
+            let instances = pnp_instances_for_uids(&uids, &[PnpPersona::Xinput])?;
+            if instances.len() != uids.len() {
+                bail!(
+                    "found {} XInput instance(s) for {} selected Pico(s)",
+                    instances.len(),
+                    uids.len()
+                );
+            }
+            pnp_remove_rescan_with_elevation(&pnp_instance_ids(&instances))?;
+            let mut wifi_after_remove = Vec::new();
+            for uid in &uids {
+                let target =
+                    wait_for_wifi_uid_at(*uid, last_ips.get(uid).copied(), WIFI_WAIT_TIMEOUT)
+                        .await?;
+                wifi_after_remove.push(target);
+            }
+            let mut refreshed = Vec::new();
+            for target in wifi_after_remove {
+                let uid = target.info.unique_id_short;
+                pico_mode::request_reboot_to_setup(&target).await?;
+                let probe = wait_for_setup_uid(uid, SETUP_WAIT_TIMEOUT).await?;
+                reboot_setup_to_run(probe.port).await?;
+                let target =
+                    wait_for_wifi_uid_at(uid, Some(target.peer.ip()), WIFI_WAIT_TIMEOUT).await?;
+                wait_for_usb_controller_ready(&target, USB_READY_WAIT_TIMEOUT).await?;
+                refreshed.push(target);
+            }
+            let present = pnp_instances_for_uids(&uids, &[PnpPersona::Xinput])?;
+            if present.len() != uids.len() {
+                bail!(
+                    "after reconnect, found {} XInput instance(s) for {} selected Pico(s)",
+                    present.len(),
+                    uids.len()
+                );
+            }
+            Ok::<_, anyhow::Error>(refreshed)
+        }
+        .await;
+
+        match result {
+            Ok(updated) => {
+                self.report.pass(
+                    "run reconnect cycle",
+                    None,
+                    "PnP remove/rescan plus firmware USB re-enumeration completed for XInput controller devices; USB power was not cut",
+                    started.elapsed().as_millis(),
+                );
+                updated
+            }
+            Err(e) => {
+                self.report.fail(
+                    "run reconnect cycle",
+                    None,
+                    format!("{e:#}"),
+                    started.elapsed().as_millis(),
+                );
+                targets
+            }
+        }
     }
 
     async fn run_signal_checks(&mut self, targets: &[cmd_run::PicoTarget]) {
@@ -1193,14 +1340,32 @@ async fn wait_for_setup_uids_absent(uids: &BTreeSet<u32>, timeout: Duration) -> 
 }
 
 async fn wait_for_wifi_uid(uid: u32, timeout: Duration) -> Result<cmd_run::PicoTarget> {
+    wait_for_wifi_uid_at(uid, None, timeout).await
+}
+
+async fn wait_for_wifi_uid_at(
+    uid: u32,
+    last_ip: Option<IpAddr>,
+    timeout: Duration,
+) -> Result<cmd_run::PicoTarget> {
     let started = Instant::now();
     let deadline = started + timeout;
     tokio::time::sleep(Duration::from_secs(2)).await;
     loop {
-        let picos = cmd_run::discover_picos(Duration::from_secs(2)).await?;
+        let now = Instant::now();
+        let remaining = deadline.saturating_duration_since(now);
+        let discover_for = remaining.min(Duration::from_secs(2));
+        let picos = cmd_run::discover_picos(discover_for).await?;
         if let Some(pico) = picos.into_iter().find(|p| p.info.unique_id_short == uid) {
             return Ok(pico);
         }
+
+        if let Some(ip) = last_ip {
+            if let Some(target) = probe_known_ip_for_uid(ip, uid, discover_for).await? {
+                return Ok(target);
+            }
+        }
+
         if Instant::now() >= deadline {
             bail!(
                 "Pico {uid:08X} did not answer on Wi-Fi within {} s",
@@ -1399,6 +1564,7 @@ enum SelectedPowerKind {
     Reset,
     External,
     PnpRestart,
+    PnpRemove,
 }
 
 fn select_power_backend(
@@ -1414,6 +1580,10 @@ fn select_power_backend(
         LabPower::PnpRestart => SelectedPower {
             kind: SelectedPowerKind::PnpRestart,
             label: "pnp-restart",
+        },
+        LabPower::PnpRemove => SelectedPower {
+            kind: SelectedPowerKind::PnpRemove,
+            label: "pnp-remove",
         },
         LabPower::External => {
             if external_power_configured(cfg) {
@@ -1598,15 +1768,36 @@ fn validate_pnp_instance_ids(instance_ids: &[String]) -> Result<Vec<String>> {
 }
 
 fn pnp_disable_enable_with_elevation(instance_ids: &[String]) -> Result<()> {
+    run_pnp_action_with_elevation(instance_ids, PnpHelperAction::DisableEnable)
+}
+
+fn pnp_remove_rescan_with_elevation(instance_ids: &[String]) -> Result<()> {
+    run_pnp_action_with_elevation(instance_ids, PnpHelperAction::RemoveRescan)
+}
+
+fn run_pnp_action_with_elevation(instance_ids: &[String], action: PnpHelperAction) -> Result<()> {
     let ids = validate_pnp_instance_ids(instance_ids)?;
-    match run_pnp_disable_enable(&ids, PNP_RECONNECT_HOLD, false) {
+    match run_pnp_action(&ids, action, PNP_RECONNECT_HOLD, false) {
         Ok(()) => Ok(()),
-        Err(first) => match run_elevated_pnp_helper(&ids) {
+        Err(first) => match run_elevated_pnp_helper(&ids, action) {
             Ok(()) => Ok(()),
             Err(elevated) => bail!(
-                "PnP disable/enable failed without elevation ({first:#}); elevated helper also failed ({elevated:#})"
+                "{} failed without elevation ({first:#}); elevated helper also failed ({elevated:#})",
+                action.label()
             ),
         },
+    }
+}
+
+fn run_pnp_action(
+    instance_ids: &[String],
+    action: PnpHelperAction,
+    hold: Duration,
+    allow_force: bool,
+) -> Result<()> {
+    match action {
+        PnpHelperAction::DisableEnable => run_pnp_disable_enable(instance_ids, hold, allow_force),
+        PnpHelperAction::RemoveRescan => run_pnp_remove_rescan(instance_ids, hold, allow_force),
     }
 }
 
@@ -1647,6 +1838,25 @@ fn run_pnp_disable_enable(
     Ok(())
 }
 
+fn run_pnp_remove_rescan(instance_ids: &[String], hold: Duration, allow_force: bool) -> Result<()> {
+    if instance_ids.is_empty() {
+        bail!("no PnP instance IDs supplied");
+    }
+
+    let result = (|| {
+        for id in instance_ids {
+            run_pnputil_remove_device(id, allow_force)?;
+        }
+        Ok::<_, anyhow::Error>(())
+    })();
+
+    thread::sleep(hold);
+    let scan = run_pnputil_scan_devices();
+    result?;
+    scan?;
+    Ok(())
+}
+
 fn run_pnputil_device_action(action: &str, instance_id: &str, allow_force: bool) -> Result<()> {
     match run_pnputil_device_action_once(action, instance_id, false) {
         Ok(()) => Ok(()),
@@ -1681,6 +1891,65 @@ fn run_pnputil_device_action_once(action: &str, instance_id: &str, force: bool) 
     Ok(())
 }
 
+fn run_pnputil_remove_device(instance_id: &str, allow_force: bool) -> Result<()> {
+    match run_pnputil_remove_device_once(instance_id, false) {
+        Ok(()) => Ok(()),
+        Err(first) if allow_force => run_pnputil_remove_device_once(instance_id, true)
+            .with_context(|| format!("normal /remove-device failed first: {first:#}")),
+        Err(e) => Err(e),
+    }
+}
+
+fn run_pnputil_remove_device_once(instance_id: &str, force: bool) -> Result<()> {
+    let args = pnputil_remove_device_args(instance_id, force);
+    let output = Command::new("pnputil")
+        .args(&args)
+        .output()
+        .context("starting pnputil /remove-device")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    if !output.status.success() || pnputil_output_failed(&combined) {
+        bail!(
+            "pnputil /remove-device {} failed with {}: {}",
+            instance_id,
+            output.status,
+            combined.trim()
+        );
+    }
+    Ok(())
+}
+
+fn pnputil_remove_device_args(instance_id: &str, force: bool) -> Vec<String> {
+    let mut args = vec![
+        "/remove-device".to_string(),
+        instance_id.to_string(),
+        "/subtree".to_string(),
+    ];
+    if force {
+        args.push("/force".to_string());
+    }
+    args
+}
+
+fn run_pnputil_scan_devices() -> Result<()> {
+    let output = Command::new("pnputil")
+        .args(["/scan-devices"])
+        .output()
+        .context("starting pnputil /scan-devices")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    if !output.status.success() || pnputil_output_failed(&combined) {
+        bail!(
+            "pnputil /scan-devices failed with {}: {}",
+            output.status,
+            combined.trim()
+        );
+    }
+    Ok(())
+}
+
 fn pnputil_output_failed(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     lower.contains("access is denied")
@@ -1689,7 +1958,7 @@ fn pnputil_output_failed(text: &str) -> bool {
         || lower.contains("failed.")
 }
 
-fn run_elevated_pnp_helper(instance_ids: &[String]) -> Result<()> {
+fn run_elevated_pnp_helper(instance_ids: &[String], action: PnpHelperAction) -> Result<()> {
     let exe = env::current_exe().context("locating current executable")?;
     let result_file = env::temp_dir().join(format!(
         "couchlink-pnp-helper-{}-{}.txt",
@@ -1699,6 +1968,8 @@ fn run_elevated_pnp_helper(instance_ids: &[String]) -> Result<()> {
     let mut args = vec![
         "--no-log-file".to_string(),
         "lab-pnp-helper".to_string(),
+        "--action".to_string(),
+        action.cli_value().to_string(),
         "--hold-seconds".to_string(),
         PNP_RECONNECT_HOLD.as_secs().to_string(),
         "--result-file".to_string(),
@@ -1756,19 +2027,22 @@ fn problem_usb_devices() -> Vec<String> {
             return Vec::new();
         }
         let text = String::from_utf8_lossy(&output.stdout);
-        text.lines()
-            .filter(|line| {
-                line.contains("VID_0000")
-                    || line.contains("VID_2E8A")
-                    || line.contains("VID_045E&PID_028E")
-            })
-            .map(|line| line.trim().to_string())
-            .collect()
+        parse_problem_usb_devices(&text)
     }
     #[cfg(not(windows))]
     {
         Vec::new()
     }
+}
+
+fn parse_problem_usb_devices(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|line| {
+            let upper = line.to_ascii_uppercase();
+            upper.contains("VID_2E8A&PID_CAF0") || upper.contains("VID_045E&PID_028E")
+        })
+        .map(|line| line.trim().to_string())
+        .collect()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2040,6 +2314,24 @@ mod tests {
     }
 
     #[test]
+    fn power_backend_accepts_pnp_remove() {
+        let opts = LabOptions {
+            all: true,
+            picos: Vec::new(),
+            scenario: LabScenario::PowerCycle,
+            cycles: 1,
+            power: LabPower::PnpRemove,
+            uf2: None,
+            json: None,
+            no_flash: false,
+        };
+        let mut report = LabReport::new(&opts);
+        let selected = select_power_backend(LabPower::PnpRemove, None, &mut report);
+        assert_eq!(selected.kind, SelectedPowerKind::PnpRemove);
+        assert_eq!(selected.name(), "pnp-remove");
+    }
+
+    #[test]
     fn lab_signal_states_are_distinct() {
         let states: Vec<_> = (0..4).map(lab_signal_state).collect();
         for (idx, state) in states.iter().enumerate() {
@@ -2091,6 +2383,44 @@ Instance ID:                USB\VID_0000&PID_0008\8&18b4ea2b&0&3
         assert!(
             validate_pnp_instance_ids(&[r"USB\VID_0000&PID_0008\8&18b4ea2b&0&3".to_string()])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn pnp_remove_args_remove_the_device_subtree() {
+        assert_eq!(
+            pnputil_remove_device_args(r"USB\VID_2E8A&PID_CAF0\B67ED307F4C44A3E", false),
+            vec![
+                "/remove-device".to_string(),
+                r"USB\VID_2E8A&PID_CAF0\B67ED307F4C44A3E".to_string(),
+                "/subtree".to_string(),
+            ]
+        );
+        assert_eq!(
+            pnputil_remove_device_args(r"USB\VID_045E&PID_028E\E6613852837C242C", true),
+            vec![
+                "/remove-device".to_string(),
+                r"USB\VID_045E&PID_028E\E6613852837C242C".to_string(),
+                "/subtree".to_string(),
+                "/force".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn problem_usb_filter_ignores_unrelated_usb_failures() {
+        let text = r#"
+Instance ID:                USB\VID_0000&PID_0008\8&18b4ea2b&0&3
+Instance ID:                USB\VID_2E8A&PID_CAF0&MI_02\7&222E62A5&0&0002
+Instance ID:                USB\VID_045E&PID_028E&E6613852837C242C
+"#;
+        assert_eq!(
+            parse_problem_usb_devices(text),
+            vec![
+                r"Instance ID:                USB\VID_2E8A&PID_CAF0&MI_02\7&222E62A5&0&0002"
+                    .to_string(),
+                r"Instance ID:                USB\VID_045E&PID_028E&E6613852837C242C".to_string(),
+            ]
         );
     }
 

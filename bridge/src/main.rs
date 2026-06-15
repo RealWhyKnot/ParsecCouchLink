@@ -212,6 +212,9 @@ enum Command {
     },
     #[command(name = "lab-pnp-helper", hide = true)]
     LabPnpHelper {
+        #[arg(long, value_enum, default_value = "disable-enable")]
+        action: cmd_lab::PnpHelperAction,
+
         #[arg(long = "instance-id", required = true)]
         instance_ids: Vec<String>,
 
@@ -349,10 +352,11 @@ fn main() {
                 .await
             }
             Some(Command::LabPnpHelper {
+                action,
                 instance_ids,
                 hold_seconds,
                 result_file,
-            }) => cmd_lab::run_pnp_helper(instance_ids, hold_seconds, result_file),
+            }) => cmd_lab::run_pnp_helper(action, instance_ids, hold_seconds, result_file),
             Some(Command::Logs { tail }) => cmd_logs::run(tail).await,
             Some(Command::Bundle { output }) => cmd_bundle::run(output).await,
         }
@@ -455,10 +459,24 @@ mod tests {
     }
 
     #[test]
+    fn lab_command_parses_pnp_remove_power() {
+        let cli = Cli::try_parse_from(["couchlink", "lab", "--power", "pnp-remove"]).unwrap();
+
+        match cli.command {
+            Some(Command::Lab { power, .. }) => {
+                assert_eq!(power, cmd_lab::LabPower::PnpRemove);
+            }
+            other => panic!("expected lab command, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn lab_pnp_helper_command_parses_instance_ids() {
         let cli = Cli::try_parse_from([
             "couchlink",
             "lab-pnp-helper",
+            "--action",
+            "remove-rescan",
             "--hold-seconds",
             "3",
             "--instance-id",
@@ -468,10 +486,12 @@ mod tests {
 
         match cli.command {
             Some(Command::LabPnpHelper {
+                action,
                 instance_ids,
                 hold_seconds,
                 result_file,
             }) => {
+                assert_eq!(action, cmd_lab::PnpHelperAction::RemoveRescan);
                 assert_eq!(hold_seconds, 3);
                 assert_eq!(result_file, None);
                 assert_eq!(
