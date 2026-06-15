@@ -3,6 +3,8 @@
 - [Controller Routing](Controller-Routing)
 - [Setup and Flashing](Setup-and-Flashing)
 - [Troubleshooting](Troubleshooting)
+- [Hardware Lab](Hardware-Lab)
+- [Reporting Bugs](Reporting-Bugs)
 - [Build](Build)
 - [Protocol](Protocol)
 - [Changelog](Changelog)

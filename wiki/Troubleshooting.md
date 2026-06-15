@@ -225,6 +225,13 @@ The result tells you where USB stopped:
 - `configured, but the host has not accepted an XInput report`: unplug and replug the Pico, then update firmware if it repeats.
 - `host is polling the XInput endpoint`: the adapter accepted the Pico as a controller. Some adapters do not send rumble or LED OUT traffic until a game starts.
 
+On a development bench where the Pico is plugged into the Windows host, use
+[[Hardware Lab]] for repeatable reconnect checks. `couchlink lab --scenario full
+--power pnp-remove --no-flash` removes and rescans the CouchLink setup and
+XInput PnP instances, then verifies Wi-Fi/controller detection and signal
+delivery after reconnect. It is still a Windows PnP simulation, not a physical
+power cut.
+
 ## Logs
 
 Log location is printed by:

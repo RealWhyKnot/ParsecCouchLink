@@ -74,6 +74,32 @@ pico-bridge\dist\couchlink-picow.uf2
 
 The pico-sdk clone is shared across per-board build directories (`build-pico2w/`, `build-picow/`) via a sibling `build-_pico_sdk/` folder, so a dual-board build only fetches the SDK once.
 
+## Tests
+
+Run the Rust bridge tests:
+
+```powershell
+cargo test --manifest-path bridge\Cargo.toml
+```
+
+Run the C host tests for firmware setup and boot-mode policy code:
+
+```powershell
+cmake -S pico-bridge -B build-host-tests -DPICO_BRIDGE_HOST_TESTS=ON
+cmake --build build-host-tests --config Debug
+ctest --test-dir build-host-tests -C Debug --output-on-failure
+```
+
+Run the formatting and lint wrapper used locally before commits:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\lint.ps1
+```
+
+For plugged-in Pico benches, see [[Hardware Lab]]. The lab harness can produce
+a JSON report and can exercise setup-mode reconnects, BOOTSEL flash cycles,
+run-mode XInput enumeration, and controller signal checks.
+
 ## GitHub Workflows
 
 - `ci.yml` checks the Rust bridge and builds the Pico firmware.

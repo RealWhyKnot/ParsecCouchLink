@@ -4,7 +4,7 @@ Parsec CouchLink lets a remote Parsec player use a real retro console as player 
 
 The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a wired Xbox 360 controller to a USB-to-console adapter such as USB4MAPLE.
 
-**[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
+**[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases)** | **[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
 
 ## What You Need
 
@@ -61,6 +61,7 @@ Useful commands:
 .\couchlink.exe debug --to-wifi --port COM3
 .\couchlink.exe bootsel --port COM3
 .\couchlink.exe lab --scenario status
+.\couchlink.exe lab --scenario full --power pnp-remove --no-flash --json .\lab-report.json
 .\couchlink.exe test discover --ip 192.168.50.4
 .\couchlink.exe test usb --all
 .\couchlink.exe bundle
@@ -70,6 +71,12 @@ If `configure-wifi` finds a Pico already running on Wi-Fi, it can reboot that
 Pico into setup-mode USB before asking for new credentials. If the existing
 Wi-Fi is still correct after a firmware update, keep the current Wi-Fi and
 start streaming.
+
+`couchlink lab` is for development benches with the Pico plugged into the
+Windows host. `--power pnp-remove` asks Windows to remove and rescan the
+CouchLink Pico devices, including the run-mode XInput controller, which is
+useful for checking reconnect handling. It is not a physical cable pull or a
+USB power cut; use an external power backend for that.
 
 ## Reporting bugs
 
@@ -98,7 +105,9 @@ page for the full version.
 - `build.ps1` - local build and release zip staging.
 - `wiki/` - source-controlled GitHub Wiki pages.
 
-The project is pre-release. Runtime protocol v1 and setup protocol v1 are documented in the [Protocol](wiki/Protocol.md) wiki page.
+Runtime protocol v1 and setup protocol v1 are documented in the
+[Protocol](wiki/Protocol.md) wiki page. Hardware bench coverage is documented
+in [Hardware Lab](wiki/Hardware-Lab.md).
 
 ## License
 

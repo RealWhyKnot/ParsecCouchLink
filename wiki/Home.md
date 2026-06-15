@@ -27,6 +27,7 @@ Console player 2
 - [[Controller Routing]] - choose which controller goes to which Pico.
 - [[Setup and Flashing]] - what the script does and how to recover a Pico.
 - [[Troubleshooting]] - what to run when setup or discovery fails.
+- [[Hardware Lab]] - unattended bench checks for firmware, reconnects, and controller output.
 - [[Reporting-Bugs]] - how to make a bundle and what to include in an issue.
 - [[Build]] - build the release zip from source.
 - [[Protocol]] - short runtime and setup protocol reference.
@@ -53,3 +54,7 @@ Console player 2
 7. Run `couchlink.exe`, choose the Pico on the **Basic** tab, start streaming, then start a Parsec session and play.
 
 The Wi-Fi password is sent to the Pico over USB setup mode. It is not saved on the PC.
+
+For development benches with the Pico plugged into the Windows host, `couchlink lab`
+can cycle setup mode, BOOTSEL flashing, run-mode controller enumeration, and
+signal checks. See [[Hardware Lab]].

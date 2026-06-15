@@ -1,25 +1,22 @@
 # Changelog
 
-## Unreleased
+## Current Release
 
-- The no-argument guided menu now opens on a **Basic** tab with one card per saved or detected Pico. Each Pico card exposes only commands for that Pico, such as streaming, Wi-Fi setup, recovery, firmware flashing, USB diagnostics, saving, or removal. One-off diagnostics and fixes are grouped under the **Advanced** tab.
-- Direct `couchlink run` can auto-recover setup-mode USB Picos that already have saved Wi-Fi by rebooting them back to Wi-Fi/controller mode and retrying discovery. The **Basic** tab exposes targeted recovery under each USB Pico, the **Advanced** tab exposes **Auto recover for streaming**, and `couchlink recover` runs the same check directly.
-- Guided menus now include short inline hints for each choice. The **Advanced** tab adds firmware update, Wi-Fi setup, a quick status dashboard, Wi-Fi finder/manual-IP probe, Windows controller check, Pico recovery, USB adapter diagnostics, logs, support bundles, and a command reference grouped by setup, streaming, recovery, and diagnostics.
-- `couchlink debug` adds a guided Pico recovery menu and direct mode-switch commands for Wi-Fi/controller mode, USB debug mode, and BOOTSEL firmware mode. `couchlink bootsel` is the fast direct command for moving a setup-mode USB Pico into BOOTSEL.
-- `couchlink test usb` asks run-mode firmware over Wi-Fi for USB/XInput status, including mount/configuration state, descriptor counters, accepted IN reports, and host OUT traffic. The guided **Basic** and **Advanced** tabs expose the same check for console-adapter troubleshooting.
-- Release packaging describes only the current CouchLink setup, streaming, diagnostic, flashing, and Wi-Fi configuration tools. Protocol docs list the active setup and runtime commands.
-- Firmware writes one heartbeat line every 5 seconds while running, covering USB mount/suspend state, Wi-Fi state with IP and RSSI, peer presence, and tx/rx packet counters. A quiet system used to leave the diag ring with no recent entries; the heartbeat guarantees there is always state to reason about in `pico-diag.txt`.
-- Firmware fault context expanded. On HardFault / BusFault / UsageFault / MemManage the breadcrumb now captures the full hardware-stacked basic exception frame (R0-R3, R12, LR, PC, xPSR) plus SP and -- on Cortex-M33 / Pico 2 W -- the CFSR / HFSR / MMFAR / BFAR. The next boot's log names the cause directly (divide-by-zero, unaligned-access, precise-bus-error, etc.) rather than just an address.
-- Bridge writes a `state-journal.log` next to the rotating log: one short operator-readable line per high-signal event (wizard stage transitions, CDC open + line state, HELLO timeouts with byte counts, discovery, peer transitions, bundle outcomes). Included in `couchlink bundle`. Survives across program restarts.
-- `couchlink bundle` captures the last 15 minutes of Windows event log entries from the System and Kernel-PnP/Configuration logs, filtered to USB-relevant providers. Catches driver-bind failures, surprise removals, and descriptor-request timeouts that pnputil cannot show.
-- Setup-mode CDC HELLO probe in `couchlink bundle` now uses a 10-second read deadline instead of 3 seconds. The wizard's faster budget still applies during interactive setup; the bundle path is "something is wrong, gather everything" and waits longer for late-arriving bytes from a slow-booting firmware.
-- `pico-diag.txt` now leads with a `Suggested next step` block: a one-sentence root cause and an ordered "Try this (in order)" list specific to the failure shape (write / read+0bytes / read+somebytes / decode / get_log_buffer / no_setup_port / setup_open_failed / no_last_pico_in_config / udp_discovery_failed / udp_probe_failed / udp_unsupported). The raw captured fields follow in a `Diagnostic details` block so an operator reading top-down hits an action before they hit jargon.
-- Bridge log files are no longer empty by default. The tracing filter directive matched a crate-name prefix that the binary's actual crate identifier did not satisfy, so every `info!` / `warn!` / `error!` call dropped silently on both stderr and the rotating file. `couchlink run` is no longer a silent console window; bundles now carry readable bridge logs.
-- `couchlink bundle` can now pull the firmware's diag-log ring over UDP from a running Pico. The bundle tries setup-mode USB-CDC first and falls back to a unicast UDP probe against the last-known address. `pico-diag.txt` and the manifest now name which source produced the log (`setup-cdc` or `run-udp`).
-- When CDC capture fails, `pico-diag.txt` now names the specific step that broke -- port enumeration, port open, HELLO write, HELLO read, or frame decode -- with bytes-received count and a hex dump of any pre-magic bytes seen on the wire. The previous stub said "couldn't capture, see the bridge log" without distinguishing which path failed.
-- `couchlink flash` refuses to write a UF2 whose family ID does not match the detected BOOTSEL drive. The previous behavior was a warning that continued the copy, which produced a Pico that silently never re-enumerated when an RP2040 image was dropped onto an RP2350 (or vice versa).
-- `couchlink setup` stage 4 waits up to 120 s (was 60 s) for the setup-mode CDC port to appear and prints a progress line every 10 s while it waits. The previous 60 s budget was tight when the host went through USB passthrough (VM, WSL2) or a first-time driver bind.
-- `couchlink setup` stage 4 treats a port-disappeared event right after `REBOOT_TO_RUN` as success rather than a hard error. The firmware always reboots after handling that command, so a missing reply is the expected outcome of a fast reboot, not a failure.
-- Firmware CDC `bcdDevice` follows the generated firmware build date, so Windows re-binds `usbser.sys` after a CDC-protocol break instead of reusing a cached binding from an older interface layout.
-- Release zip stages `setup.ps1`, `couchlink.exe`, and both board-specific UF2 files together.
-- Wiki pages now hold setup, flashing, troubleshooting, build, and protocol notes.
+See the repository changelog for the generated release list:
+
+https://github.com/RealWhyKnot/ParsecCouchLink/blob/main/CHANGELOG.md
+
+Latest published release:
+
+https://github.com/RealWhyKnot/ParsecCouchLink/releases/latest
+
+## Current Highlights
+
+- `v2026.6.14.1` keeps provisioned Picos in run mode on normal replug so they enumerate as Xbox 360 controllers instead of falling back to setup-mode USB.
+- The no-argument guided menu opens on a **Basic** tab with one entry per saved or detected Pico. Each entry exposes only commands for that Pico, such as streaming, Wi-Fi setup, recovery, firmware flashing, USB diagnostics, saving, or removal.
+- Direct `couchlink run` can auto-recover setup-mode USB Picos that already have saved Wi-Fi by rebooting them back to Wi-Fi/controller mode and retrying discovery.
+- `couchlink debug` provides guided Pico recovery plus direct mode-switch commands for Wi-Fi/controller mode, USB debug mode, and BOOTSEL firmware mode.
+- `couchlink test usb` asks run-mode firmware over Wi-Fi for USB/XInput status, including mount/configuration state, descriptor counters, accepted IN reports, and host OUT traffic.
+- `couchlink lab` runs unattended plugged-in Pico bench scenarios, including `--power pnp-remove` for Windows PnP remove/rescan reconnect coverage.
+- `couchlink bundle` gathers logs, doctor output, Windows USB event-log snippets, bridge state journal entries, and firmware diagnostics when reachable by setup USB, vendor control, or run-mode UDP.
+- Release zips include `setup.ps1`, `couchlink.exe`, both board-specific UF2 files, support wrappers, and a manifest.

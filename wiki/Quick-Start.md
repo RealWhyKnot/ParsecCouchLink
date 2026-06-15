@@ -103,6 +103,7 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\couchlink.exe debug --status  # show whether the Pico is on Wi-Fi, USB debug, or BOOTSEL
 .\couchlink.exe debug --to-wifi --port COM3  # switch one USB debug Pico back to Wi-Fi
 .\couchlink.exe bootsel --port COM3  # switch one USB debug Pico to BOOTSEL
+.\couchlink.exe lab --scenario status  # development bench status snapshot
 .\couchlink.exe test <name>  # run one diagnostic check by name
 ```
 
