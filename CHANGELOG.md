@@ -4,7 +4,11 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **lab:** Add PnP reconnect bench support (e946cb8)
+
+### Fixed
+- **lab:** Handle directed discovery and post-flash run mode (ceb6336)
 
 ---
 
