@@ -4,7 +4,15 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **dinput:** Add 8BitDo Pro 2 persona (64c5d2e)
+- **maple:** Add Dreamcast output persona (afcbf01)
+
+### Changed
+- **maple:** Restore experimental persona selection (f6455b5)
+
+### Fixed
+- **maple:** Use Xbox-compatible adapter mode (f072050)
 
 ---
 
