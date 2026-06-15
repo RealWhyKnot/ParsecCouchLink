@@ -21,6 +21,55 @@ For two or more Picos, Basic keeps actions under each Pico so you do not run a b
 
 Basic streaming actions save the selected layout. After that, `couchlink.exe run` uses the saved layout without asking again, which is what the Startup shortcut uses. Direct `run --all` and `run --route ...` commands use the layout on the command line.
 
+## Keyboard Mode
+
+Some console games need a keyboard instead of a controller -- Typing of the Dead on the Dreamcast is the usual reason. A Pico can present itself as a USB keyboard instead of an Xbox controller, and the bridge forwards the remote player's typing to it.
+
+Only the remote Parsec player's keystrokes are forwarded -- the bridge captures Parsec-injected input, not anything typed locally at the host PC. This matches the controller path, which reads Parsec's virtual gamepad rather than a local one.
+
+Switch a Pico to keyboard mode and start streaming:
+
+```powershell
+.\couchlink.exe keyboard
+```
+
+With one Pico, that is all you need. With several, pick one:
+
+```powershell
+.\couchlink.exe keyboard --pico 07D37EB6
+```
+
+The Pico stores the choice and reboots into it, so after a one-time switch a plain `couchlink.exe run` keeps streaming the keyboard to that board. Switch back to a controller the same way:
+
+```powershell
+.\couchlink.exe controller
+```
+
+Add `--no-stream` to either command to change the persona without starting a stream. The switch happens over Wi-Fi, so the Pico can stay plugged into the console the whole time.
+
+A keyboard adapter is required on the console side: the Pico presents a standard USB HID boot keyboard, and the console adapter (for example a USB4MAPLE/Pico2Maple feeding a Dreamcast) maps it to the console's native keyboard. While streaming, the status line shows the keyboard instead of a controller:
+
+```text
+Keyboard -> 07D37EB6 | source live | out +60 total 900 | in 30 (reply 0.2s ago) | keys mods=0x02 keys=[0x04]
+```
+
+### If the player's typing isn't reaching the game
+
+A few Parsec-side settings gate guest keyboard input:
+
+- **Keyboard permission.** Guests default to controller-only. The host must grant the guest keyboard and mouse permission (click the guest's profile picture during the session, or set default permissions in Parsec).
+- **Approved Apps.** If the host has Approved Apps enabled, guest input is blocked unless the focused window is on the whitelist. It is off by default.
+- **Same session.** Run the bridge in the same signed-in Windows session Parsec is injecting into. It will not see input across the lock screen, a UAC/secure desktop prompt, or a different user session.
+- **Layout and lock keys.** The character a key produces follows the host keyboard layout, so a client/host layout mismatch (for example AZERTY vs QWERTY) can type the wrong characters, and Caps/Num Lock state can drift between the two ends.
+
+To confirm the bridge is capturing the player's keystrokes, run with verbose logging while the guest types:
+
+```powershell
+.\couchlink.exe keyboard -vv
+```
+
+A single `keyboard: capturing Parsec-injected input` line confirms the hook is seeing the guest's input; `-vv` then logs each captured key. If that line never appears while the guest is typing, the input isn't being injected the way the bridge expects -- check the Parsec settings above.
+
 ## What Parsec Provides
 
 Parsec passes guest gamepads to the host through its virtual USB gamepad driver. On Windows, those gamepads normally appear as Xbox 360 controllers, which CouchLink reads as XInput slots. Parsec's [gamepad setup guide](https://support.parsec.app/hc/en-us/articles/32381705301908-Setup-Gamepad) also covers virtual gamepad setup and controller order management.

@@ -28,6 +28,16 @@ pub const TYPE_GET_LOG: u8 = 0x05;
 pub const TYPE_GET_USB_DIAG: u8 = 0x06;
 /// Request for run-mode firmware to reboot into setup-mode USB-CDC.
 pub const TYPE_REBOOT_TO_SETUP: u8 = 0x07;
+/// Keyboard report for the HID keyboard persona. Same 17-byte shape as
+/// STATE; the 8-byte HID boot report lives in the first 8 body bytes
+/// (`modifiers`, reserved, then six key usage codes).
+pub const TYPE_KEY_STATE: u8 = 0x08;
+/// Keyboard heartbeat, sent when the report is unchanged so the firmware
+/// watchdog stays fed. Mirrors `TYPE_HEARTBEAT` for the pad path.
+pub const TYPE_KEY_HEARTBEAT: u8 = 0x09;
+/// Ask a run-mode Pico to persist a new USB persona and reboot into it.
+/// `body[0]` carries the desired persona's flash byte (see `Persona`).
+pub const TYPE_SET_PERSONA: u8 = 0x0A;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
@@ -51,6 +61,11 @@ pub const ACK_FLAG_USB_DIAG_SUPPORTED: u8 = 1 << 1;
 /// Set in the ACK flags byte when the firmware supports
 /// `TYPE_REBOOT_TO_SETUP`.
 pub const ACK_FLAG_REBOOT_TO_SETUP_SUPPORTED: u8 = 1 << 2;
+/// Set in the ACK flags byte when the Pico is currently presenting the
+/// HID keyboard persona. Implies `TYPE_SET_PERSONA` and the keyboard
+/// streaming types are understood; the bridge streams key reports rather
+/// than pad state to this Pico.
+pub const ACK_FLAG_KEYBOARD_PERSONA: u8 = 1 << 3;
 
 pub const USB_DIAG_WIRE_SIZE: usize = 78;
 pub const USB_DIAG_VERSION: u8 = 1;
@@ -94,6 +109,52 @@ pub struct GamepadState {
     pub right_y: i16,
 }
 
+/// One USB HID boot-keyboard report: a modifier bitmap plus up to six
+/// concurrently-held key usage codes (HID Keyboard/Keypad page 0x07).
+/// The on-wire reserved byte (boot report byte 1) is always zero and is
+/// not stored here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyboardReport {
+    pub modifiers: u8,
+    pub keys: [u8; 6],
+}
+
+/// Which USB device a Pico presents in run mode. Discovered from the ACK
+/// flags byte and persisted on the Pico in flash.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Persona {
+    #[default]
+    Controller,
+    Keyboard,
+}
+
+impl Persona {
+    /// Read the active persona from an ACK packet's flags byte.
+    pub fn from_ack_flags(flags: u8) -> Self {
+        if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
+            Persona::Keyboard
+        } else {
+            Persona::Controller
+        }
+    }
+
+    /// The byte the firmware stores in flash and accepts in a
+    /// `TYPE_SET_PERSONA` request body.
+    pub fn flash_byte(self) -> u8 {
+        match self {
+            Persona::Controller => 0,
+            Persona::Keyboard => 1,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Persona::Controller => "controller",
+            Persona::Keyboard => "keyboard",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AckInfo {
     pub proto_version: u8,
@@ -115,6 +176,8 @@ impl AckInfo {
 pub enum PacketKind {
     State(GamepadState),
     Heartbeat(GamepadState),
+    KeyState(KeyboardReport),
+    KeyHeartbeat(KeyboardReport),
     Discover,
     Ack(AckInfo),
 }
@@ -143,6 +206,22 @@ impl Packet {
         }
     }
 
+    pub fn key_state(seq: u8, flags: u8, report: KeyboardReport) -> Self {
+        Self {
+            kind: PacketKind::KeyState(report),
+            seq,
+            flags,
+        }
+    }
+
+    pub fn key_heartbeat(seq: u8, flags: u8, report: KeyboardReport) -> Self {
+        Self {
+            kind: PacketKind::KeyHeartbeat(report),
+            seq,
+            flags,
+        }
+    }
+
     pub fn discover(seq: u8) -> Self {
         Self {
             kind: PacketKind::Discover,
@@ -165,6 +244,8 @@ impl Packet {
         buf[1] = match self.kind {
             PacketKind::State(_) => TYPE_STATE,
             PacketKind::Heartbeat(_) => TYPE_HEARTBEAT,
+            PacketKind::KeyState(_) => TYPE_KEY_STATE,
+            PacketKind::KeyHeartbeat(_) => TYPE_KEY_HEARTBEAT,
             PacketKind::Discover => TYPE_DISCOVER,
             PacketKind::Ack(_) => TYPE_ACK,
         };
@@ -174,6 +255,9 @@ impl Packet {
         match self.kind {
             PacketKind::State(st) | PacketKind::Heartbeat(st) => {
                 write_state(body, &st);
+            }
+            PacketKind::KeyState(kr) | PacketKind::KeyHeartbeat(kr) => {
+                write_key(body, &kr);
             }
             PacketKind::Discover => {
                 // body stays zero
@@ -210,6 +294,8 @@ impl Packet {
         let kind = match buf[1] {
             TYPE_STATE => PacketKind::State(read_state(body)),
             TYPE_HEARTBEAT => PacketKind::Heartbeat(read_state(body)),
+            TYPE_KEY_STATE => PacketKind::KeyState(read_key(body)),
+            TYPE_KEY_HEARTBEAT => PacketKind::KeyHeartbeat(read_key(body)),
             TYPE_DISCOVER => PacketKind::Discover,
             TYPE_ACK => PacketKind::Ack(AckInfo {
                 proto_version: body[0],
@@ -249,6 +335,22 @@ fn read_state(body: &[u8; 12]) -> GamepadState {
         left_y: i16::from_le_bytes([body[6], body[7]]),
         right_x: i16::from_le_bytes([body[8], body[9]]),
         right_y: i16::from_le_bytes([body[10], body[11]]),
+    }
+}
+
+fn write_key(body: &mut [u8; 12], rep: &KeyboardReport) {
+    body[0] = rep.modifiers;
+    body[1] = 0; // HID boot report reserved byte
+    body[2..8].copy_from_slice(&rep.keys);
+    // body[8..12] stay zero
+}
+
+fn read_key(body: &[u8; 12]) -> KeyboardReport {
+    let mut keys = [0u8; 6];
+    keys.copy_from_slice(&body[2..8]);
+    KeyboardReport {
+        modifiers: body[0],
+        keys,
     }
 }
 
@@ -331,6 +433,21 @@ pub fn encode_reboot_to_setup(seq: u8) -> [u8; PACKET_SIZE] {
     buf[1] = TYPE_REBOOT_TO_SETUP;
     buf[2] = seq;
     buf[3] = 0;
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+/// Build a `TYPE_SET_PERSONA` request datagram. The desired persona's
+/// flash byte goes in `body[0]`; the rest of the body is reserved zero.
+/// Same fixed shape as DISCOVER so run-mode firmware accepts it in the
+/// existing UDP path.
+pub fn encode_set_persona(seq: u8, persona: Persona) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_SET_PERSONA;
+    buf[2] = seq;
+    buf[3] = 0;
+    buf[4] = persona.flash_byte();
     buf[16] = crc8(&buf[..16]);
     buf
 }
@@ -735,6 +852,105 @@ mod tests {
         assert_eq!(buf[1], TYPE_DISCOVER);
         let back = Packet::decode(&buf).unwrap();
         assert_eq!(pkt, back);
+    }
+
+    #[test]
+    fn key_state_roundtrip() {
+        let rep = KeyboardReport {
+            modifiers: 0b0000_0010, // left shift
+            keys: [0x04, 0x05, 0x28, 0x00, 0x00, 0x00],
+        };
+        let pkt = Packet::key_state(11, FLAG_PARSEC_CONNECTED, rep);
+        let buf = pkt.encode();
+        assert_eq!(buf[1], TYPE_KEY_STATE);
+        // modifiers in body[0], reserved zero in body[1], keys in body[2..8]
+        assert_eq!(buf[4], 0b0000_0010);
+        assert_eq!(buf[5], 0);
+        assert_eq!(&buf[6..12], &[0x04, 0x05, 0x28, 0x00, 0x00, 0x00]);
+        let back = Packet::decode(&buf).unwrap();
+        assert_eq!(pkt, back);
+    }
+
+    #[test]
+    fn key_heartbeat_roundtrip() {
+        let rep = KeyboardReport::default();
+        let pkt = Packet::key_heartbeat(3, 0, rep);
+        let buf = pkt.encode();
+        assert_eq!(buf[1], TYPE_KEY_HEARTBEAT);
+        let back = Packet::decode(&buf).unwrap();
+        assert_eq!(pkt, back);
+    }
+
+    #[test]
+    fn key_state_full_six_keys_and_all_modifiers() {
+        let rep = KeyboardReport {
+            modifiers: 0xFF, // every modifier held
+            keys: [0x04, 0x16, 0x07, 0x09, 0x0A, 0x28],
+        };
+        let pkt = Packet::key_state(0, 0, rep);
+        let back = Packet::decode(&pkt.encode()).unwrap();
+        assert_eq!(pkt, back);
+    }
+
+    #[test]
+    fn key_decode_ignores_reserved_and_trailing_body_bytes() {
+        // A peer (or a future firmware) may set the HID reserved byte or the
+        // unused trailing body bytes; decode must ignore them and still
+        // recover the same report, and the CRC must stay valid.
+        let rep = KeyboardReport {
+            modifiers: 0x01,
+            keys: [0x04, 0, 0, 0, 0, 0],
+        };
+        let mut buf = Packet::key_state(1, 0, rep).encode();
+        buf[5] = 0xAB; // HID reserved byte (body[1])
+        buf[12] = 0xCD; // first unused trailing body byte (body[8])
+        buf[15] = 0xEF; // last unused trailing body byte (body[11])
+        buf[16] = crc8(&buf[..16]); // re-CRC after stomping the body
+        let back = Packet::decode(&buf).unwrap();
+        match back.kind {
+            PacketKind::KeyState(got) => assert_eq!(got, rep),
+            other => panic!("expected KeyState, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_persona_encode_shape() {
+        let buf = encode_set_persona(5, Persona::Keyboard);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_SET_PERSONA);
+        assert_eq!(buf[2], 5);
+        assert_eq!(buf[3], 0);
+        assert_eq!(buf[4], 1); // keyboard flash byte
+        for b in &buf[5..16] {
+            assert_eq!(*b, 0);
+        }
+        assert_eq!(buf[16], crc8(&buf[..16]));
+        assert_eq!(encode_set_persona(0, Persona::Controller)[4], 0);
+        // Decode is lenient on unknown types; SET_PERSONA isn't a PacketKind.
+        assert_eq!(
+            Packet::decode(&buf),
+            Err(DecodeError::UnknownType(TYPE_SET_PERSONA))
+        );
+    }
+
+    #[test]
+    fn persona_from_ack_flags() {
+        assert_eq!(Persona::from_ack_flags(0), Persona::Controller);
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_LOG_CHUNK_SUPPORTED),
+            Persona::Controller
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA),
+            Persona::Keyboard
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_USB_DIAG_SUPPORTED),
+            Persona::Keyboard
+        );
+        assert_eq!(Persona::Controller.flash_byte(), 0);
+        assert_eq!(Persona::Keyboard.flash_byte(), 1);
     }
 
     #[test]

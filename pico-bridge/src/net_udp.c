@@ -9,8 +9,12 @@
 #include "lwip/udp.h"
 #include "lwip/pbuf.h"
 
+#include "boot_mode.h"
+#include "boot_mode_policy.h"
 #include "diag_log.h"
+#include "flash_creds.h"
 #include "gamepad_state.h"
+#include "keyboard_state.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
 #include "version.h"
@@ -73,6 +77,9 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_GET_LOG 0x05
 #define TYPE_GET_USB_DIAG 0x06
 #define TYPE_REBOOT_TO_SETUP 0x07
+#define TYPE_KEY_STATE 0x08
+#define TYPE_KEY_HEARTBEAT 0x09
+#define TYPE_SET_PERSONA 0x0A
 #define TYPE_LOG_CHUNK 0x85
 #define TYPE_USB_DIAG 0x86
 
@@ -84,6 +91,10 @@ static const char *lwip_err_name(err_t e) {
 #define ACK_FLAG_LOG_CHUNK_SUPPORTED 0x01
 #define ACK_FLAG_USB_DIAG_SUPPORTED 0x02
 #define ACK_FLAG_REBOOT_SETUP_SUPPORTED 0x04
+// Set when this Pico is currently presenting the HID keyboard persona,
+// so the bridge knows to stream key reports instead of pad state. Also
+// implicitly advertises that SET_PERSONA is understood.
+#define ACK_FLAG_KEYBOARD_PERSONA 0x08
 
 #define USB_DIAG_WIRE_SIZE 78
 #define USB_DIAG_VERSION 1
@@ -115,6 +126,8 @@ static uint32_t uid_short;
 static uint32_t tx_count; // ack + keepalive + log-chunk datagrams sent
 static uint32_t rx_count; // received datagrams (including malformed)
 static bool reboot_to_setup_pending;
+static bool set_persona_pending;
+static uint8_t set_persona_value;
 
 // CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
 static uint8_t crc8(const uint8_t *data, size_t n) {
@@ -168,8 +181,11 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     // Advertise the LogChunk capability in the flags byte. Old bridges
     // decode the flags field but ignore unknown bits; new bridges gate
     // their CMD_GET_LOG attempt on this bit being set.
-    buf[3] = ACK_FLAG_LOG_CHUNK_SUPPORTED | ACK_FLAG_USB_DIAG_SUPPORTED |
-             ACK_FLAG_REBOOT_SETUP_SUPPORTED;
+    uint8_t ack_flags = ACK_FLAG_LOG_CHUNK_SUPPORTED | ACK_FLAG_USB_DIAG_SUPPORTED |
+                        ACK_FLAG_REBOOT_SETUP_SUPPORTED;
+    if (boot_mode_run_persona() == RUN_PERSONA_KEYBOARD)
+        ack_flags |= ACK_FLAG_KEYBOARD_PERSONA;
+    buf[3] = ack_flags;
     // body[0..11]
     buf[4] = PICO_BRIDGE_UDP_PROTO_VERSION;
     buf[5] = PICO_BRIDGE_FW_WIRE_MAJOR;
@@ -355,6 +371,50 @@ static void apply_state_body(const uint8_t *body, uint8_t flags) {
     g_last_packet_ms = to_ms_since_boot(get_absolute_time());
 }
 
+// Keyboard packets carry the 8-byte HID boot report in the same 12-byte
+// body slot: body[0]=modifiers, body[1]=reserved (ignored), body[2..7]=
+// up to six key usage codes. The trailing body bytes are reserved zero.
+static void apply_key_body(const uint8_t *body, uint8_t flags) {
+    g_keyboard_state.modifiers = body[0];
+    for (int i = 0; i < 6; i++)
+        g_keyboard_state.keys[i] = body[2 + i];
+    g_parsec_connected = (flags & FLAG_PARSEC_CONNECTED) ? 1 : 0;
+    g_last_packet_ms = to_ms_since_boot(get_absolute_time());
+}
+
+// Persist a new USB persona and reboot so the correct descriptors come up
+// at the next boot. Called from the main loop (net_udp_task), never the
+// lwIP callback, so flash_safe_execute can coordinate with the cyw43
+// core. A no-op when the persona already matches, to avoid needless flash
+// wear and a session-dropping reboot.
+static void apply_set_persona(uint8_t persona) {
+    uint8_t want =
+        (persona == FLASH_PERSONA_KEYBOARD) ? FLASH_PERSONA_KEYBOARD : FLASH_PERSONA_CONTROLLER;
+
+    flash_creds_t rec;
+    if (!flash_creds_load(&rec)) {
+        diag_log_msg("net_udp: set_persona with no stored credentials -- ignoring");
+        return;
+    }
+    if (rec.usb_persona == want) {
+        memset(&rec, 0, sizeof(rec));
+        diag_log_printf("net_udp: persona already %u -- no change", (unsigned)want);
+        return;
+    }
+
+    rec.usb_persona = want;
+    int rc = flash_creds_store(&rec);
+    memset(&rec, 0, sizeof(rec)); // scrub the cleartext password copy
+    if (rc != 0) {
+        diag_log_printf("net_udp: set_persona store failed rc=%d", rc);
+        return;
+    }
+    diag_log_printf("net_udp: persona set to %u; rebooting to apply", (unsigned)want);
+    watchdog_reboot(0, 0, 100);
+    for (;;)
+        tight_loop_contents();
+}
+
 static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_addr_t *addr,
                     u16_t port) {
     (void)arg;
@@ -403,7 +463,16 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
         diag_log_printf("net_udp: reboot_to_setup requested by %u.%u.%u.%u:%u",
                         ip4_addr1(ip_2_ip4(addr)), ip4_addr2(ip_2_ip4(addr)),
                         ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
-    } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT) {
+    } else if (type == TYPE_SET_PERSONA) {
+        send_ack(addr, port, seq);
+        set_persona_value = buf[4]; // body[0] = desired FLASH_PERSONA_*
+        set_persona_pending = true;
+        diag_log_printf("net_udp: set_persona=%u requested by %u.%u.%u.%u:%u",
+                        (unsigned)set_persona_value, ip4_addr1(ip_2_ip4(addr)),
+                        ip4_addr2(ip_2_ip4(addr)), ip4_addr3(ip_2_ip4(addr)),
+                        ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
+    } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT || type == TYPE_KEY_STATE ||
+               type == TYPE_KEY_HEARTBEAT) {
         if (!have_peer || !ip_addr_cmp(&peer_addr, addr) || peer_port != port) {
             peer_addr = *addr;
             peer_port = port;
@@ -413,7 +482,10 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
                             ip4_addr2(ip_2_ip4(addr)), ip4_addr3(ip_2_ip4(addr)),
                             ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
         }
-        apply_state_body(&buf[4], flags);
+        if (type == TYPE_KEY_STATE || type == TYPE_KEY_HEARTBEAT)
+            apply_key_body(&buf[4], flags);
+        else
+            apply_state_body(&buf[4], flags);
     }
     // pbuf already freed above after pbuf_copy_partial; nothing to do here.
 }
@@ -471,6 +543,7 @@ bool net_udp_init(void) {
 
     have_peer = false;
     reboot_to_setup_pending = false;
+    set_persona_pending = false;
     next_keepalive = make_timeout_time_ms(1000);
     diag_log_msg("net_udp: listening on UDP/4242");
     return true;
@@ -483,6 +556,10 @@ void net_udp_task(void) {
         watchdog_reboot(0, 0, 100);
         for (;;)
             tight_loop_contents();
+    }
+    if (set_persona_pending) {
+        set_persona_pending = false;
+        apply_set_persona(set_persona_value);
     }
     if (!have_peer)
         return;

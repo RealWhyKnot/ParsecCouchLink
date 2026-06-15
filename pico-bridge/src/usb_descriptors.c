@@ -80,6 +80,38 @@ static const tusb_desc_device_t desc_device_xinput = {
     .bNumConfigurations = 0x01,
 };
 
+// Keyboard persona: a plain USB HID boot keyboard. Class is declared at
+// the interface level, so the device descriptor is class 0x00. A
+// HID-keyboard-aware console adapter (e.g. USB4MAPLE/Pico2Maple feeding a
+// Dreamcast) binds on the HID boot interface, so the VID/PID is cosmetic;
+// we keep the Raspberry Pi VID with a distinct product id.
+static const tusb_desc_device_t desc_device_keyboard = {
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = 0x00,
+    .bDeviceSubClass = 0x00,
+    .bDeviceProtocol = 0x00,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+
+    .idVendor = 0x2E8A,  // Raspberry Pi
+    .idProduct = 0xCAF1, // CouchLink keyboard persona
+    .bcdDevice = BCD_DEVICE_VERSION,
+
+    .iManufacturer = 0x01,
+    .iProduct = 0x02,
+    .iSerialNumber = 0x03,
+    .bNumConfigurations = 0x01,
+};
+
+// True only when run mode is presenting the HID keyboard. Setup mode
+// always reports the controller persona (boot_mode_run_persona() is
+// pinned to the controller default), so this is false outside run mode.
+static bool is_keyboard_persona(void) {
+    return boot_mode_current() == BOOT_MODE_RUN &&
+           boot_mode_run_persona() == RUN_PERSONA_KEYBOARD;
+}
+
 uint8_t const *tud_descriptor_device_cb(void) {
     static volatile bool logged = false;
     usb_diag_note_device_descriptor();
@@ -87,8 +119,9 @@ uint8_t const *tud_descriptor_device_cb(void) {
         logged = true;
         diag_log_msg("usb_init: first GET_DESCRIPTOR(DEVICE) reply sent");
     }
-    return (uint8_t const *)(boot_mode_current() == BOOT_MODE_RUN ? &desc_device_xinput
-                                                                  : &desc_device_cdc);
+    if (boot_mode_current() != BOOT_MODE_RUN)
+        return (uint8_t const *)&desc_device_cdc;
+    return (uint8_t const *)(is_keyboard_persona() ? &desc_device_keyboard : &desc_device_xinput);
 }
 
 // -------- setup mode: CDC + WinUSB diag configuration ------------------
@@ -183,6 +216,32 @@ static const uint8_t desc_configuration_xinput[] = {
     8,
 };
 
+// -------- run mode: keyboard configuration ------------------------------
+
+#define KBD_ITF_NUM 0
+#define KBD_IN_EP_ADDR 0x81
+
+// Standard 8-byte boot-keyboard report descriptor (report id 0).
+static const uint8_t desc_hid_report_keyboard[] = {TUD_HID_REPORT_DESC_KEYBOARD()};
+
+#define KBD_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
+
+static const uint8_t desc_configuration_keyboard[] = {
+    TUD_CONFIG_DESCRIPTOR(1, 1, 0, KBD_CONFIG_TOTAL_LEN, 0xA0, 100),
+    // Boot keyboard: subclass BOOT, protocol KEYBOARD, one 10 ms
+    // interrupt-IN endpoint carrying the 8-byte report.
+    TUD_HID_DESCRIPTOR(KBD_ITF_NUM, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_report_keyboard),
+                       KBD_IN_EP_ADDR, CFG_TUD_HID_EP_BUFSIZE, 10),
+};
+
+// The config descriptor's wTotalLength (KBD_CONFIG_TOTAL_LEN) must equal
+// the bytes actually emitted, or the host stops parsing mid-descriptor.
+_Static_assert(sizeof(desc_configuration_keyboard) == KBD_CONFIG_TOTAL_LEN,
+               "keyboard configuration descriptor length mismatch");
+// The boot keyboard IN report is 8 bytes; the endpoint buffer must hold it.
+_Static_assert(CFG_TUD_HID_EP_BUFSIZE >= 8,
+               "CFG_TUD_HID_EP_BUFSIZE too small for the 8-byte boot keyboard report");
+
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
     static bool logged = false;
@@ -191,10 +250,9 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
         diag_log_msg("usb: host requested configuration descriptor (enum step 2)");
         logged = true;
     }
-    if (boot_mode_current() == BOOT_MODE_RUN) {
-        return desc_configuration_xinput;
-    }
-    return desc_configuration_cdc;
+    if (boot_mode_current() != BOOT_MODE_RUN)
+        return desc_configuration_cdc;
+    return is_keyboard_persona() ? desc_configuration_keyboard : desc_configuration_xinput;
 }
 
 // -------- string descriptors --------------------------------------------
@@ -245,7 +303,10 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         serial_str[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES] = 0;
     }
 
-    bool xinput = (boot_mode_current() == BOOT_MODE_RUN);
+    // Only the XInput controller persona needs the Microsoft-y strings
+    // that keep xusb22.sys happy. The keyboard persona is a generic HID
+    // device and uses the default CouchLink strings, same as setup mode.
+    bool xinput = (boot_mode_current() == BOOT_MODE_RUN) && !is_keyboard_persona();
     const char *const *arr = xinput ? string_desc_arr_xinput : string_desc_arr;
     size_t arr_count = xinput ? (sizeof(string_desc_arr_xinput) / sizeof(string_desc_arr_xinput[0]))
                               : (sizeof(string_desc_arr) / sizeof(string_desc_arr[0]));
@@ -290,6 +351,51 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
 void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes) {
     (void)itf;
     usb_diag_note_xinput_in_sent(sent_bytes);
+}
+
+// -------- HID keyboard glue (keyboard persona only) --------------------
+//
+// These callbacks are part of the HID class driver and are linked in for
+// every persona (CFG_TUD_HID is always 1), but only fire while the
+// keyboard configuration is the active one. The IN report path lives in
+// hid_kbd.c; here we satisfy the descriptor request and the host's
+// control transfers, and fold report activity into the shared usb_diag
+// counters so `couchlink test usb` reports keyboard traffic too.
+
+uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
+    (void)instance;
+    return desc_hid_report_keyboard;
+}
+
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
+                               uint8_t *buffer, uint16_t reqlen) {
+    // We never source input/feature reports over the control pipe; the
+    // boot report is delivered on the interrupt endpoint from hid_kbd.c.
+    (void)instance;
+    (void)report_id;
+    (void)report_type;
+    (void)buffer;
+    (void)reqlen;
+    return 0;
+}
+
+void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
+                           uint8_t const *buffer, uint16_t bufsize) {
+    // The host's keyboard-LED state (Caps/Num/Scroll Lock) arrives as a
+    // 1-byte OUTPUT report. We don't drive LEDs; note it for diag (so the
+    // OUT-activity bit lights up just like the XInput rumble path) and
+    // discard.
+    (void)instance;
+    (void)report_id;
+    if (report_type == HID_REPORT_TYPE_OUTPUT && bufsize >= 1) {
+        usb_diag_note_xinput_out(buffer, bufsize);
+    }
+}
+
+void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len) {
+    (void)instance;
+    (void)report;
+    usb_diag_note_xinput_in_sent(len);
 }
 
 // -------- diag vendor-class glue (setup mode only) ---------------------

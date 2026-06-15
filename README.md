@@ -4,6 +4,8 @@ Parsec CouchLink lets a remote Parsec player use a real retro console as player 
 
 The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a wired Xbox 360 controller to a USB-to-console adapter such as USB4MAPLE.
 
+For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, for one -- the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. See [Controller Routing](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Controller-Routing) for keyboard mode.
+
 **[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases)** | **[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
 
 ## What You Need
@@ -54,6 +56,8 @@ Useful commands:
 
 ```powershell
 .\couchlink.exe doctor
+.\couchlink.exe keyboard
+.\couchlink.exe controller
 .\couchlink.exe logs --tail
 .\couchlink.exe configure-wifi
 .\couchlink.exe recover

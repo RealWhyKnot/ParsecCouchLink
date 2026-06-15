@@ -7,6 +7,7 @@ mod cmd_flash;
 mod cmd_home;
 mod cmd_lab;
 mod cmd_logs;
+mod cmd_persona;
 mod cmd_run;
 mod cmd_setup;
 mod cmd_test;
@@ -16,6 +17,7 @@ mod diag_usb;
 mod discovery;
 mod firmware_version;
 mod journal;
+mod keyboard;
 mod known_folders;
 mod logfile;
 mod net;
@@ -83,6 +85,35 @@ enum Command {
         /// Suppress live traffic status output.
         #[arg(long)]
         quiet: bool,
+    },
+    /// Switch a Pico to USB keyboard mode and stream the host keyboard to it.
+    /// For console games that need a keyboard (e.g. Typing of the Dead on Dreamcast).
+    Keyboard {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico back to Xbox controller mode (the default persona).
+    Controller {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
     },
     /// First-time setup wizard: flash the Pico, provision Wi-Fi, and check LAN discovery.
     Setup {
@@ -286,6 +317,16 @@ fn main() {
                 })
                 .await
             }
+            Some(Command::Keyboard {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Keyboard, picos, all, !no_stream).await,
+            Some(Command::Controller {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Controller, picos, all, !no_stream).await,
             Some(Command::Setup { uf2 }) => cmd_setup::run(uf2).await,
             Some(Command::Doctor) => cmd_doctor::run().await,
             Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,

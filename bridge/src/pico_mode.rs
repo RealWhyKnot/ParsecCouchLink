@@ -23,6 +23,35 @@ pub async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
     Ok(())
 }
 
+/// Ask a run-mode Pico to persist a new USB persona and reboot into it.
+/// The firmware ignores the request when it's already in the requested
+/// persona, so this is safe to send unconditionally. Several datagrams go
+/// out to cover UDP loss; a transient send error after the Pico starts
+/// rebooting is expected and ignored.
+pub async fn request_set_persona(
+    pico: &cmd_run::PicoTarget,
+    persona: protocol::Persona,
+) -> Result<()> {
+    let socket = net::bind_udp("0.0.0.0:0")
+        .await
+        .context("binding UDP set-persona socket")?;
+    let mut seq = 0xD0u8;
+    for _ in 0..6 {
+        let req = protocol::encode_set_persona(seq, persona);
+        seq = seq.wrapping_add(1);
+        match socket.send_to(&req, pico.peer).await {
+            Ok(_) => {}
+            Err(e) if net::is_transient(&e) => break,
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("sending set-persona request to {}", pico.peer))
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Ok(())
+}
+
 pub async fn wait_for_setup_port(timeout: Duration) -> Result<String> {
     let started = Instant::now();
     let deadline = started + timeout;

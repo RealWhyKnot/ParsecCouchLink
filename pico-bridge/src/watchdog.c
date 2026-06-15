@@ -5,6 +5,7 @@
 #include "pico/stdlib.h"
 
 #include "gamepad_state.h"
+#include "keyboard_state.h"
 #include "diag_log.h"
 
 static bool zeroed = false;
@@ -30,6 +31,11 @@ void watchdog_tick(void) {
             g_gamepad_state.left_y = 0;
             g_gamepad_state.right_x = 0;
             g_gamepad_state.right_y = 0;
+            // Neutralize the keyboard persona too: all keys up. Harmless
+            // in controller mode where this state is never read.
+            g_keyboard_state.modifiers = 0;
+            for (int i = 0; i < 6; i++)
+                g_keyboard_state.keys[i] = 0;
             g_parsec_connected = 0;
             diag_log_msg("watchdog: no bridge packets for 100 ms, neutralized");
         }

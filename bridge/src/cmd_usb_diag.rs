@@ -112,7 +112,7 @@ async fn query_and_print(picos: &[cmd_run::PicoTarget]) -> Result<()> {
         println!();
         println!("{}", pico.detail_label());
         match query_usb_diag(pico, PROBE_TIMEOUT).await {
-            Ok(diag) => print_usb_diag(&diag),
+            Ok(diag) => print_usb_diag(&diag, pico.persona),
             Err(e) => {
                 failures += 1;
                 println!("  FAIL  USB diagnostic did not reply: {e:#}");
@@ -168,8 +168,12 @@ pub async fn query_usb_diag(
     }
 }
 
-fn print_usb_diag(diag: &protocol::UsbDiag) {
-    println!("  {}", usb_verdict(diag));
+fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
+    let device_label = match persona {
+        protocol::Persona::Controller => "XInput",
+        protocol::Persona::Keyboard => "HID keyboard",
+    };
+    println!("  {}", usb_verdict(diag, device_label));
     println!(
         "  USB: {}{}  mounts={} unmounts={} suspends={} resumes={}",
         if diag.mounted() {
@@ -188,7 +192,7 @@ fn print_usb_diag(diag: &protocol::UsbDiag) {
         diag.device_desc_count, diag.config_desc_count
     );
     println!(
-        "  XInput: queued_reports={} host_accepted_reports={} host_out_reports={}",
+        "  {device_label}: queued_reports={} host_accepted_reports={} host_out_reports={}",
         diag.xinput_in_queued_count, diag.xinput_in_sent_count, diag.xinput_out_count
     );
     println!(
@@ -211,19 +215,21 @@ fn print_usb_diag(diag: &protocol::UsbDiag) {
     );
 }
 
-fn usb_verdict(diag: &protocol::UsbDiag) -> &'static str {
+fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str) -> String {
     if !diag.mounted() {
         if diag.device_desc_count > 0 || diag.config_desc_count > 0 {
-            "FAIL  USB host started enumeration but did not configure the controller."
+            format!("FAIL  USB host started enumeration but did not configure the {device_label} device.")
         } else {
-            "FAIL  Pico sees no USB host enumeration traffic."
+            "FAIL  Pico sees no USB host enumeration traffic.".to_string()
         }
     } else if !diag.xinput_report_sent() {
-        "WARN  USB is configured, but the host has not accepted an XInput report yet."
+        format!(
+            "WARN  USB is configured, but the host has not accepted a {device_label} report yet."
+        )
     } else if diag.xinput_out_seen() {
-        "PASS  USB host is polling and has sent XInput OUT traffic."
+        format!("PASS  USB host is polling and has sent {device_label} OUT traffic.")
     } else {
-        "PASS  USB host is polling the XInput endpoint. No rumble/LED OUT traffic seen yet."
+        format!("PASS  USB host is polling the {device_label} endpoint. No OUT traffic seen yet.")
     }
 }
 
@@ -290,11 +296,19 @@ mod tests {
 
     #[test]
     fn verdict_identifies_usb_enumeration_shapes() {
-        assert!(usb_verdict(&diag(false, false, false, false)).starts_with("FAIL"));
-        assert!(usb_verdict(&diag(false, false, false, true)).contains("started enumeration"));
-        assert!(usb_verdict(&diag(true, false, false, true)).starts_with("WARN"));
-        assert!(usb_verdict(&diag(true, true, false, true)).starts_with("PASS"));
-        assert!(usb_verdict(&diag(true, true, true, true)).contains("OUT traffic"));
+        assert!(usb_verdict(&diag(false, false, false, false), "XInput").starts_with("FAIL"));
+        assert!(
+            usb_verdict(&diag(false, false, false, true), "XInput").contains("started enumeration")
+        );
+        assert!(usb_verdict(&diag(true, false, false, true), "XInput").starts_with("WARN"));
+        assert!(usb_verdict(&diag(true, true, false, true), "XInput").starts_with("PASS"));
+        assert!(usb_verdict(&diag(true, true, true, true), "XInput").contains("OUT traffic"));
+    }
+
+    #[test]
+    fn verdict_uses_persona_label() {
+        let warn = usb_verdict(&diag(true, false, false, true), "HID keyboard");
+        assert!(warn.contains("HID keyboard report"));
     }
 
     #[test]

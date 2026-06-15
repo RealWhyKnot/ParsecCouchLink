@@ -221,15 +221,16 @@ async fn run_discover_all() -> Result<()> {
         return Err(anyhow!("{}", support::no_pico_wifi_help(8)));
     }
 
-    for (peer, info) in &replies {
+    for (peer, info, persona) in &replies {
         println!(
-            "PASS  ack from {} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s",
+            "PASS  ack from {} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s persona={}",
             peer,
             info.proto_version,
             info.firmware_version(),
             info.board_type,
             info.unique_id_short,
             info.uptime_seconds,
+            persona.label(),
         );
     }
     println!("summary: {} unique Pico reply/replies", replies.len());

@@ -12,8 +12,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
-use crate::protocol::{self, GamepadState, Packet, PacketKind, FLAG_PARSEC_CONNECTED};
-use crate::{cdc, cmd_flash, config, discovery, journal, net, support, xinput};
+use crate::protocol::{self, GamepadState, Packet, PacketKind, Persona, FLAG_PARSEC_CONNECTED};
+use crate::{cdc, cmd_flash, config, discovery, journal, keyboard, net, support, xinput};
 
 const DEFAULT_DISCOVER_SECONDS: u64 = 5;
 const DEFAULT_STATUS_SECONDS: u64 = 2;
@@ -57,6 +57,10 @@ impl RunOptions {
 pub struct PicoTarget {
     pub peer: SocketAddr,
     pub info: protocol::AckInfo,
+    /// USB persona this Pico is currently presenting, read from the ACK
+    /// flags at discovery. Determines whether the bridge streams pad
+    /// state or keyboard reports to it.
+    pub persona: Persona,
 }
 
 impl PicoTarget {
@@ -101,11 +105,16 @@ pub struct StreamRoute {
 
 impl StreamRoute {
     pub fn label(&self) -> String {
-        format!(
-            "{} -> {}",
-            xinput::user_slot_label(self.source_slot),
-            self.pico.short_label()
-        )
+        format!("{} -> {}", self.source_label(), self.pico.short_label())
+    }
+
+    /// What drives this route: a specific controller slot, or the host
+    /// keyboard for a keyboard-persona Pico.
+    pub fn source_label(&self) -> String {
+        match self.pico.persona {
+            Persona::Keyboard => "Keyboard".to_string(),
+            Persona::Controller => xinput::user_slot_label(self.source_slot),
+        }
     }
 }
 
@@ -195,7 +204,11 @@ pub async fn discover_picos(timeout: Duration) -> Result<Vec<PicoTarget>> {
         .context("collecting Pico discovery replies")?;
     Ok(found
         .into_iter()
-        .map(|(peer, info)| PicoTarget { peer, info })
+        .map(|(peer, info, persona)| PicoTarget {
+            peer,
+            info,
+            persona,
+        })
         .collect())
 }
 
@@ -261,7 +274,7 @@ pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> 
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP manual-IP probe socket")?;
-    let Some((peer, info)) = discovery::probe_ip(&socket, ip, timeout)
+    let Some((peer, info, persona)) = discovery::probe_ip(&socket, ip, timeout)
         .await
         .with_context(|| format!("probing Pico at {ip}:{}", protocol::PORT))?
     else {
@@ -278,7 +291,11 @@ pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> 
             protocol::PROTO_VERSION,
         );
     }
-    Ok(PicoTarget { peer, info })
+    Ok(PicoTarget {
+        peer,
+        info,
+        persona,
+    })
 }
 
 async fn recover_setup_usb_to_wifi(quiet: bool) -> Result<usize> {
@@ -658,6 +675,14 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
     }
 
     let mut runtime: Vec<RouteRuntime> = routes.into_iter().map(RouteRuntime::new).collect();
+    // Bring the injected-input keyboard hook up before the first tick so a
+    // keyboard route doesn't start with empty reports.
+    if runtime
+        .iter()
+        .any(|r| r.route.pico.persona == Persona::Keyboard)
+    {
+        keyboard::start_capture();
+    }
     let mut tick = interval(STREAM_TICK);
     tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut status = interval(Duration::from_secs(options.status_seconds.max(1)));
@@ -775,6 +800,7 @@ struct RouteRuntime {
     inbound_total: u64,
     last_inbound: Instant,
     last_state: GamepadState,
+    last_key: protocol::KeyboardReport,
     last_packet_number: Option<u32>,
     source_connected: bool,
     last_send_type: &'static str,
@@ -792,6 +818,7 @@ impl RouteRuntime {
             inbound_total: 0,
             last_inbound: Instant::now(),
             last_state: GamepadState::default(),
+            last_key: protocol::KeyboardReport::default(),
             last_packet_number: None,
             source_connected: false,
             last_send_type: "heartbeat",
@@ -801,6 +828,19 @@ impl RouteRuntime {
     }
 
     async fn send_tick(&mut self, socket: &UdpSocket) -> std::io::Result<()> {
+        let packet = match self.route.pico.persona {
+            Persona::Controller => self.next_controller_packet(),
+            Persona::Keyboard => self.next_keyboard_packet(),
+        };
+        self.seq = self.seq.wrapping_add(1);
+        socket
+            .send_to(&packet.encode(), self.route.pico.peer)
+            .await?;
+        self.sent_total += 1;
+        Ok(())
+    }
+
+    fn next_controller_packet(&mut self) -> Packet {
         let source = xinput::read_slot(self.route.source_slot);
         let (state, packet_number, connected) = match source {
             Some(snapshot) => (snapshot.state, Some(snapshot.packet_number), true),
@@ -817,15 +857,29 @@ impl RouteRuntime {
             self.last_send_type = "heartbeat";
             Packet::heartbeat(self.seq, flags, state)
         };
-        self.seq = self.seq.wrapping_add(1);
-        socket
-            .send_to(&packet.encode(), self.route.pico.peer)
-            .await?;
-        self.sent_total += 1;
         self.last_state = state;
         self.last_packet_number = packet_number;
         self.source_connected = connected;
-        Ok(())
+        packet
+    }
+
+    fn next_keyboard_packet(&mut self) -> Packet {
+        let report = keyboard::read_keyboard();
+        // The host keyboard is always present in the Parsec model, so the
+        // first tick is "changed" and the source is always advertised as
+        // connected. Unchanged ticks still send a heartbeat so the
+        // firmware watchdog stays fed.
+        let changed = !self.source_connected || report != self.last_key;
+        let packet = if changed {
+            self.last_send_type = "keys";
+            Packet::key_state(self.seq, FLAG_PARSEC_CONNECTED, report)
+        } else {
+            self.last_send_type = "key-heartbeat";
+            Packet::key_heartbeat(self.seq, FLAG_PARSEC_CONNECTED, report)
+        };
+        self.last_key = report;
+        self.source_connected = true;
+        packet
     }
 }
 
@@ -887,9 +941,35 @@ fn print_status(routes: &mut [RouteRuntime]) {
         } else {
             "waiting for source"
         };
+        let detail = match route.route.pico.persona {
+            Persona::Controller => format!(
+                "buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
+                route.last_state.buttons,
+                route.last_state.left_trigger,
+                route.last_state.right_trigger,
+                route.last_state.left_x,
+                route.last_state.left_y,
+                route.last_state.right_x,
+                route.last_state.right_y,
+            ),
+            Persona::Keyboard => {
+                let keys: Vec<String> = route
+                    .last_key
+                    .keys
+                    .iter()
+                    .filter(|&&k| k != 0)
+                    .map(|k| format!("0x{k:02X}"))
+                    .collect();
+                format!(
+                    "mods=0x{:02X} keys=[{}]",
+                    route.last_key.modifiers,
+                    keys.join(" ")
+                )
+            }
+        };
         println!(
-            "  {} -> {} | {} | out +{} total {} | in {} ({}) | {} buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
-            xinput::user_slot_label(route.route.source_slot),
+            "  {} -> {} | {} | out +{} total {} | in {} ({}) | {} {}",
+            route.route.source_label(),
             route.route.pico.uid_hex(),
             source_state,
             sent_delta,
@@ -897,13 +977,7 @@ fn print_status(routes: &mut [RouteRuntime]) {
             route.inbound_total,
             peer_state,
             route.last_send_type,
-            route.last_state.buttons,
-            route.last_state.left_trigger,
-            route.last_state.right_trigger,
-            route.last_state.left_x,
-            route.last_state.left_y,
-            route.last_state.right_x,
-            route.last_state.right_y,
+            detail,
         );
         if route.inbound_total == 0 && route.sent_total > 180 && !route.recovery_hint_printed {
             println!(
@@ -1028,6 +1102,7 @@ mod tests {
                 uptime_seconds: 12,
                 unique_id_short: uid,
             },
+            persona: Persona::Controller,
         }
     }
 

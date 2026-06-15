@@ -2,11 +2,12 @@
 
 #include <stdbool.h>
 
+#include "boot_mode_policy.h"
 #include "reset_reason.h"
 
 typedef enum {
     BOOT_MODE_SETUP = 0, // CDC, no Wi-Fi
-    BOOT_MODE_RUN = 1,   // XInput, Wi-Fi
+    BOOT_MODE_RUN = 1,   // XInput or keyboard, Wi-Fi
 } boot_mode_t;
 
 // Decide which mode to boot into. Reads reset context from `rr`
@@ -20,6 +21,12 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr);
 
 // What was decided. Stable for the rest of the boot.
 boot_mode_t boot_mode_current(void);
+
+// Which USB device run mode presents, latched from the stored persona
+// byte when boot_mode_decide() selects BOOT_MODE_RUN. Always
+// RUN_PERSONA_CONTROLLER in setup mode. Stable for the rest of the boot,
+// so the descriptor callbacks and the run loop can read it freely.
+run_persona_t boot_mode_run_persona(void);
 
 // True if BOOTSEL was pressed at the moment boot_mode_decide() ran.
 // Used by boot_mode_post_enum_bootsel_poll() to finish the setup-mode

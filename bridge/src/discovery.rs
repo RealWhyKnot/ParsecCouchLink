@@ -18,7 +18,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
-use crate::protocol::{self, AckInfo, Packet, PacketKind};
+use crate::protocol::{self, AckInfo, Packet, PacketKind, Persona};
 
 const BROADCAST_INTERVAL: Duration = Duration::from_secs(1);
 const UNICAST_INTERVAL: Duration = Duration::from_millis(500);
@@ -26,7 +26,7 @@ const UNICAST_INTERVAL: Duration = Duration::from_millis(500);
 pub async fn collect(
     socket: &UdpSocket,
     duration: Duration,
-) -> std::io::Result<Vec<(SocketAddr, AckInfo)>> {
+) -> std::io::Result<Vec<(SocketAddr, AckInfo, Persona)>> {
     socket.set_broadcast(true)?;
     let broadcast_addr = SocketAddr::V4(SocketAddrV4::new(
         std::net::Ipv4Addr::BROADCAST,
@@ -57,7 +57,7 @@ pub async fn collect(
     }
     drop(rx_tx);
 
-    let mut found = BTreeMap::<u32, (SocketAddr, AckInfo)>::new();
+    let mut found = BTreeMap::<u32, (SocketAddr, AckInfo, Persona)>::new();
     let mut seq: u8 = 0;
     let mut tick = interval(BROADCAST_INTERVAL);
     let mut main_buf = [0u8; 64];
@@ -76,14 +76,14 @@ pub async fn collect(
                 }
             }
             r = socket.recv_from(&mut main_buf) => {
-                if let Some((peer, info)) = handle_recv("main", r, &main_buf) {
-                    found.entry(info.unique_id_short).or_insert((peer, info));
+                if let Some((peer, info, persona)) = handle_recv("main", r, &main_buf) {
+                    found.entry(info.unique_id_short).or_insert((peer, info, persona));
                 }
             }
             iface_msg = rx_rx.recv() => {
                 let Some((label, n, peer, buf)) = iface_msg else { continue };
-                if let Some((peer, info)) = handle_recv(&label, Ok((n, peer)), &buf) {
-                    found.entry(info.unique_id_short).or_insert((peer, info));
+                if let Some((peer, info, persona)) = handle_recv(&label, Ok((n, peer)), &buf) {
+                    found.entry(info.unique_id_short).or_insert((peer, info, persona));
                 }
             }
             _ = &mut deadline => break,
@@ -109,7 +109,7 @@ pub async fn probe_ip(
     socket: &UdpSocket,
     ip: IpAddr,
     duration: Duration,
-) -> std::io::Result<Option<(SocketAddr, AckInfo)>> {
+) -> std::io::Result<Option<(SocketAddr, AckInfo, Persona)>> {
     let target = SocketAddr::new(ip, protocol::PORT);
     let mut seq: u8 = 0;
     let mut tick = interval(UNICAST_INTERVAL);
@@ -125,11 +125,11 @@ pub async fn probe_ip(
                 socket.send_to(&pkt.encode(), target).await?;
             }
             r = socket.recv_from(&mut buf) => {
-                let Some((peer, info)) = handle_recv("manual-ip", r, &buf) else {
+                let Some((peer, info, persona)) = handle_recv("manual-ip", r, &buf) else {
                     continue;
                 };
                 if peer.ip() == ip {
-                    return Ok(Some((peer, info)));
+                    return Ok(Some((peer, info, persona)));
                 }
                 tracing::debug!("discovery(manual-ip): ignoring reply from non-target {peer}");
             }
@@ -142,13 +142,13 @@ fn handle_recv(
     src_label: &str,
     r: std::io::Result<(usize, SocketAddr)>,
     buf: &[u8; 64],
-) -> Option<(SocketAddr, AckInfo)> {
+) -> Option<(SocketAddr, AckInfo, Persona)> {
     match r {
         Ok((n, peer)) => match Packet::decode(&buf[..n]) {
             Ok(pkt) => {
                 if let PacketKind::Ack(info) = pkt.kind {
                     tracing::trace!("discovery: ack received via {src_label} from {peer}");
-                    Some((peer, info))
+                    Some((peer, info, Persona::from_ack_flags(pkt.flags)))
                 } else {
                     tracing::debug!("discovery({src_label}): non-ack packet from {peer}, ignoring");
                     None

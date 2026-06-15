@@ -1224,6 +1224,7 @@ mod tests {
                 uptime_seconds: 12,
                 unique_id_short: uid,
             },
+            persona: protocol::Persona::Controller,
         }
     }
 

@@ -4,15 +4,15 @@ This page is for maintainers. Normal users should start with [[Quick Start]].
 
 Parsec CouchLink has two small protocols:
 
-- Runtime UDP over Wi-Fi while the bridge is streaming controller state.
+- Runtime UDP over Wi-Fi while the bridge is streaming controller or keyboard state.
 - USB-CDC setup mode while Wi-Fi credentials are being provisioned.
 
 ## Runtime UDP
 
 - Port: UDP 4242.
-- Packet size: controller, heartbeat, discovery, and diagnostic request packets are 17 bytes. Diagnostic replies can be larger.
+- Packet size: controller, keyboard, heartbeat, discovery, and diagnostic request packets are 17 bytes. Diagnostic replies can be larger.
 - Addressing: the bridge broadcasts discovery, then sends unicast to the Pico.
-- Watchdog: if the Pico has not received a valid packet for 100 ms, it outputs a neutral controller state.
+- Watchdog: if the Pico has not received a valid packet for 100 ms, it outputs a neutral state (controller centred / all keys released).
 
 Packet types:
 
@@ -23,14 +23,17 @@ Packet types:
 | `0x03` | Discovery broadcast from the bridge. |
 | `0x04` | Pico ack with firmware and board identity. |
 | `0x05` | `GET_LOG` -- bridge requests the firmware diagnostic ring. Same 17-byte shape as the others; body is reserved. |
-| `0x06` | `GET_USB_DIAG` -- bridge requests current run-mode USB/XInput status. Same 17-byte request shape as the others; body is reserved. |
+| `0x06` | `GET_USB_DIAG` -- bridge requests current run-mode USB status. Same 17-byte request shape as the others; body is reserved. |
 | `0x07` | `REBOOT_TO_SETUP` -- bridge asks run-mode firmware to reboot into setup-mode USB-CDC so Wi-Fi can be changed. Same 17-byte request shape as the others; body is reserved. |
+| `0x08` | `KEY_STATE` -- keyboard report for the keyboard persona. The 8-byte USB HID boot report sits in the first 8 body bytes: modifier bitmap, reserved, then six key usage codes. |
+| `0x09` | `KEY_HEARTBEAT` -- keyboard heartbeat, sent when the report is unchanged so the firmware watchdog stays fed. |
+| `0x0A` | `SET_PERSONA` -- bridge asks run-mode firmware to persist a USB persona and reboot into it. `body[0]` is the persona (`0` = controller, `1` = keyboard). Ignored if the Pico is already in that persona. |
 | `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
-| `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, XInput IN/OUT counters, recent timestamps, and CRC-16. |
+| `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, IN/OUT report counters, recent timestamps, and CRC-16. |
 
-The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body.
+The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body. Keyboard packets carry a standard USB HID boot-keyboard report, so a Pico in the keyboard persona only processes `KEY_STATE`/`KEY_HEARTBEAT` and a Pico in the controller persona only processes `STATE`/`HEARTBEAT`; the bridge sends whichever matches the persona the Pico advertised in its ack.
 
-Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`; bit 2 (`REBOOT_TO_SETUP_SUPPORTED`) means it accepts `REBOOT_TO_SETUP`. Older firmware leaves these flags clear, and the bridge gates diagnostic pulls accordingly.
+Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`; bit 2 (`REBOOT_TO_SETUP_SUPPORTED`) means it accepts `REBOOT_TO_SETUP`; bit 3 (`KEYBOARD_PERSONA`) means the Pico is currently presenting the USB keyboard and accepts `SET_PERSONA` plus the keyboard packet types. Older firmware leaves these flags clear, and the bridge gates behaviour accordingly.
 
 ## USB-CDC Setup
 
@@ -80,6 +83,11 @@ The bridge's `couchlink bundle` tries CDC, vendor control, and UDP in order; the
 
 ## USB Runtime Persona
 
-In run mode, the Pico presents itself as a wired Xbox 360 controller. Setup mode and run mode use different USB IDs so Windows does not reuse the wrong driver binding across modes.
+In run mode, the Pico presents one of two USB devices, chosen by a persona byte stored alongside the Wi-Fi credentials in flash:
 
-Run-mode firmware also tracks what the USB host did after the Pico joined Wi-Fi. `couchlink test usb --all` asks the Pico over UDP whether the USB host completed configuration, whether the XInput IN endpoint has accepted reports, and whether any host OUT traffic such as rumble or LED commands has arrived. The Pico cannot read the adapter's UI or driver name, but these counters distinguish the useful cases: no USB traffic, enumeration started but not configured, configured but not polling, polling XInput, and polling plus OUT traffic.
+- **Controller** (default): a wired Xbox 360 controller (`0x045E:0x028E`, vendor class for `xusb22.sys`).
+- **Keyboard**: a standard USB HID boot keyboard (`0x2E8A:0xCAF1`), for console games that need a keyboard such as Typing of the Dead on the Dreamcast.
+
+Only one persona is presented at a time. Because the USB descriptors are fixed at boot, switching persona persists the new value and reboots the board. The Pico lives plugged into the console rather than the host, so the switch happens over Wi-Fi: `couchlink keyboard` / `couchlink controller` send a `SET_PERSONA` request, then wait for the board to rejoin Wi-Fi advertising the new persona. A record written before personas existed reads back as the controller default, so existing boards keep working without re-provisioning. Setup mode and both run-mode personas use different USB IDs so Windows does not reuse the wrong driver binding across modes.
+
+Run-mode firmware also tracks what the USB host did after the Pico joined Wi-Fi. `couchlink test usb --all` asks the Pico over UDP whether the USB host completed configuration, whether the IN endpoint has accepted reports, and whether any host OUT traffic (controller rumble/LED, or keyboard LED-lock reports) has arrived. The Pico cannot read the adapter's UI or driver name, but these counters distinguish the useful cases: no USB traffic, enumeration started but not configured, configured but not polling, polling, and polling plus OUT traffic. The report counters and verdicts are labelled for the active persona (XInput or HID keyboard).

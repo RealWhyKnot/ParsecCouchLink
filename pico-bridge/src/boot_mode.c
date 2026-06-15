@@ -12,7 +12,18 @@
 #include "diag_log.h"
 #include "reset_reason.h"
 
+// The persona byte stored in flash is the run_persona_t value directly;
+// boot_mode_persona_from_flash() relies on this so it can stay free of a
+// flash_creds.h dependency (and thus host-compilable for unit tests).
+_Static_assert((int)FLASH_PERSONA_CONTROLLER == (int)RUN_PERSONA_CONTROLLER &&
+                   (int)FLASH_PERSONA_KEYBOARD == (int)RUN_PERSONA_KEYBOARD,
+               "flash persona byte values must match run_persona_t");
+
 static boot_mode_t current = BOOT_MODE_SETUP;
+
+// USB persona for run mode, latched alongside `current` when a RUN
+// decision is made. Setup mode leaves it at the controller default.
+static run_persona_t run_persona = RUN_PERSONA_CONTROLLER;
 
 // t=0 BOOTSEL state, latched by boot_mode_decide().
 static bool bootsel_at_boot = false;
@@ -67,6 +78,7 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
             diag_log_printf("boot: credentials found (ssid_len=%u, gen=%u); entering run mode",
                             (unsigned)rec.ssid_len, (unsigned)rec.generation);
             current = BOOT_MODE_RUN;
+            run_persona = boot_mode_persona_from_flash(true, rec.usb_persona);
         } else {
             diag_log_msg("boot: no valid credentials; entering setup mode");
             current = BOOT_MODE_SETUP;
@@ -91,6 +103,7 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
                             (unsigned)rec.ssid_len, (unsigned)rec.generation);
             bootsel_at_boot = false;
             current = BOOT_MODE_RUN;
+            run_persona = boot_mode_persona_from_flash(true, rec.usb_persona);
         } else {
             diag_log_msg("boot: BOOTSEL at boot with no credentials -- entering setup mode");
             current = BOOT_MODE_SETUP;
@@ -102,6 +115,7 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
         diag_log_printf("boot: credentials found (ssid_len=%u, gen=%u); entering run mode",
                         (unsigned)rec.ssid_len, (unsigned)rec.generation);
         current = BOOT_MODE_RUN;
+        run_persona = boot_mode_persona_from_flash(true, rec.usb_persona);
     } else {
         diag_log_msg("boot: no valid credentials; entering setup mode");
         current = BOOT_MODE_SETUP;
@@ -111,6 +125,10 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
 
 boot_mode_t boot_mode_current(void) {
     return current;
+}
+
+run_persona_t boot_mode_run_persona(void) {
+    return run_persona;
 }
 
 bool boot_mode_bootsel_at_boot(void) {

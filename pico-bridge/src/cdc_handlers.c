@@ -75,11 +75,13 @@ static size_t handle_set_wifi(const cdc_frame_view_t *req, uint8_t *reply, size_
     memcpy(rec.ssid, &req->payload[1], ssid_len);
     memcpy(rec.password, &req->payload[1 + ssid_len + 1], pass_len);
 
-    // Preserve device_name across re-provisioning if there was one.
+    // Preserve device_name and the chosen USB persona across
+    // re-provisioning if there was a prior record.
     flash_creds_t prev;
     if (flash_creds_load(&prev)) {
         rec.name_len = prev.name_len;
         memcpy(rec.device_name, prev.device_name, FLASH_CREDS_NAME_MAX);
+        rec.usb_persona = prev.usb_persona;
     }
 
     int rc = flash_creds_store(&rec);

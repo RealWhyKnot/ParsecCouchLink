@@ -23,6 +23,8 @@
 #include "flash_creds.h"
 #include "gamepad_state.h"
 #include "heartbeat.h"
+#include "hid_kbd.h"
+#include "keyboard_state.h"
 #include "net_udp.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
@@ -32,6 +34,7 @@
 #include "xinput.h"
 
 volatile gamepad_state_t g_gamepad_state = {0};
+volatile keyboard_state_t g_keyboard_state = {0};
 volatile uint32_t g_last_packet_ms = 0;
 volatile uint8_t g_parsec_connected = 0;
 
@@ -177,7 +180,13 @@ static void run_mode_main_loop(void) {
     absolute_time_t badauth_since = get_absolute_time();
     bool badauth_armed = false;
 
-    xinput_init();
+    run_persona_t persona = boot_mode_run_persona();
+    if (persona == RUN_PERSONA_KEYBOARD) {
+        hid_kbd_init();
+        diag_log_msg("run: USB persona = HID keyboard");
+    } else {
+        xinput_init();
+    }
     watchdog_init();
     heartbeat_init();
     diag_log_msg("run: main loop");
@@ -236,7 +245,10 @@ static void run_mode_main_loop(void) {
             }
         }
 
-        xinput_task();
+        if (persona == RUN_PERSONA_KEYBOARD)
+            hid_kbd_task();
+        else
+            xinput_task();
         watchdog_tick();
         heartbeat_run_mode_task();
 

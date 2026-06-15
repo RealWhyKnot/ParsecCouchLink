@@ -1,10 +1,12 @@
 #pragma once
 
-// TinyUSB configuration. We host two different USB personas at runtime:
-//   - setup mode: CDC ACM under Raspberry Pi VID 0x2E8A / PID 0xCAF0
-//   - run mode:   wired Xbox 360 (XUSB, vendor class) under VID 0x045E / PID 0x028E
-// Only one mode is presented at a time. Both classes must be enabled so
-// the build includes the relevant TinyUSB code paths.
+// TinyUSB configuration. We host three different USB personas at runtime:
+//   - setup mode:          CDC ACM under Raspberry Pi VID 0x2E8A / PID 0xCAF0
+//   - run / controller:    wired Xbox 360 (XUSB, vendor class) VID 0x045E / PID 0x028E
+//   - run / keyboard:      USB HID boot keyboard under VID 0x2E8A / PID 0xCAF1
+// Only one persona is presented at a time, fixed at boot before
+// tusb_init(). Every class must be enabled so the build includes the
+// relevant TinyUSB code paths.
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,10 +28,11 @@ extern "C" {
 
 #define CFG_TUD_ENDPOINT0_SIZE 64
 
-// Class drivers. CDC for setup-mode provisioning; Vendor for XUSB.
+// Class drivers. CDC for setup-mode provisioning; Vendor for XUSB; HID
+// for the keyboard persona.
 #define CFG_TUD_CDC 1
 #define CFG_TUD_VENDOR 1
-#define CFG_TUD_HID 0
+#define CFG_TUD_HID 1
 #define CFG_TUD_MSC 0
 #define CFG_TUD_MIDI 0
 #define CFG_TUD_DFU 0
@@ -44,6 +47,11 @@ extern "C" {
 // XInput uses 20-byte interrupt-IN and 8-byte interrupt-OUT.
 #define CFG_TUD_VENDOR_RX_BUFSIZE 64
 #define CFG_TUD_VENDOR_TX_BUFSIZE 64
+
+// HID keyboard: canonical 8-byte boot report in, 1-byte LED report out.
+// Keep the endpoint at the standard boot-keyboard size of 8 so strict
+// HID hosts (and the Dreamcast adapter) see exactly what they expect.
+#define CFG_TUD_HID_EP_BUFSIZE 8
 
 #ifdef __cplusplus
 }
