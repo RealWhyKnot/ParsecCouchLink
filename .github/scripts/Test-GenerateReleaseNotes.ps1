@@ -171,7 +171,8 @@ Download `{zip-name}` and run setup.
             -Manifest $manifestPath `
             -SkipScrub) -join "`n"
 
-    Assert-Contains -Text $IntegrityNotes -Expected "SHA256: $zipSha"
+    Assert-NotContains -Text $IntegrityNotes -Unexpected "SHA256: $zipSha"
+    Assert-Contains -Text $IntegrityNotes -Expected 'ParsecCouchLink-v2026.5.3.0.integrity.tsv'
     Assert-Contains -Text $IntegrityNotes -Expected 'ParsecCouchLink-v2026.5.3.0.manifest.tsv'
     Assert-Contains -Text $IntegrityNotes -Expected '- **Changelog:** <https://github.com/RealWhyKnot/ParsecCouchLink/blob/main/CHANGELOG.md>'
     Assert-NotContains -Text $IntegrityNotes -Unexpected 'couchlink.exe                        '

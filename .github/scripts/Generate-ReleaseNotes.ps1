@@ -10,8 +10,7 @@
     1. Title (h1: "<repo> <tag>")
     2. What's Changed (auto-changelog from the commit slice between prev tag
        and this tag; bucketed by conventional-commit prefix)
-    3. File integrity (zip SHA256 line plus a pointer to the attached
-       manifest TSV asset)
+    3. File integrity (pointer to the attached integrity and manifest TSV assets)
     4. More (from .github/release-template/links.md, with token substitution)
     5. Install (fresh) (from .github/release-template/install.md)
     6. Uninstall (from .github/release-template/uninstall.md)
@@ -69,7 +68,7 @@
 
 .PARAMETER Manifest
   Path to the per-file manifest emitted by build.ps1 alongside the zip.
-  Tab-separated path, byte count, and sha256 rows. Used by the File
+  Tab-separated path, byte count, and sha256 rows. Referenced by the File
   integrity section.
   Required (along with -ZipPath, -ZipSize, -ZipSha256) for the File
   integrity section to render; otherwise that section is skipped.
@@ -563,18 +562,16 @@ if ($Repo -and $prevTag) {
 }
 
 # --- File integrity ---
-# Keep a bare SHA256 line in the body for scriptable checks. Per-file hashes
-# are published as the attached manifest TSV asset.
+# Release and per-file hashes are published as attached TSV assets.
 $includeIntegrity = $ZipPath -and $ZipSha256 -and $ZipSize -gt 0 -and $Manifest -and (Test-Path -LiteralPath $Manifest)
 if ($includeIntegrity) {
     $zipNameForLine = if ($zipNameToken) { $zipNameToken } else { Split-Path -Leaf $ZipPath }
+    $integrityName = $zipNameForLine -replace '\.zip$', '.integrity.tsv'
     $manifestName = Split-Path -Leaf $Manifest
-    [void]$sb.AppendLine()
-    [void]$sb.AppendLine("SHA256: $($ZipSha256.ToUpper())")
     [void]$sb.AppendLine()
     [void]$sb.AppendLine("## File integrity")
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine("Per-file SHA256 hashes are attached as ``$manifestName``.")
+    [void]$sb.AppendLine("Release SHA256 hashes are attached as ``$integrityName``. Package contents are listed in ``$manifestName``.")
 }
 elseif ($Manifest -or $ZipPath -or $ZipSha256) {
     Write-Host "::warning::File-integrity section skipped: -Manifest, -ZipPath, -ZipSize, and -ZipSha256 must all be set. Got Manifest='$Manifest' ZipPath='$ZipPath' ZipSize=$ZipSize ZipSha256='$ZipSha256'."

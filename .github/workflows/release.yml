@@ -145,10 +145,21 @@ jobs:
           $manifest = Get-ChildItem dist/ParsecCouchLink-v*.manifest.tsv | Select-Object -First 1
           if (-not $manifest) { throw "No release manifest found in dist/." }
           $sha = (Get-FileHash -LiteralPath $zip.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+          $manifestSha = (Get-FileHash -LiteralPath $manifest.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+          $integrityName = $zip.Name -replace '\.zip$', '.integrity.tsv'
+          $integrity = Join-Path $zip.DirectoryName $integrityName
+          $rows = @(
+            "path`tbytes`tsha256",
+            "$($zip.Name)`t$($zip.Length)`t$sha",
+            "$($manifest.Name)`t$($manifest.Length)`t$manifestSha"
+          )
+          [System.IO.File]::WriteAllLines($integrity, [string[]]$rows, [System.Text.UTF8Encoding]::new($false))
           "zip=$($zip.FullName)" >> $env:GITHUB_OUTPUT
           "zip_name=$($zip.Name)" >> $env:GITHUB_OUTPUT
           "zip_size=$($zip.Length)" >> $env:GITHUB_OUTPUT
           "manifest=$($manifest.FullName)" >> $env:GITHUB_OUTPUT
+          "integrity=$integrity" >> $env:GITHUB_OUTPUT
+          "integrity_name=$integrityName" >> $env:GITHUB_OUTPUT
           "sha256=$sha" >> $env:GITHUB_OUTPUT
 
       - name: Upload workflow artifact
@@ -157,6 +168,7 @@ jobs:
           name: ParsecCouchLink-release
           path: |
             ${{ steps.artifact.outputs.zip }}
+            ${{ steps.artifact.outputs.integrity }}
             ${{ steps.artifact.outputs.manifest }}
 
       - name: Publish GitHub release
@@ -168,6 +180,8 @@ jobs:
           ZIP_NAME: ${{ steps.artifact.outputs.zip_name }}
           ZIP_SIZE: ${{ steps.artifact.outputs.zip_size }}
           ZIP_SHA256: ${{ steps.artifact.outputs.sha256 }}
+          INTEGRITY_PATH: ${{ steps.artifact.outputs.integrity }}
+          INTEGRITY_NAME: ${{ steps.artifact.outputs.integrity_name }}
           MANIFEST_PATH: ${{ steps.artifact.outputs.manifest }}
         shell: pwsh
         run: |
@@ -193,7 +207,7 @@ jobs:
           # release that's missing assets.
           $extra = @('--draft')
           if ('${{ steps.version.outputs.is_beta }}' -eq 'true') { $extra += @('--prerelease','--latest=false') }
-          gh release create $env:TAG_NAME $env:ZIP_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath @extra
+          gh release create $env:TAG_NAME $env:ZIP_PATH $env:INTEGRITY_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath @extra
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }
 
           # Verify the assets actually attached (gh release create
@@ -203,7 +217,7 @@ jobs:
           $json = gh release view $env:TAG_NAME --json assets,isDraft
           if ($LASTEXITCODE -ne 0) { throw "gh release view failed (exit $LASTEXITCODE)" }
           $info = $json | ConvertFrom-Json
-          $expected = @($env:ZIP_NAME, [System.IO.Path]::GetFileName($env:MANIFEST_PATH))
+          $expected = @($env:ZIP_NAME, $env:INTEGRITY_NAME, [System.IO.Path]::GetFileName($env:MANIFEST_PATH))
           foreach ($e in $expected) {
               if (-not ($info.assets.name -contains $e)) {
                   throw "Asset '$e' did not attach to draft release $env:TAG_NAME -- leaving as draft for manual inspection."
