@@ -19,6 +19,7 @@
 #include "cdc_handlers.h"
 #include "cdc_proto.h"
 #include "diag_log.h"
+#include "dinput.h"
 #include "flash_creds.h"
 #include "gamepad_state.h"
 #include "heartbeat.h"
@@ -183,6 +184,9 @@ static void run_mode_main_loop(void) {
     if (persona == RUN_PERSONA_KEYBOARD) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
+    } else if (persona == RUN_PERSONA_DINPUT) {
+        dinput_init();
+        diag_log_msg("run: USB persona = 8BitDo Pro 2 D-Input");
     } else if (persona == RUN_PERSONA_MAPLE) {
         xinput_init();
         diag_log_msg("run: USB persona = XInput controller for Maple adapter");
@@ -250,6 +254,8 @@ static void run_mode_main_loop(void) {
 
         if (persona == RUN_PERSONA_KEYBOARD)
             hid_kbd_task();
+        else if (persona == RUN_PERSONA_DINPUT)
+            dinput_task();
         else
             xinput_task();
         watchdog_tick();
@@ -339,6 +345,9 @@ int main(void) {
             break;
         case RUN_PERSONA_MAPLE:
             persona_name = "Maple";
+            break;
+        case RUN_PERSONA_DINPUT:
+            persona_name = "DInput";
             break;
         }
     }

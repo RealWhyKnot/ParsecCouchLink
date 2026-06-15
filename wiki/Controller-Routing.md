@@ -77,6 +77,30 @@ Switch back to USB XInput controller mode with:
 
 Add `--no-stream` to change the persona without starting a stream. While streaming, Maple mode status still shows a controller source and the live XInput button/axis values because those are the values sent to the Maple-capable adapter.
 
+## DInput Mode
+
+DInput mode is for USB4MAPLE-style adapters that accept an 8BitDo Pro 2 in D-Input mode but do not accept the Pico's Xbox 360-compatible USB shape. It uses the same Parsec/XInput controller source as controller and Maple mode, then the Pico presents an 8BitDo Pro 2-style HID gamepad to the adapter.
+
+Switch a Pico to DInput mode and start streaming:
+
+```powershell
+.\couchlink.exe dinput
+```
+
+With several Picos, pick one:
+
+```powershell
+.\couchlink.exe dinput --pico 07D37EB6
+```
+
+Switch back to USB XInput controller mode with:
+
+```powershell
+.\couchlink.exe controller
+```
+
+Add `--no-stream` to change the persona without starting a stream. DInput mode is intentionally narrow: it mimics the 8BitDo Pro 2 D-Input report shape documented by USB4MAPLE users. Rumble is not supported in this mode.
+
 ### If the player's typing isn't reaching the game
 
 A few Parsec-side settings gate guest keyboard input:

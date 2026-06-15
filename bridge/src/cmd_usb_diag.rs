@@ -173,6 +173,7 @@ fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
         protocol::Persona::Controller => "XInput",
         protocol::Persona::Keyboard => "HID keyboard",
         protocol::Persona::Maple => "XInput (Maple mode)",
+        protocol::Persona::Dinput => "8BitDo Pro 2 DInput",
     };
     println!("  {}", usb_verdict(diag, device_label));
     println!(
@@ -316,6 +317,12 @@ mod tests {
     fn verdict_expects_xinput_reports_for_maple_mode() {
         let verdict = usb_verdict(&diag(true, false, false, true), "XInput (Maple mode)");
         assert!(verdict.contains("XInput (Maple mode) report"));
+    }
+
+    #[test]
+    fn verdict_uses_dinput_label() {
+        let verdict = usb_verdict(&diag(true, false, false, true), "8BitDo Pro 2 DInput");
+        assert!(verdict.contains("8BitDo Pro 2 DInput report"));
     }
 
     #[test]

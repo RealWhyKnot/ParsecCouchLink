@@ -113,7 +113,9 @@ impl StreamRoute {
     pub fn source_label(&self) -> String {
         match self.pico.persona {
             Persona::Keyboard => "Keyboard".to_string(),
-            Persona::Controller | Persona::Maple => xinput::user_slot_label(self.source_slot),
+            Persona::Controller | Persona::Maple | Persona::Dinput => {
+                xinput::user_slot_label(self.source_slot)
+            }
         }
     }
 }
@@ -829,7 +831,7 @@ impl RouteRuntime {
 
     async fn send_tick(&mut self, socket: &UdpSocket) -> std::io::Result<()> {
         let packet = match self.route.pico.persona {
-            Persona::Controller | Persona::Maple => self.next_controller_packet(),
+            Persona::Controller | Persona::Maple | Persona::Dinput => self.next_controller_packet(),
             Persona::Keyboard => self.next_keyboard_packet(),
         };
         self.seq = self.seq.wrapping_add(1);
@@ -942,7 +944,7 @@ fn print_status(routes: &mut [RouteRuntime]) {
             "waiting for source"
         };
         let detail = match route.route.pico.persona {
-            Persona::Controller | Persona::Maple => format!(
+            Persona::Controller | Persona::Maple | Persona::Dinput => format!(
                 "buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
                 route.last_state.buttons,
                 route.last_state.left_trigger,

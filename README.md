@@ -2,9 +2,9 @@
 
 Parsec CouchLink lets a remote Parsec player use a real retro console as player 2.
 
-The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a wired Xbox 360 controller to a USB-to-console adapter such as USB4MAPLE.
+The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a USB controller to a console adapter such as USB4MAPLE.
 
-For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, for one -- the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For Dreamcast Maple adapters that accept Xbox 360 controllers, `couchlink.exe maple` keeps a separate Maple-labelled mode while presenting the same wired Xbox 360 USB shape. See [Controller Routing](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Controller-Routing) for keyboard and Maple modes.
+For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, for one -- the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For Dreamcast Maple adapters, `couchlink.exe maple` keeps a Maple-labelled Xbox 360-compatible mode, and `couchlink.exe dinput` presents an experimental 8BitDo Pro 2 D-Input HID gamepad shape for adapters that accept DInput. See [Controller Routing](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Controller-Routing) for keyboard, Maple, and DInput modes.
 
 **[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases)** | **[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
 
@@ -16,7 +16,7 @@ For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, f
   - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- also fully supported
 - Micro-USB data cable
 - 2.4 GHz Wi-Fi name and password (both boards use a 2.4 GHz-only radio)
-- USB4MAPLE or another USB-to-console adapter that accepts a wired Xbox 360 controller
+- USB4MAPLE or another USB-to-console adapter that accepts Xbox 360/XInput or DInput-style USB controllers
 - The console and controller adapter you want to use
 
 ## Quick Start
@@ -58,6 +58,8 @@ Useful commands:
 .\couchlink.exe doctor
 .\couchlink.exe keyboard
 .\couchlink.exe controller
+.\couchlink.exe maple
+.\couchlink.exe dinput
 .\couchlink.exe logs --tail
 .\couchlink.exe configure-wifi
 .\couchlink.exe recover

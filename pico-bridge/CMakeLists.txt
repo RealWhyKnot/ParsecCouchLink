@@ -89,6 +89,8 @@ add_executable(pico_bridge
     src/cdc_handlers.c
     src/cdc_proto.c
     src/diag_log.c
+    src/dinput.c
+    src/dinput_report.c
     src/fault_handler.c
     src/flash_creds.c
     src/heartbeat.c

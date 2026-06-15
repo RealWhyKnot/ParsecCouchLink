@@ -27,6 +27,14 @@ target_include_directories(test_boot_mode_policy PRIVATE ${CMAKE_CURRENT_SOURCE_
 
 add_test(NAME boot_mode_policy COMMAND test_boot_mode_policy)
 
+add_executable(test_dinput_report
+    test_dinput_report.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/dinput_report.c
+)
+target_include_directories(test_dinput_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+add_test(NAME dinput_report COMMAND test_dinput_report)
+
 add_executable(test_maple_proto
     test_maple_proto.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/maple_proto.c

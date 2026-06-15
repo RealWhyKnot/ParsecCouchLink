@@ -1,10 +1,11 @@
 #pragma once
 
-// TinyUSB configuration. We host three different USB personas at runtime:
+// TinyUSB configuration. We host four different USB personas at runtime:
 //   - setup mode:          CDC ACM under Raspberry Pi VID 0x2E8A / PID 0xCAF0
 //   - run / controller:    wired Xbox 360 (XUSB, vendor class) VID 0x045E / PID 0x028E
 //   - run / keyboard:      USB HID boot keyboard under VID 0x2E8A / PID 0xCAF1
 //   - run / maple:         wired Xbox 360 (XUSB) for Dreamcast Maple adapters
+//   - run / dinput:        8BitDo Pro 2 D-Input HID under VID 0x2DC8 / PID 0x6003
 // Only one persona is presented at a time, fixed at boot before
 // tusb_init(). Every class must be enabled so the build includes the
 // relevant TinyUSB code paths.
@@ -49,10 +50,10 @@ extern "C" {
 #define CFG_TUD_VENDOR_RX_BUFSIZE 64
 #define CFG_TUD_VENDOR_TX_BUFSIZE 64
 
-// HID keyboard: canonical 8-byte boot report in, 1-byte LED report out.
-// Keep the endpoint at the standard boot-keyboard size of 8 so strict
-// HID hosts (and the Dreamcast adapter) see exactly what they expect.
-#define CFG_TUD_HID_EP_BUFSIZE 8
+// HID runtime personas share one TinyUSB HID class instance. The boot
+// keyboard sends 8-byte reports; the 8BitDo Pro 2 D-Input persona sends
+// an 11-byte report including TinyUSB's prepended report ID.
+#define CFG_TUD_HID_EP_BUFSIZE 16
 
 #ifdef __cplusplus
 }

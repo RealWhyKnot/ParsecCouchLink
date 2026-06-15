@@ -21,6 +21,7 @@ typedef enum {
     RUN_PERSONA_CONTROLLER = 0, // wired Xbox 360 / XInput (default)
     RUN_PERSONA_KEYBOARD = 1,   // USB HID boot keyboard
     RUN_PERSONA_MAPLE = 2,      // Xbox-compatible Dreamcast Maple adapter mode
+    RUN_PERSONA_DINPUT = 3,     // 8BitDo Pro 2 D-Input HID gamepad
 } run_persona_t;
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);
@@ -34,5 +35,5 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
 // True for runtime personas that present the wired Xbox 360 USB device
 // shape. Maple mode keeps a separate persisted label, but deliberately
 // matches this USB shape for Dreamcast Maple adapters that already
-// support Xbox 360 controllers.
+// support Xbox 360 controllers. DInput is HID and returns false.
 bool boot_mode_persona_uses_xinput_usb(run_persona_t persona);

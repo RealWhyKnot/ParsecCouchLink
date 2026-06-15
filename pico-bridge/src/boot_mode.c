@@ -17,7 +17,8 @@
 // flash_creds.h dependency (and thus host-compilable for unit tests).
 _Static_assert((int)FLASH_PERSONA_CONTROLLER == (int)RUN_PERSONA_CONTROLLER &&
                    (int)FLASH_PERSONA_KEYBOARD == (int)RUN_PERSONA_KEYBOARD &&
-                   (int)FLASH_PERSONA_MAPLE == (int)RUN_PERSONA_MAPLE,
+                   (int)FLASH_PERSONA_MAPLE == (int)RUN_PERSONA_MAPLE &&
+                   (int)FLASH_PERSONA_DINPUT == (int)RUN_PERSONA_DINPUT,
                "flash persona byte values must match run_persona_t");
 
 static boot_mode_t current = BOOT_MODE_SETUP;

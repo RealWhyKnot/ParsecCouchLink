@@ -76,9 +76,13 @@ pub const ACK_FLAG_KEYBOARD_PERSONA: u8 = 1 << 3;
 /// `TYPE_VERSION`.
 pub const ACK_FLAG_FULL_VERSION_SUPPORTED: u8 = 1 << 4;
 /// Set in the ACK flags byte when the Pico is presenting the Dreamcast
-/// Dreamcast Maple adapter persona. The bridge still streams normal
-/// controller STATE packets; the Pico presents Xbox 360-compatible USB.
+/// Maple adapter persona. The bridge still streams normal controller STATE
+/// packets; the Pico presents Xbox 360-compatible USB.
 pub const ACK_FLAG_MAPLE_PERSONA: u8 = 1 << 5;
+/// Set in the ACK flags byte when the Pico is presenting the 8BitDo Pro 2
+/// D-Input HID persona. The bridge still streams normal controller STATE
+/// packets; the Pico maps them into HID gamepad reports.
+pub const ACK_FLAG_DINPUT_PERSONA: u8 = 1 << 6;
 
 pub const USB_DIAG_WIRE_SIZE: usize = 78;
 pub const USB_DIAG_VERSION: u8 = 1;
@@ -140,6 +144,7 @@ pub enum Persona {
     Controller,
     Keyboard,
     Maple,
+    Dinput,
 }
 
 impl Persona {
@@ -147,6 +152,8 @@ impl Persona {
     pub fn from_ack_flags(flags: u8) -> Self {
         if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
             Persona::Keyboard
+        } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 {
+            Persona::Dinput
         } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 {
             Persona::Maple
         } else {
@@ -161,6 +168,7 @@ impl Persona {
             Persona::Controller => 0,
             Persona::Keyboard => 1,
             Persona::Maple => 2,
+            Persona::Dinput => 3,
         }
     }
 
@@ -169,6 +177,7 @@ impl Persona {
             Persona::Controller => "controller",
             Persona::Keyboard => "keyboard",
             Persona::Maple => "maple",
+            Persona::Dinput => "dinput",
         }
     }
 }
@@ -1075,12 +1084,25 @@ mod tests {
             Persona::Maple
         );
         assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_USB_DIAG_SUPPORTED),
+            Persona::Dinput
+        );
+        assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_MAPLE_PERSONA),
+            Persona::Keyboard
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA),
+            Persona::Dinput
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA),
             Persona::Keyboard
         );
         assert_eq!(Persona::Controller.flash_byte(), 0);
         assert_eq!(Persona::Keyboard.flash_byte(), 1);
         assert_eq!(Persona::Maple.flash_byte(), 2);
+        assert_eq!(Persona::Dinput.flash_byte(), 3);
     }
 
     #[test]

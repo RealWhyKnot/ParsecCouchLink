@@ -104,6 +104,9 @@ static const char *lwip_err_name(err_t e) {
 // consumes the same STATE packets and emits the same Xbox-compatible USB
 // reports as the controller persona.
 #define ACK_FLAG_MAPLE_PERSONA 0x20
+// Set when this Pico is currently in 8BitDo Pro 2 D-Input HID mode. It
+// consumes the same STATE packets and emits HID gamepad reports.
+#define ACK_FLAG_DINPUT_PERSONA 0x40
 
 #define USB_DIAG_WIRE_SIZE 78
 #define USB_DIAG_VERSION 1
@@ -196,6 +199,8 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
         ack_flags |= ACK_FLAG_KEYBOARD_PERSONA;
     if (boot_mode_run_persona() == RUN_PERSONA_MAPLE)
         ack_flags |= ACK_FLAG_MAPLE_PERSONA;
+    if (boot_mode_run_persona() == RUN_PERSONA_DINPUT)
+        ack_flags |= ACK_FLAG_DINPUT_PERSONA;
     buf[3] = ack_flags;
     // body[0..11]
     buf[4] = PICO_BRIDGE_UDP_PROTO_VERSION;
@@ -437,6 +442,8 @@ static void apply_set_persona(uint8_t persona) {
         want = FLASH_PERSONA_KEYBOARD;
     else if (persona == FLASH_PERSONA_MAPLE)
         want = FLASH_PERSONA_MAPLE;
+    else if (persona == FLASH_PERSONA_DINPUT)
+        want = FLASH_PERSONA_DINPUT;
 
     flash_creds_t rec;
     if (!flash_creds_load(&rec)) {

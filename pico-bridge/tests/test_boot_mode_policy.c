@@ -34,6 +34,7 @@ static void persona_defaults_to_controller_without_credentials(void) {
     // No credentials -> always controller, whatever byte happens to be there.
     // The stored byte equals the run_persona_t value (asserted in boot_mode.c).
     assert(boot_mode_persona_from_flash(false, RUN_PERSONA_KEYBOARD) == RUN_PERSONA_CONTROLLER);
+    assert(boot_mode_persona_from_flash(false, RUN_PERSONA_DINPUT) == RUN_PERSONA_CONTROLLER);
     assert(boot_mode_persona_from_flash(false, 0) == RUN_PERSONA_CONTROLLER);
 }
 
@@ -42,6 +43,7 @@ static void persona_reads_stored_byte_with_credentials(void) {
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_CONTROLLER) == RUN_PERSONA_CONTROLLER);
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_KEYBOARD) == RUN_PERSONA_KEYBOARD);
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_MAPLE) == RUN_PERSONA_MAPLE);
+    assert(boot_mode_persona_from_flash(true, RUN_PERSONA_DINPUT) == RUN_PERSONA_DINPUT);
 }
 
 static void persona_unknown_byte_falls_back_to_controller(void) {
@@ -54,6 +56,7 @@ static void maple_persona_uses_xinput_usb_shape(void) {
     assert(boot_mode_persona_uses_xinput_usb(RUN_PERSONA_CONTROLLER));
     assert(boot_mode_persona_uses_xinput_usb(RUN_PERSONA_MAPLE));
     assert(!boot_mode_persona_uses_xinput_usb(RUN_PERSONA_KEYBOARD));
+    assert(!boot_mode_persona_uses_xinput_usb(RUN_PERSONA_DINPUT));
 }
 
 int main(void) {

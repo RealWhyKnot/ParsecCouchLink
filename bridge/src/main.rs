@@ -129,6 +129,20 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
+    /// Switch a Pico to 8BitDo Pro 2 D-Input HID mode for USB4MAPLE adapters.
+    Dinput {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
     /// First-time setup wizard: flash the Pico, provision Wi-Fi, and check LAN discovery.
     Setup {
         /// Path to the .uf2 firmware to flash.
@@ -346,6 +360,11 @@ fn main() {
                 all,
                 no_stream,
             }) => cmd_persona::run(protocol::Persona::Maple, picos, all, !no_stream).await,
+            Some(Command::Dinput {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Dinput, picos, all, !no_stream).await,
             Some(Command::Setup { uf2 }) => cmd_setup::run(uf2).await,
             Some(Command::Doctor) => cmd_doctor::run().await,
             Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,
@@ -579,6 +598,25 @@ mod tests {
                 assert!(no_stream);
             }
             other => panic!("expected maple command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dinput_command_parses_target_and_no_stream() {
+        let cli = Cli::try_parse_from(["couchlink", "dinput", "--pico", "07D37EB6", "--no-stream"])
+            .unwrap();
+
+        match cli.command {
+            Some(Command::Dinput {
+                picos,
+                all,
+                no_stream,
+            }) => {
+                assert_eq!(picos, vec!["07D37EB6"]);
+                assert!(!all);
+                assert!(no_stream);
+            }
+            other => panic!("expected dinput command, got {other:?}"),
         }
     }
 }

@@ -4,6 +4,7 @@
 //   run / controller: wired Xbox 360 / XUSB (Microsoft VID 0x045E, PID 0x028E)
 //   run / keyboard:   USB HID boot keyboard (Raspberry Pi VID 0x2E8A, PID 0xCAF1)
 //   run / maple:      wired Xbox 360 / XUSB for Dreamcast Maple adapters
+//   run / dinput:     8BitDo Pro 2 D-Input HID gamepad (8BitDo VID 0x2DC8, PID 0x6003)
 //
 // Only one persona is presented at a time. main() calls boot_mode_decide()
 // before tusb_init(), so D+ is raised exactly once with the final mode
@@ -33,6 +34,9 @@
 
 #include "boot_mode.h"
 #include "diag_log.h"
+#include "dinput.h"
+#include "dinput_report.h"
+#include "hid_kbd.h"
 #include "usb_diag.h"
 #include "version.h"
 #include "xinput.h"
@@ -106,6 +110,28 @@ static const tusb_desc_device_t desc_device_keyboard = {
     .bNumConfigurations = 0x01,
 };
 
+// DInput persona: mimic the 8BitDo Pro 2 D-Input HID gamepad profile
+// that USB4MAPLE users have reported working. Class is declared at the
+// HID interface, with 8BitDo strings and VID/PID for adapter matching.
+static const tusb_desc_device_t desc_device_dinput = {
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = 0x00,
+    .bDeviceSubClass = 0x00,
+    .bDeviceProtocol = 0x00,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+
+    .idVendor = 0x2DC8,  // 8BitDo
+    .idProduct = 0x6003, // Pro 2 D-Input / Bluetooth USB profile
+    .bcdDevice = BCD_DEVICE_VERSION,
+
+    .iManufacturer = 0x01,
+    .iProduct = 0x02,
+    .iSerialNumber = 0x03,
+    .bNumConfigurations = 0x01,
+};
+
 uint8_t const *tud_descriptor_device_cb(void) {
     static volatile bool logged = false;
     usb_diag_note_device_descriptor();
@@ -115,9 +141,16 @@ uint8_t const *tud_descriptor_device_cb(void) {
     }
     if (boot_mode_current() != BOOT_MODE_RUN)
         return (uint8_t const *)&desc_device_cdc;
-    return (uint8_t const *)(boot_mode_persona_uses_xinput_usb(boot_mode_run_persona())
-                                 ? &desc_device_xinput
-                                 : &desc_device_keyboard);
+    switch (boot_mode_run_persona()) {
+    case RUN_PERSONA_DINPUT:
+        return (uint8_t const *)&desc_device_dinput;
+    case RUN_PERSONA_KEYBOARD:
+        return (uint8_t const *)&desc_device_keyboard;
+    case RUN_PERSONA_CONTROLLER:
+    case RUN_PERSONA_MAPLE:
+    default:
+        return (uint8_t const *)&desc_device_xinput;
+    }
 }
 
 // -------- setup mode: CDC + WinUSB diag configuration ------------------
@@ -230,13 +263,80 @@ static const uint8_t desc_configuration_keyboard[] = {
                        KBD_IN_EP_ADDR, CFG_TUD_HID_EP_BUFSIZE, 10),
 };
 
+// -------- run mode: 8BitDo Pro 2 D-Input configuration -----------------
+
+#define DINPUT_ITF_NUM 0
+#define DINPUT_IN_EP_ADDR 0x81
+
+static const uint8_t desc_hid_report_dinput[] = {
+    0x05, 0x01,             // Usage Page (Generic Desktop)
+    0x09, 0x05,             // Usage (Game Pad)
+    0xA1, 0x01,             // Collection (Application)
+    0x85, DINPUT_REPORT_ID, //   Report ID (0x03)
+
+    0x09, 0x39, //   Usage (Hat switch)
+    0x15, 0x00, //   Logical Minimum (0)
+    0x25, 0x0F, //   Logical Maximum (15; 0x0F = neutral)
+    0x35, 0x00, //   Physical Minimum (0)
+    0x46, 0x3B,
+    0x01,       //   Physical Maximum (315)
+    0x75, 0x08, //   Report Size (8)
+    0x95, 0x01, //   Report Count (1)
+    0x81, 0x42, //   Input (Data,Var,Abs,Null)
+
+    0x09, 0x30, //   Usage (X)
+    0x09, 0x31, //   Usage (Y)
+    0x09, 0x33, //   Usage (Rx)
+    0x09, 0x34, //   Usage (Ry)
+    0x09, 0x35, //   Usage (Rz = right trigger)
+    0x09, 0x32, //   Usage (Z = left trigger)
+    0x15, 0x00, //   Logical Minimum (0)
+    0x26, 0xFF,
+    0x00,       //   Logical Maximum (255)
+    0x75, 0x08, //   Report Size (8)
+    0x95, 0x06, //   Report Count (6)
+    0x81, 0x02, //   Input (Data,Var,Abs)
+
+    0x05, 0x09, //   Usage Page (Button)
+    0x19, 0x01, //   Usage Minimum (Button 1)
+    0x29, 0x10, //   Usage Maximum (Button 16)
+    0x15, 0x00, //   Logical Minimum (0)
+    0x25, 0x01, //   Logical Maximum (1)
+    0x75, 0x01, //   Report Size (1)
+    0x95, 0x10, //   Report Count (16)
+    0x81, 0x02, //   Input (Data,Var,Abs)
+
+    0x06, 0x00,
+    0xFF,       //   Usage Page (Vendor-defined)
+    0x09, 0x20, //   Usage (Battery byte)
+    0x15, 0x00, //   Logical Minimum (0)
+    0x25, 0x64, //   Logical Maximum (100)
+    0x75, 0x08, //   Report Size (8)
+    0x95, 0x01, //   Report Count (1)
+    0x81, 0x02, //   Input (Data,Var,Abs)
+
+    0xC0, // End Collection
+};
+
+#define DINPUT_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
+
+static const uint8_t desc_configuration_dinput[] = {
+    TUD_CONFIG_DESCRIPTOR(1, 1, 0, DINPUT_CONFIG_TOTAL_LEN, 0xA0, 100),
+    TUD_HID_DESCRIPTOR(DINPUT_ITF_NUM, 0, HID_ITF_PROTOCOL_NONE, sizeof(desc_hid_report_dinput),
+                       DINPUT_IN_EP_ADDR, CFG_TUD_HID_EP_BUFSIZE, 4),
+};
+
 // The config descriptor's wTotalLength (KBD_CONFIG_TOTAL_LEN) must equal
 // the bytes actually emitted, or the host stops parsing mid-descriptor.
 _Static_assert(sizeof(desc_configuration_keyboard) == KBD_CONFIG_TOTAL_LEN,
                "keyboard configuration descriptor length mismatch");
+_Static_assert(sizeof(desc_configuration_dinput) == DINPUT_CONFIG_TOTAL_LEN,
+               "DInput configuration descriptor length mismatch");
 // The boot keyboard IN report is 8 bytes; the endpoint buffer must hold it.
 _Static_assert(CFG_TUD_HID_EP_BUFSIZE >= 8,
                "CFG_TUD_HID_EP_BUFSIZE too small for the 8-byte boot keyboard report");
+_Static_assert(CFG_TUD_HID_EP_BUFSIZE >= DINPUT_WIRE_REPORT_LEN,
+               "CFG_TUD_HID_EP_BUFSIZE too small for the DInput report");
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
@@ -248,8 +348,16 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     }
     if (boot_mode_current() != BOOT_MODE_RUN)
         return desc_configuration_cdc;
-    return boot_mode_persona_uses_xinput_usb(boot_mode_run_persona()) ? desc_configuration_xinput
-                                                                      : desc_configuration_keyboard;
+    switch (boot_mode_run_persona()) {
+    case RUN_PERSONA_DINPUT:
+        return desc_configuration_dinput;
+    case RUN_PERSONA_KEYBOARD:
+        return desc_configuration_keyboard;
+    case RUN_PERSONA_CONTROLLER:
+    case RUN_PERSONA_MAPLE:
+    default:
+        return desc_configuration_xinput;
+    }
 }
 
 // -------- string descriptors --------------------------------------------
@@ -283,6 +391,13 @@ static const char *const string_desc_arr_xinput[] = {
     [STRID_SERIAL] = serial_str,
 };
 
+static const char *const string_desc_arr_dinput[] = {
+    [STRID_LANGID] = (const char[]){0x09, 0x04},
+    [STRID_MANUFACTURER] = "8BitDo",
+    [STRID_PRODUCT] = "8BitDo Pro 2",
+    [STRID_SERIAL] = serial_str,
+};
+
 static uint16_t string_buf[33]; // descriptor type + length prefix + up to 31 chars
 
 uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
@@ -301,13 +416,19 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     }
 
     // XInput-backed run personas need the Microsoft-y strings that keep
-    // xusb22.sys happy. The keyboard persona uses the default CouchLink
-    // strings, same as setup mode.
-    bool xinput = (boot_mode_current() == BOOT_MODE_RUN) &&
-                  boot_mode_persona_uses_xinput_usb(boot_mode_run_persona());
-    const char *const *arr = xinput ? string_desc_arr_xinput : string_desc_arr;
-    size_t arr_count = xinput ? (sizeof(string_desc_arr_xinput) / sizeof(string_desc_arr_xinput[0]))
-                              : (sizeof(string_desc_arr) / sizeof(string_desc_arr[0]));
+    // xusb22.sys happy. DInput mimics an 8BitDo Pro 2. The keyboard
+    // persona uses the default CouchLink strings, same as setup mode.
+    const char *const *arr = string_desc_arr;
+    size_t arr_count = sizeof(string_desc_arr) / sizeof(string_desc_arr[0]);
+    if (boot_mode_current() == BOOT_MODE_RUN) {
+        if (boot_mode_persona_uses_xinput_usb(boot_mode_run_persona())) {
+            arr = string_desc_arr_xinput;
+            arr_count = sizeof(string_desc_arr_xinput) / sizeof(string_desc_arr_xinput[0]);
+        } else if (boot_mode_run_persona() == RUN_PERSONA_DINPUT) {
+            arr = string_desc_arr_dinput;
+            arr_count = sizeof(string_desc_arr_dinput) / sizeof(string_desc_arr_dinput[0]);
+        }
+    }
 
     if (index >= arr_count)
         return NULL;
@@ -351,40 +472,39 @@ void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes) {
     usb_diag_note_xinput_in_sent(sent_bytes);
 }
 
-// -------- HID keyboard glue (keyboard persona only) --------------------
+// -------- HID glue (keyboard and DInput personas only) -----------------
 //
 // These callbacks are part of the HID class driver and are linked in for
-// every persona (CFG_TUD_HID is always 1), but only fire while the
-// keyboard configuration is the active one. The IN report path lives in
-// hid_kbd.c; here we satisfy the descriptor request and the host's
+// every persona (CFG_TUD_HID is always 1), but only fire while a HID
+// configuration is active. IN report paths live in hid_kbd.c and
+// dinput.c; here we satisfy the descriptor request and the host's
 // control transfers, and fold report activity into the shared usb_diag
-// counters so `couchlink test usb` reports keyboard traffic too.
+// counters so `couchlink test usb` reports HID traffic too.
 
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
     (void)instance;
-    return desc_hid_report_keyboard;
+    return boot_mode_run_persona() == RUN_PERSONA_DINPUT ? desc_hid_report_dinput
+                                                         : desc_hid_report_keyboard;
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
                                uint8_t *buffer, uint16_t reqlen) {
-    // We never source input/feature reports over the control pipe; the
-    // boot report is delivered on the interrupt endpoint from hid_kbd.c.
     (void)instance;
-    (void)report_id;
-    (void)report_type;
-    (void)buffer;
-    (void)reqlen;
+    if (boot_mode_run_persona() == RUN_PERSONA_DINPUT && report_type == HID_REPORT_TYPE_INPUT &&
+        report_id == DINPUT_REPORT_ID) {
+        return dinput_get_report_payload(buffer, reqlen);
+    }
+    // Keyboard input reports are delivered on the interrupt endpoint
+    // from hid_kbd.c; unsupported control-pipe reads are stalled.
     return 0;
 }
 
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
                            uint8_t const *buffer, uint16_t bufsize) {
-    // The host's keyboard-LED state (Caps/Num/Scroll Lock) arrives as a
-    // 1-byte OUTPUT report. We don't drive LEDs; note it for diag (so the
-    // OUT-activity bit lights up just like the XInput rumble path) and
-    // discard.
     (void)instance;
     (void)report_id;
+    // Keyboard LEDs and any DInput output reports are ignored, but noted
+    // so OUT-activity diagnostics still light up.
     if (report_type == HID_REPORT_TYPE_OUTPUT && bufsize >= 1) {
         usb_diag_note_xinput_out(buffer, bufsize);
     }
@@ -549,12 +669,16 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
 void tud_mount_cb(void) {
     usb_diag_note_mount();
     xinput_note_usb_reset();
+    hid_kbd_note_usb_reset();
+    dinput_note_usb_reset();
     diag_log_msg("usb_init: tud_mount_cb -- enumeration complete");
 }
 
 void tud_umount_cb(void) {
     usb_diag_note_umount();
     xinput_note_usb_reset();
+    hid_kbd_note_usb_reset();
+    dinput_note_usb_reset();
     diag_log_msg("usb: unmounted (host disconnected or bus reset)");
 }
 

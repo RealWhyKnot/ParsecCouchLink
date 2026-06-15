@@ -11,7 +11,7 @@ This is the path for a new Pico user starting from a release zip.
   - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- equivalent and fully supported.
 - Micro-USB data cable. Charge-only cables will fail.
 - 2.4 GHz Wi-Fi name and password. Both Pico variants use the CYW43439 radio, which is 2.4 GHz only -- 5 GHz-only networks won't work.
-- USB4MAPLE or another USB-to-console adapter that accepts a wired Xbox 360 controller.
+- USB4MAPLE or another USB-to-console adapter that accepts Xbox 360/XInput or DInput-style USB controllers.
 
 ## Install
 

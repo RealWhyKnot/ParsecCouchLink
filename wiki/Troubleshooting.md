@@ -222,8 +222,8 @@ The result tells you where USB stopped:
 
 - `Pico sees no USB host enumeration traffic`: check cable, adapter power, and port.
 - `started enumeration but did not configure`: the host read descriptors but did not accept the device.
-- `configured, but the host has not accepted an XInput report`: unplug and replug the Pico, then update firmware if it repeats.
-- `host is polling the XInput endpoint`: the adapter accepted the Pico as a controller. Some adapters do not send rumble or LED OUT traffic until a game starts.
+- `configured, but the host has not accepted a <persona> report`: unplug and replug the Pico, then update firmware if it repeats.
+- `host is polling the <persona> endpoint`: the adapter accepted the Pico as a controller. Some adapters do not send rumble, LED, or output traffic until a game starts.
 
 On a development bench where the Pico is plugged into the Windows host, use
 [[Hardware Lab]] for repeatable reconnect checks. `couchlink lab --scenario full
