@@ -234,7 +234,7 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     // Logs: last 3 couchlink.*.log (bridge, written by tracing-appender's
     // daily rotation as couchlink.YYYY-MM-DD.log) and last 3 setup-*.log
-    // (PowerShell transcripts from setup.ps1 / the wrapper scripts).
+    // (PowerShell transcripts from setup.ps1).
     // The bridge prefix was previously "couchlink-" which never matched
     // tracing-appender's actual filename format and silently produced
     // bundles with zero bridge logs.

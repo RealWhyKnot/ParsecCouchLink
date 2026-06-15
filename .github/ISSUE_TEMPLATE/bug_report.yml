@@ -12,8 +12,8 @@ body:
 
         Before opening: run `.\couchlink.exe bundle` and drag the
         resulting `couchlink-bundle-*.zip` into the comment box at
-        the bottom. The bundle has logs, doctor output, and (if
-        the Pico is in setup mode) firmware diagnostics. It does
+        the bottom. The bundle has logs, doctor output, USB state,
+        and firmware diagnostics when the Pico is reachable. It does
         NOT contain your Wi-Fi password.
 
   - type: input
@@ -59,7 +59,7 @@ body:
     id: command
     attributes:
       label: What did you run?
-      placeholder: ".\\setup.ps1   /   .\\couchlink.exe doctor   /   ..."
+      placeholder: ".\\setup.ps1   /   .\\couchlink.exe doctor   /   .\\couchlink.exe debug   /   ..."
     validations:
       required: true
 

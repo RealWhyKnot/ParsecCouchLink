@@ -23,6 +23,10 @@ dist\ParsecCouchLink\couchlink.exe
 dist\ParsecCouchLink\couchlink-pico2w.uf2
 dist\ParsecCouchLink\couchlink-picow.uf2
 dist\ParsecCouchLink\setup.ps1
+dist\ParsecCouchLink\README.txt
+dist\ParsecCouchLink\CHANGELOG.md
+dist\ParsecCouchLink\LICENSE
+dist\ParsecCouchLink\NOTICE
 ```
 
 Both Pico variants are built every time. The release setup script picks the matching firmware at flash time based on which Pico is in BOOTSEL, so only one of the two UF2s is actually written to a given device.
@@ -90,7 +94,7 @@ cmake --build build-host-tests --config Debug
 ctest --test-dir build-host-tests -C Debug --output-on-failure
 ```
 
-Run the formatting and lint wrapper used locally before commits:
+Run the formatting and lint script used locally before commits:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\lint.ps1

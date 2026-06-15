@@ -172,8 +172,8 @@ impl DiagOutcome {
                     "Unplug the Pico. Hold BOOTSEL while plugging it back in. \
                      Wait until Windows shows a RPI-RP2 or RP2350 drive in File \
                      Explorer.",
-                    "Run `flash.ps1` (or `couchlink.exe flash`) to copy the \
-                     matching UF2 onto the drive.",
+                    "Run `couchlink.exe flash` to copy the matching UF2 onto \
+                     the drive.",
                     "Once the Pico reboots into setup mode (it should appear as \
                      a new COM port within ~5 seconds), re-run this bundle.",
                     "If no COM port shows up at all, try a different micro-USB \
@@ -327,8 +327,9 @@ impl DiagOutcome {
                      the LogChunk capability bit. The firmware predates the \
                      run-mode diag pull.",
                     "Hold BOOTSEL while plugging the Pico into this PC, then \
-                     flash with `flash.ps1`. The new firmware advertises the \
-                     bit and the next bundle will UDP-pull diag automatically.",
+                     flash with `couchlink.exe flash`. The new firmware \
+                     advertises the bit and the next bundle will UDP-pull diag \
+                     automatically.",
                     "If you cannot reflash right now, the bridge log at \
                      %LOCALAPPDATA%\\ParsecCouchLink\\data\\logs has \
                      bridge-side observations that do not depend on the firmware.",

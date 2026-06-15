@@ -19,4 +19,4 @@ https://github.com/RealWhyKnot/ParsecCouchLink/releases/latest
 - `couchlink test usb` asks run-mode firmware over Wi-Fi for USB/XInput status, including mount/configuration state, descriptor counters, accepted IN reports, and host OUT traffic.
 - `couchlink lab` runs unattended plugged-in Pico bench scenarios, including `--power pnp-remove` for Windows PnP remove/rescan reconnect coverage.
 - `couchlink bundle` gathers logs, doctor output, Windows USB event-log snippets, bridge state journal entries, and firmware diagnostics when reachable by setup USB, vendor control, or run-mode UDP.
-- Release zips include `setup.ps1`, `couchlink.exe`, both board-specific UF2 files, support wrappers, and a manifest.
+- Release zips include `setup.ps1`, `couchlink.exe`, both board-specific UF2 files, `README.txt`, `CHANGELOG.md`, license files, and a manifest.

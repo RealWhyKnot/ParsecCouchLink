@@ -10,8 +10,8 @@ The Windows host reads the Parsec virtual Xbox controller, sends the button stat
 
 - Windows 10/11 PC running Parsec
 - One of these Pico boards:
-  - Raspberry Pi Pico 2 W (RP2350 + Wi-Fi)  -- the default target, ~$7
-  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi)  -- also fully supported, ~$5-6
+  - Raspberry Pi Pico 2 W (RP2350 + Wi-Fi) -- the default target
+  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- also fully supported
 - Micro-USB data cable
 - 2.4 GHz Wi-Fi name and password (both boards use a 2.4 GHz-only radio)
 - USB4MAPLE or another USB-to-console adapter that accepts a wired Xbox 360 controller
@@ -40,8 +40,8 @@ After setup, have the remote player join through Parsec and run `couchlink.exe`.
 | `couchlink.exe` | Windows bridge. Runs at logon or manually. |
 | `couchlink-pico2w.uf2` | Firmware for the Pico 2 W (RP2350). |
 | `couchlink-picow.uf2` | Firmware for the Pico W / Pico WH (RP2040). |
-| `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `bootsel.ps1`, `debug.ps1`, `lab.ps1`, `configure-wifi.ps1` | Convenience wrappers for common support and maintenance commands. |
 | `README.txt` | Short release-folder instructions. |
+| `CHANGELOG.md` | Release history. |
 | `LICENSE` / `NOTICE` | License text and release archive notes. |
 
 Setup detects which Pico you have at BOOTSEL time and uses the matching UF2 automatically. Only one of the two firmware files is written to your Pico.
@@ -101,7 +101,6 @@ page for the full version.
 - `bridge/` - Rust Windows bridge and setup wizard.
 - `pico-bridge/` - Pico firmware.
 - `setup.ps1` - release entrypoint for first-run setup.
-- `doctor.ps1`, `bundle.ps1`, `logs.ps1`, `flash.ps1`, `bootsel.ps1`, `debug.ps1`, `lab.ps1`, `configure-wifi.ps1` - release-folder command wrappers.
 - `build.ps1` - local build and release zip staging.
 - `wiki/` - source-controlled GitHub Wiki pages.
 

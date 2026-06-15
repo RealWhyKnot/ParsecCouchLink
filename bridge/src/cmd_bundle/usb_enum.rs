@@ -140,8 +140,8 @@ pub(super) fn setup_probe_failed_diagnosis(
          responding to commands. The most common cause is a fault during \
          firmware init -- the CDC stack is up enough to enumerate, but the \
          main poll loop never started.",
-        "Hold BOOTSEL while plugging the Pico in. Run `flash.ps1` to write \
-         a fresh UF2. Re-run setup. The new firmware writes a `boot: \
+        "Hold BOOTSEL while plugging the Pico in. Run `couchlink.exe flash` \
+         to write a fresh UF2. Re-run setup. The new firmware writes a `boot: \
          reset-reason=fault` line on the next boot if it crashed; the \
          bundle then captures WHY it crashed via the new fault context \
          (PC, LR, xPSR, R0-R3, R12, SP, CFSR on RP2350).",

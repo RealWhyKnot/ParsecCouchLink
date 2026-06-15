@@ -8,7 +8,7 @@ This is the path for a new Pico user starting from a release zip.
 - Parsec installed and working.
 - One of these Pico boards:
   - Raspberry Pi Pico 2 W (RP2350 + Wi-Fi) -- the default target.
-  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- equivalent, often easier to find in retail (e.g. Micro Center stocks the Pico WH at ~$6).
+  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- equivalent and fully supported.
 - Micro-USB data cable. Charge-only cables will fail.
 - 2.4 GHz Wi-Fi name and password. Both Pico variants use the CYW43439 radio, which is 2.4 GHz only -- 5 GHz-only networks won't work.
 - USB4MAPLE or another USB-to-console adapter that accepts a wired Xbox 360 controller.
@@ -86,16 +86,15 @@ If the Startup shortcut was added, Windows starts the direct streaming command a
 
 The direct command uses the saved routing layout from the guided menu. If no layout is saved yet, it uses the first Pico it finds.
 
-Each subcommand also has a one-shot PowerShell wrapper in the release folder. Right-click and "Run with PowerShell", or call from an existing PowerShell prompt:
+Useful direct commands:
 
 ```powershell
-.\doctor.ps1            # run every diagnostic check
-.\logs.ps1 --tail       # follow the active log file
-.\bundle.ps1            # produce a support-bundle ZIP for bug reports
-.\flash.ps1             # re-flash without re-running setup
-.\bootsel.ps1           # switch setup-mode USB Pico to BOOTSEL
-.\debug.ps1             # open Pico debug and recovery
-.\configure-wifi.ps1    # re-send Wi-Fi credentials
+.\couchlink.exe doctor  # run every diagnostic check
+.\couchlink.exe logs --tail  # follow the active log file
+.\couchlink.exe bundle  # produce a support-bundle ZIP for bug reports
+.\couchlink.exe flash   # re-flash without re-running setup
+.\couchlink.exe debug   # open Pico debug and recovery
+.\couchlink.exe configure-wifi  # re-send Wi-Fi credentials
 .\couchlink.exe recover # auto-check Wi-Fi, setup USB, and BOOTSEL before streaming
 .\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
 .\couchlink.exe run --route 1=07D37EB6  # route Controller 1 to a specific Pico UID
@@ -107,17 +106,15 @@ Each subcommand also has a one-shot PowerShell wrapper in the release folder. Ri
 .\couchlink.exe test <name>  # run one diagnostic check by name
 ```
 
-The wrappers record a transcript under `%LOCALAPPDATA%\ParsecCouchLink\data\logs\` alongside the bridge's own logs, so one folder has everything a bug report needs. The bare `couchlink.exe` form works too -- the wrappers are just shortcuts that pre-name the subcommand and capture a transcript.
+`setup.ps1` records a setup transcript under `%LOCALAPPDATA%\ParsecCouchLink\data\logs\` alongside the bridge's own logs. Other support and recovery tasks run through `couchlink.exe`.
 
 ## Reconfigure Wi-Fi
 
 If the router or Wi-Fi password changes:
 
 ```powershell
-.\configure-wifi.ps1
+.\couchlink.exe configure-wifi
 ```
-
-(equivalent to `.\couchlink.exe configure-wifi`.)
 
 After the Pico rejoins Wi-Fi, the command prints the confirmed Pico IP.
 

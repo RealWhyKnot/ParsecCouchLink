@@ -153,20 +153,12 @@ Copy-Item -LiteralPath $FirmwarePico2w -Destination (Join-Path $StageDir "couchl
 Copy-Item -LiteralPath $FirmwarePicow  -Destination (Join-Path $StageDir "couchlink-picow.uf2")  -Force
 
 $ScriptFiles = @(
-    "setup.ps1",
-    "doctor.ps1",
-    "bundle.ps1",
-    "flash.ps1",
-    "bootsel.ps1",
-    "debug.ps1",
-    "lab.ps1",
-    "configure-wifi.ps1",
-    "logs.ps1"
+    "setup.ps1"
 )
 foreach ($script in $ScriptFiles) {
     $src = Join-Path $RepoRoot $script
     if (-not (Test-Path -LiteralPath $src)) {
-        throw "Missing wrapper script: $src"
+        throw "Missing release script: $src"
     }
     Copy-Item -LiteralPath $src -Destination (Join-Path $StageDir $script) -Force
 }
@@ -189,24 +181,22 @@ and can add couchlink.exe to Windows startup.
 
 Daily use
 ---------
-Each subcommand also has a one-shot wrapper script. Right-click and
-"Run with PowerShell", or call from an existing PowerShell prompt:
+Run the app from this folder:
 
-  couchlink.exe          start the bridge for a Parsec session
-  couchlink.exe test     run one diagnostic check by name
-  doctor.ps1             run every diagnostic check
-  bundle.ps1             produce a support-bundle ZIP for bug reports
-  logs.ps1               print log path (use --tail to follow live)
-  flash.ps1              re-flash without re-running setup
-  bootsel.ps1            switch setup-mode USB Pico to BOOTSEL
-  debug.ps1              Pico debug and recovery menu
-  lab.ps1                unattended Pico hardware bench checks
-  configure-wifi.ps1     re-send Wi-Fi credentials
+  couchlink.exe                  open the guided Basic/Advanced menu
+  couchlink.exe run              start direct streaming
+  couchlink.exe doctor           run every diagnostic check
+  couchlink.exe bundle           produce a support-bundle ZIP for bug reports
+  couchlink.exe logs --tail      follow the active log file
+  couchlink.exe flash            re-flash without re-running setup
+  couchlink.exe debug            Pico debug and recovery menu
+  couchlink.exe configure-wifi   re-send Wi-Fi credentials
+  couchlink.exe lab --scenario status
+                                 development bench status snapshot
 
-The wrappers record a transcript under
+setup.ps1 records a setup transcript under
   %LOCALAPPDATA%\ParsecCouchLink\data\logs
-alongside the bridge's own logs, so one folder has everything a
-bug report needs.
+alongside the bridge's own logs, so one folder has what a bug report needs.
 "@
 Set-Content -LiteralPath (Join-Path $StageDir "README.txt") -Value $ReleaseReadme -Encoding ASCII
 

@@ -361,7 +361,7 @@ pub async fn check_discover() -> CheckResult {
                     format!("got {n} bytes from {from} but it did not parse as a Pico ack: {e}"),
                     "Another device on the LAN is replying on UDP/4242, or the \
                      Pico is running mismatched firmware. Re-flash via \
-                     `flash.ps1` and try again."
+                     `couchlink.exe flash` and try again."
                         .into(),
                 )
             }

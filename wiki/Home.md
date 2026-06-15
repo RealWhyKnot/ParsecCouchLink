@@ -42,6 +42,8 @@ Console player 2
 | `couchlink-pico2w.uf2` | Firmware for Pico 2 W. |
 | `couchlink-picow.uf2` | Firmware for Pico W / Pico WH. |
 | `README.txt` | Short copy of the release-folder instructions. |
+| `CHANGELOG.md` | Release history. |
+| `LICENSE` / `NOTICE` | License text and release archive notes. |
 
 ## Normal Flow
 
