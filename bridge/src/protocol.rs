@@ -91,8 +91,10 @@ pub const ACK_FLAG_DINPUT_PERSONA: u8 = 1 << 6;
 /// Extends the persona bits without changing the fixed ACK packet shape.
 pub const ACK_FLAG_ALT_PERSONA: u8 = 1 << 7;
 
-pub const USB_DIAG_WIRE_SIZE: usize = 78;
-pub const USB_DIAG_VERSION: u8 = 1;
+pub const USB_DIAG_V1_WIRE_SIZE: usize = 78;
+pub const USB_DIAG_WIRE_SIZE: usize = 104;
+pub const USB_DIAG_V1_VERSION: u8 = 1;
+pub const USB_DIAG_VERSION: u8 = 2;
 pub const USB_DIAG_FLAG_MOUNTED: u8 = 1 << 0;
 pub const USB_DIAG_FLAG_SUSPENDED: u8 = 1 << 1;
 pub const USB_DIAG_ACTIVITY_QUEUED: u8 = 1 << 0;
@@ -100,9 +102,15 @@ pub const USB_DIAG_ACTIVITY_SENT: u8 = 1 << 1;
 pub const USB_DIAG_ACTIVITY_OUT: u8 = 1 << 2;
 pub const USB_DIAG_ACTIVITY_PEER: u8 = 1 << 3;
 pub const USB_DIAG_ACTIVITY_PARSEC: u8 = 1 << 4;
+pub const USB_DIAG_IN_BLOCKED_NONE: u8 = 0;
+pub const USB_DIAG_IN_BLOCKED_NOT_MOUNTED: u8 = 1;
+pub const USB_DIAG_IN_BLOCKED_NOT_READY: u8 = 2;
+pub const USB_DIAG_IN_BLOCKED_SHORT_WRITE: u8 = 3;
 
-pub const PICO_STATE_WIRE_SIZE: usize = 104;
-pub const PICO_STATE_VERSION: u8 = 1;
+pub const PICO_STATE_V1_WIRE_SIZE: usize = 104;
+pub const PICO_STATE_WIRE_SIZE: usize = 128;
+pub const PICO_STATE_V1_VERSION: u8 = 1;
+pub const PICO_STATE_VERSION: u8 = 2;
 
 /// Set in a `TYPE_LOG_CHUNK` datagram's `flags` byte to mark the final
 /// chunk in the reply sequence.
@@ -649,11 +657,19 @@ pub struct UsbDiag {
     pub xinput_in_queued_count: u32,
     pub xinput_in_sent_count: u32,
     pub xinput_out_count: u32,
+    pub xinput_in_blocked_not_mounted_count: u32,
+    pub xinput_in_blocked_not_ready_count: u32,
+    pub xinput_in_blocked_short_write_count: u32,
+    pub xinput_in_idle_suppressed_count: u32,
     pub last_mount_ms: u32,
     pub last_umount_ms: u32,
     pub last_in_queued_ms: u32,
     pub last_in_sent_ms: u32,
     pub last_out_ms: u32,
+    pub last_in_blocked_ms: u32,
+    pub last_in_blocked_reason: u8,
+    pub last_in_blocked_want: u16,
+    pub last_in_blocked_got: u16,
     pub last_out_byte0: u8,
     pub last_out_byte1: u8,
 }
@@ -681,6 +697,12 @@ impl UsbDiag {
 
     pub fn parsec_connected(&self) -> bool {
         self.activity_flags & USB_DIAG_ACTIVITY_PARSEC != 0
+    }
+
+    pub fn in_blocked_total(&self) -> u32 {
+        self.xinput_in_blocked_not_mounted_count
+            .saturating_add(self.xinput_in_blocked_not_ready_count)
+            .saturating_add(self.xinput_in_blocked_short_write_count)
     }
 
     pub fn age_ms(&self, timestamp_ms: u32) -> Option<u32> {
@@ -719,6 +741,14 @@ impl UsbDiag {
         put_u32_le(&mut buf, 68, self.last_out_ms);
         buf[72] = self.last_out_byte0;
         buf[73] = self.last_out_byte1;
+        put_u32_le(&mut buf, 74, self.xinput_in_blocked_not_mounted_count);
+        put_u32_le(&mut buf, 78, self.xinput_in_blocked_not_ready_count);
+        put_u32_le(&mut buf, 82, self.xinput_in_blocked_short_write_count);
+        put_u32_le(&mut buf, 86, self.xinput_in_idle_suppressed_count);
+        put_u32_le(&mut buf, 90, self.last_in_blocked_ms);
+        buf[94] = self.last_in_blocked_reason;
+        put_u16_le(&mut buf, 96, self.last_in_blocked_want);
+        put_u16_le(&mut buf, 98, self.last_in_blocked_got);
         let crc =
             crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..USB_DIAG_WIRE_SIZE - 2]);
         buf[USB_DIAG_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
@@ -727,7 +757,7 @@ impl UsbDiag {
     }
 
     pub fn decode(buf: &[u8]) -> Result<Self, UsbDiagDecodeError> {
-        if buf.len() != USB_DIAG_WIRE_SIZE {
+        if buf.len() != USB_DIAG_WIRE_SIZE && buf.len() != USB_DIAG_V1_WIRE_SIZE {
             return Err(UsbDiagDecodeError::WrongSize {
                 got: buf.len(),
                 want: USB_DIAG_WIRE_SIZE,
@@ -739,18 +769,21 @@ impl UsbDiag {
         if buf[1] != TYPE_USB_DIAG {
             return Err(UsbDiagDecodeError::WrongType(buf[1]));
         }
-        let crc_lo = buf[USB_DIAG_WIRE_SIZE - 2] as u16;
-        let crc_hi = buf[USB_DIAG_WIRE_SIZE - 1] as u16;
+        let crc_offset = buf.len() - 2;
+        let crc_lo = buf[crc_offset] as u16;
+        let crc_hi = buf[crc_offset + 1] as u16;
         let crc_got = crc_lo | (crc_hi << 8);
-        let crc_want =
-            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..USB_DIAG_WIRE_SIZE - 2]);
+        let crc_want = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..crc_offset]);
         if crc_got != crc_want {
             return Err(UsbDiagDecodeError::BadCrc {
                 got: crc_got,
                 want: crc_want,
             });
         }
-        if buf[4] != USB_DIAG_VERSION {
+        let version = buf[4];
+        if (buf.len() == USB_DIAG_V1_WIRE_SIZE && version != USB_DIAG_V1_VERSION)
+            || (buf.len() == USB_DIAG_WIRE_SIZE && version != USB_DIAG_VERSION)
+        {
             return Err(UsbDiagDecodeError::UnsupportedVersion(buf[4]));
         }
         Ok(UsbDiag {
@@ -771,11 +804,51 @@ impl UsbDiag {
             xinput_in_queued_count: read_u32_le(buf, 40),
             xinput_in_sent_count: read_u32_le(buf, 44),
             xinput_out_count: read_u32_le(buf, 48),
+            xinput_in_blocked_not_mounted_count: if version >= USB_DIAG_VERSION {
+                read_u32_le(buf, 74)
+            } else {
+                0
+            },
+            xinput_in_blocked_not_ready_count: if version >= USB_DIAG_VERSION {
+                read_u32_le(buf, 78)
+            } else {
+                0
+            },
+            xinput_in_blocked_short_write_count: if version >= USB_DIAG_VERSION {
+                read_u32_le(buf, 82)
+            } else {
+                0
+            },
+            xinput_in_idle_suppressed_count: if version >= USB_DIAG_VERSION {
+                read_u32_le(buf, 86)
+            } else {
+                0
+            },
             last_mount_ms: read_u32_le(buf, 52),
             last_umount_ms: read_u32_le(buf, 56),
             last_in_queued_ms: read_u32_le(buf, 60),
             last_in_sent_ms: read_u32_le(buf, 64),
             last_out_ms: read_u32_le(buf, 68),
+            last_in_blocked_ms: if version >= USB_DIAG_VERSION {
+                read_u32_le(buf, 90)
+            } else {
+                0
+            },
+            last_in_blocked_reason: if version >= USB_DIAG_VERSION {
+                buf[94]
+            } else {
+                0
+            },
+            last_in_blocked_want: if version >= USB_DIAG_VERSION {
+                read_u16_le(buf, 96)
+            } else {
+                0
+            },
+            last_in_blocked_got: if version >= USB_DIAG_VERSION {
+                read_u16_le(buf, 98)
+            } else {
+                0
+            },
             last_out_byte0: buf[72],
             last_out_byte1: buf[73],
         })
@@ -805,11 +878,19 @@ pub struct PicoStateDiag {
     pub xinput_in_queued_count: u32,
     pub xinput_in_sent_count: u32,
     pub xinput_out_count: u32,
+    pub xinput_in_blocked_not_mounted_count: u32,
+    pub xinput_in_blocked_not_ready_count: u32,
+    pub xinput_in_blocked_short_write_count: u32,
+    pub xinput_in_idle_suppressed_count: u32,
     pub last_mount_ms: u32,
     pub last_umount_ms: u32,
     pub last_in_queued_ms: u32,
     pub last_in_sent_ms: u32,
     pub last_out_ms: u32,
+    pub last_in_blocked_ms: u32,
+    pub last_in_blocked_reason: u8,
+    pub last_in_blocked_want: u16,
+    pub last_in_blocked_got: u16,
     pub last_out_len: u8,
     pub last_out_byte0: u8,
     pub last_out_byte1: u8,
@@ -855,6 +936,14 @@ impl PicoStateDiag {
         buf[91] = self.usb_flags;
         buf[92] = self.activity_flags;
         put_u32_le(&mut buf, 96, self.malformed_udp_count);
+        put_u32_le(&mut buf, 100, self.xinput_in_blocked_not_mounted_count);
+        put_u32_le(&mut buf, 104, self.xinput_in_blocked_not_ready_count);
+        put_u32_le(&mut buf, 108, self.xinput_in_blocked_short_write_count);
+        put_u32_le(&mut buf, 112, self.xinput_in_idle_suppressed_count);
+        put_u32_le(&mut buf, 116, self.last_in_blocked_ms);
+        buf[120] = self.last_in_blocked_reason;
+        put_u16_le(&mut buf, 122, self.last_in_blocked_want);
+        put_u16_le(&mut buf, 124, self.last_in_blocked_got);
         let crc =
             crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..PICO_STATE_WIRE_SIZE - 2]);
         buf[PICO_STATE_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
@@ -863,7 +952,7 @@ impl PicoStateDiag {
     }
 
     pub fn decode(buf: &[u8]) -> Result<Self, PicoStateDecodeError> {
-        if buf.len() != PICO_STATE_WIRE_SIZE {
+        if buf.len() != PICO_STATE_WIRE_SIZE && buf.len() != PICO_STATE_V1_WIRE_SIZE {
             return Err(PicoStateDecodeError::WrongSize {
                 got: buf.len(),
                 want: PICO_STATE_WIRE_SIZE,
@@ -875,18 +964,21 @@ impl PicoStateDiag {
         if buf[1] != TYPE_PICO_STATE {
             return Err(PicoStateDecodeError::WrongType(buf[1]));
         }
-        let crc_lo = buf[PICO_STATE_WIRE_SIZE - 2] as u16;
-        let crc_hi = buf[PICO_STATE_WIRE_SIZE - 1] as u16;
+        let crc_offset = buf.len() - 2;
+        let crc_lo = buf[crc_offset] as u16;
+        let crc_hi = buf[crc_offset + 1] as u16;
         let crc_got = crc_lo | (crc_hi << 8);
-        let crc_want =
-            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..PICO_STATE_WIRE_SIZE - 2]);
+        let crc_want = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..crc_offset]);
         if crc_got != crc_want {
             return Err(PicoStateDecodeError::BadCrc {
                 got: crc_got,
                 want: crc_want,
             });
         }
-        if buf[4] != PICO_STATE_VERSION {
+        let version = buf[4];
+        if (buf.len() == PICO_STATE_V1_WIRE_SIZE && version != PICO_STATE_V1_VERSION)
+            || (buf.len() == PICO_STATE_WIRE_SIZE && version != PICO_STATE_VERSION)
+        {
             return Err(PicoStateDecodeError::UnsupportedVersion(buf[4]));
         }
         Ok(Self {
@@ -911,11 +1003,51 @@ impl PicoStateDiag {
             xinput_in_queued_count: read_u32_le(buf, 56),
             xinput_in_sent_count: read_u32_le(buf, 60),
             xinput_out_count: read_u32_le(buf, 64),
+            xinput_in_blocked_not_mounted_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 100)
+            } else {
+                0
+            },
+            xinput_in_blocked_not_ready_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 104)
+            } else {
+                0
+            },
+            xinput_in_blocked_short_write_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 108)
+            } else {
+                0
+            },
+            xinput_in_idle_suppressed_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 112)
+            } else {
+                0
+            },
             last_mount_ms: read_u32_le(buf, 68),
             last_umount_ms: read_u32_le(buf, 72),
             last_in_queued_ms: read_u32_le(buf, 76),
             last_in_sent_ms: read_u32_le(buf, 80),
             last_out_ms: read_u32_le(buf, 84),
+            last_in_blocked_ms: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 116)
+            } else {
+                0
+            },
+            last_in_blocked_reason: if version >= PICO_STATE_VERSION {
+                buf[120]
+            } else {
+                0
+            },
+            last_in_blocked_want: if version >= PICO_STATE_VERSION {
+                read_u16_le(buf, 122)
+            } else {
+                0
+            },
+            last_in_blocked_got: if version >= PICO_STATE_VERSION {
+                read_u16_le(buf, 124)
+            } else {
+                0
+            },
             last_out_len: buf[88],
             last_out_byte0: buf[89],
             last_out_byte1: buf[90],
@@ -993,6 +1125,38 @@ impl PicoStateDiag {
             "host_out_reports".into(),
             serde_json::json!(self.xinput_out_count),
         );
+        out.insert(
+            "in_blocked_not_mounted".into(),
+            serde_json::json!(self.xinput_in_blocked_not_mounted_count),
+        );
+        out.insert(
+            "in_blocked_not_ready".into(),
+            serde_json::json!(self.xinput_in_blocked_not_ready_count),
+        );
+        out.insert(
+            "in_blocked_short_write".into(),
+            serde_json::json!(self.xinput_in_blocked_short_write_count),
+        );
+        out.insert(
+            "in_idle_suppressed".into(),
+            serde_json::json!(self.xinput_in_idle_suppressed_count),
+        );
+        out.insert(
+            "last_in_blocked_ms".into(),
+            serde_json::json!(self.last_in_blocked_ms),
+        );
+        out.insert(
+            "last_in_blocked_reason".into(),
+            serde_json::json!(usb_in_blocked_reason_label(self.last_in_blocked_reason)),
+        );
+        out.insert(
+            "last_in_blocked_want".into(),
+            serde_json::json!(self.last_in_blocked_want),
+        );
+        out.insert(
+            "last_in_blocked_got".into(),
+            serde_json::json!(self.last_in_blocked_got),
+        );
         out
     }
 }
@@ -1001,8 +1165,26 @@ fn put_u32_le(buf: &mut [u8], offset: usize, value: u32) {
     buf[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
+fn put_u16_le(buf: &mut [u8], offset: usize, value: u16) {
+    buf[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
 fn read_u32_le(buf: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap())
+}
+
+fn read_u16_le(buf: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(buf[offset..offset + 2].try_into().unwrap())
+}
+
+pub fn usb_in_blocked_reason_label(reason: u8) -> &'static str {
+    match reason {
+        USB_DIAG_IN_BLOCKED_NONE => "none",
+        USB_DIAG_IN_BLOCKED_NOT_MOUNTED => "not_mounted",
+        USB_DIAG_IN_BLOCKED_NOT_READY => "not_ready",
+        USB_DIAG_IN_BLOCKED_SHORT_WRITE => "short_write",
+        _ => "unknown",
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1665,11 +1847,19 @@ mod tests {
             xinput_in_queued_count: 7,
             xinput_in_sent_count: 8,
             xinput_out_count: 9,
+            xinput_in_blocked_not_mounted_count: 10,
+            xinput_in_blocked_not_ready_count: 11,
+            xinput_in_blocked_short_write_count: 12,
+            xinput_in_idle_suppressed_count: 13,
             last_mount_ms: 10,
             last_umount_ms: 11,
             last_in_queued_ms: 12,
             last_in_sent_ms: 13,
             last_out_ms: 14,
+            last_in_blocked_ms: 15,
+            last_in_blocked_reason: USB_DIAG_IN_BLOCKED_NOT_READY,
+            last_in_blocked_want: 20,
+            last_in_blocked_got: 4,
             last_out_byte0: 0x01,
             last_out_byte1: 0x08,
         };
@@ -1682,6 +1872,11 @@ mod tests {
         assert!(back.xinput_report_sent());
         assert!(back.xinput_out_seen());
         assert_eq!(back.age_ms(990), Some(10));
+        assert_eq!(back.in_blocked_total(), 33);
+        assert_eq!(
+            usb_in_blocked_reason_label(back.last_in_blocked_reason),
+            "not_ready"
+        );
     }
 
     #[test]
@@ -1704,11 +1899,19 @@ mod tests {
             xinput_in_queued_count: 0,
             xinput_in_sent_count: 0,
             xinput_out_count: 0,
+            xinput_in_blocked_not_mounted_count: 0,
+            xinput_in_blocked_not_ready_count: 0,
+            xinput_in_blocked_short_write_count: 0,
+            xinput_in_idle_suppressed_count: 0,
             last_mount_ms: 0,
             last_umount_ms: 0,
             last_in_queued_ms: 0,
             last_in_sent_ms: 0,
             last_out_ms: 0,
+            last_in_blocked_ms: 0,
+            last_in_blocked_reason: 0,
+            last_in_blocked_want: 0,
+            last_in_blocked_got: 0,
             last_out_byte0: 0,
             last_out_byte1: 0,
         }
@@ -1718,6 +1921,28 @@ mod tests {
             Err(UsbDiagDecodeError::BadCrc { .. }) => (),
             other => panic!("expected BadCrc, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn usb_diag_v1_decode_defaults_new_block_fields() {
+        let mut buf = [0u8; USB_DIAG_V1_WIRE_SIZE];
+        buf[0] = MAGIC;
+        buf[1] = TYPE_USB_DIAG;
+        buf[2] = 5;
+        buf[4] = USB_DIAG_V1_VERSION;
+        buf[5] = USB_DIAG_FLAG_MOUNTED;
+        buf[6] = USB_DIAG_ACTIVITY_SENT;
+        put_u32_le(&mut buf, 44, 9);
+        let crc =
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..USB_DIAG_V1_WIRE_SIZE - 2]);
+        buf[USB_DIAG_V1_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
+        buf[USB_DIAG_V1_WIRE_SIZE - 1] = (crc >> 8) as u8;
+
+        let back = UsbDiag::decode(&buf).unwrap();
+        assert_eq!(back.version, USB_DIAG_V1_VERSION);
+        assert_eq!(back.xinput_in_sent_count, 9);
+        assert_eq!(back.in_blocked_total(), 0);
+        assert_eq!(back.last_in_blocked_reason, USB_DIAG_IN_BLOCKED_NONE);
     }
 
     #[test]
@@ -1744,11 +1969,19 @@ mod tests {
             xinput_in_queued_count: 7,
             xinput_in_sent_count: 8,
             xinput_out_count: 9,
+            xinput_in_blocked_not_mounted_count: 10,
+            xinput_in_blocked_not_ready_count: 11,
+            xinput_in_blocked_short_write_count: 12,
+            xinput_in_idle_suppressed_count: 13,
             last_mount_ms: 10,
             last_umount_ms: 11,
             last_in_queued_ms: 12,
             last_in_sent_ms: 13,
             last_out_ms: 14,
+            last_in_blocked_ms: 15,
+            last_in_blocked_reason: USB_DIAG_IN_BLOCKED_SHORT_WRITE,
+            last_in_blocked_want: 36,
+            last_in_blocked_got: 8,
             last_out_len: 8,
             last_out_byte0: 1,
             last_out_byte1: 2,
@@ -1768,6 +2001,11 @@ mod tests {
         assert_eq!(debug_diag.persona(), Some(Persona::Debug));
         let json = back.to_json_map();
         assert_eq!(json["malformed_udp_count"], serde_json::json!(42));
+        assert_eq!(json["in_blocked_not_ready"], serde_json::json!(11));
+        assert_eq!(
+            json["last_in_blocked_reason"],
+            serde_json::json!("short_write")
+        );
     }
 
     #[test]
@@ -1794,11 +2032,19 @@ mod tests {
             xinput_in_queued_count: 0,
             xinput_in_sent_count: 0,
             xinput_out_count: 0,
+            xinput_in_blocked_not_mounted_count: 0,
+            xinput_in_blocked_not_ready_count: 0,
+            xinput_in_blocked_short_write_count: 0,
+            xinput_in_idle_suppressed_count: 0,
             last_mount_ms: 0,
             last_umount_ms: 0,
             last_in_queued_ms: 0,
             last_in_sent_ms: 0,
             last_out_ms: 0,
+            last_in_blocked_ms: 0,
+            last_in_blocked_reason: 0,
+            last_in_blocked_want: 0,
+            last_in_blocked_got: 0,
             last_out_len: 0,
             last_out_byte0: 0,
             last_out_byte1: 0,
@@ -1812,6 +2058,27 @@ mod tests {
             Err(PicoStateDecodeError::BadCrc { .. }) => (),
             other => panic!("expected BadCrc, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pico_state_v1_decode_defaults_new_block_fields() {
+        let mut buf = [0u8; PICO_STATE_V1_WIRE_SIZE];
+        buf[0] = MAGIC;
+        buf[1] = TYPE_PICO_STATE;
+        buf[2] = 5;
+        buf[4] = PICO_STATE_V1_VERSION;
+        buf[5] = PROTO_VERSION;
+        put_u32_le(&mut buf, 60, 9);
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740)
+            .checksum(&buf[..PICO_STATE_V1_WIRE_SIZE - 2]);
+        buf[PICO_STATE_V1_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
+        buf[PICO_STATE_V1_WIRE_SIZE - 1] = (crc >> 8) as u8;
+
+        let back = PicoStateDiag::decode(&buf).unwrap();
+        assert_eq!(back.version, PICO_STATE_V1_VERSION);
+        assert_eq!(back.xinput_in_sent_count, 9);
+        assert_eq!(back.xinput_in_blocked_not_ready_count, 0);
+        assert_eq!(back.last_in_blocked_reason, USB_DIAG_IN_BLOCKED_NONE);
     }
 
     fn make_chunk(idx: u8, flags: u8, total: u8, lost: u32, payload: &[u8]) -> LogChunk {

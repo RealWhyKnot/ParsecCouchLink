@@ -26,6 +26,7 @@ const HISTORY_KEEP_BYTES: usize = 256 * 1024;
 static WARNED: OnceLock<()> = OnceLock::new();
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct CachedUsbDiag {
     pub verdict: String,
     pub mounted: bool,
@@ -39,8 +40,16 @@ pub struct CachedUsbDiag {
     pub queued_reports: u32,
     pub host_accepted_reports: u32,
     pub host_out_reports: u32,
+    pub in_blocked_not_mounted: u32,
+    pub in_blocked_not_ready: u32,
+    pub in_blocked_short_write: u32,
+    pub in_idle_suppressed: u32,
     pub last_mount_ms: u32,
     pub last_in_sent_ms: u32,
+    pub last_in_blocked_ms: u32,
+    pub last_in_blocked_reason: String,
+    pub last_in_blocked_want: u16,
+    pub last_in_blocked_got: u16,
     pub last_out_ms: u32,
     pub last_bridge_packet_ms: u32,
     pub bridge_peer: bool,
@@ -62,8 +71,19 @@ impl CachedUsbDiag {
             queued_reports: diag.xinput_in_queued_count,
             host_accepted_reports: diag.xinput_in_sent_count,
             host_out_reports: diag.xinput_out_count,
+            in_blocked_not_mounted: diag.xinput_in_blocked_not_mounted_count,
+            in_blocked_not_ready: diag.xinput_in_blocked_not_ready_count,
+            in_blocked_short_write: diag.xinput_in_blocked_short_write_count,
+            in_idle_suppressed: diag.xinput_in_idle_suppressed_count,
             last_mount_ms: diag.last_mount_ms,
             last_in_sent_ms: diag.last_in_sent_ms,
+            last_in_blocked_ms: diag.last_in_blocked_ms,
+            last_in_blocked_reason: protocol::usb_in_blocked_reason_label(
+                diag.last_in_blocked_reason,
+            )
+            .to_string(),
+            last_in_blocked_want: diag.last_in_blocked_want,
+            last_in_blocked_got: diag.last_in_blocked_got,
             last_out_ms: diag.last_out_ms,
             last_bridge_packet_ms: diag.last_bridge_packet_ms,
             bridge_peer: diag.bridge_peer_latched(),
@@ -269,7 +289,12 @@ fn usb_verdict_label(diag: &protocol::UsbDiag, persona: protocol::Persona) -> &'
             "no_usb_host_traffic"
         }
     } else if !diag.xinput_report_sent() {
-        "configured_no_report_accepted"
+        match diag.last_in_blocked_reason {
+            protocol::USB_DIAG_IN_BLOCKED_NOT_MOUNTED => "configured_report_blocked_not_mounted",
+            protocol::USB_DIAG_IN_BLOCKED_NOT_READY => "configured_report_blocked_not_ready",
+            protocol::USB_DIAG_IN_BLOCKED_SHORT_WRITE => "configured_report_blocked_short_write",
+            _ => "configured_no_report_accepted",
+        }
     } else if diag.xinput_out_seen() {
         match persona {
             protocol::Persona::Keyboard => "polling_with_keyboard_out",

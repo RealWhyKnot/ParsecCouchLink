@@ -62,10 +62,17 @@ static void build_report(xinput_report_t *out) {
 }
 
 void xinput_task(void) {
-    if (!tud_mounted())
+    if (!tud_mounted()) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_MOUNTED,
+                                        (uint16_t)sizeof(xinput_report_t), 0);
         return;
-    if (tud_vendor_write_available() < sizeof(xinput_report_t))
+    }
+    uint32_t available = tud_vendor_write_available();
+    if (available < sizeof(xinput_report_t)) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_READY,
+                                        (uint16_t)sizeof(xinput_report_t), (uint16_t)available);
         return;
+    }
 
     xinput_report_t rep;
     build_report(&rep);
@@ -73,6 +80,7 @@ void xinput_task(void) {
     uint32_t now = to_ms_since_boot(get_absolute_time());
     bool changed = !have_last_sent || memcmp(&rep, &last_sent, sizeof(rep)) != 0;
     if (!changed && (uint32_t)(now - last_report_ms) < XINPUT_IDLE_REPORT_INTERVAL_MS) {
+        usb_diag_note_xinput_in_idle_suppressed();
         return;
     }
     uint32_t wrote = tud_vendor_write(&rep, sizeof(rep));
@@ -83,5 +91,8 @@ void xinput_task(void) {
         last_sent = rep;
         have_last_sent = true;
         last_report_ms = now;
+    } else {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_SHORT_WRITE,
+                                        (uint16_t)sizeof(xinput_report_t), (uint16_t)wrote);
     }
 }

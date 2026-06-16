@@ -113,8 +113,8 @@ static const char *lwip_err_name(err_t e) {
 // with DInput for PS4 HID.
 #define ACK_FLAG_ALT_PERSONA 0x80
 
-#define USB_DIAG_WIRE_SIZE 78
-#define USB_DIAG_VERSION 1
+#define USB_DIAG_WIRE_SIZE 104
+#define USB_DIAG_VERSION 2
 
 #define USB_DIAG_FLAG_MOUNTED 0x01
 #define USB_DIAG_FLAG_SUSPENDED 0x02
@@ -124,8 +124,8 @@ static const char *lwip_err_name(err_t e) {
 #define USB_DIAG_ACTIVITY_PEER 0x08
 #define USB_DIAG_ACTIVITY_PARSEC 0x10
 
-#define PICO_STATE_WIRE_SIZE 104
-#define PICO_STATE_VERSION 1
+#define PICO_STATE_WIRE_SIZE 128
+#define PICO_STATE_VERSION 2
 
 // LogChunk layout (matches bridge protocol.rs):
 //   header (12 bytes) + payload (<= 256 bytes) + crc16 (2 bytes)
@@ -181,6 +181,11 @@ static void put_u32_le(uint8_t *buf, size_t offset, uint32_t value) {
     buf[offset + 1] = (uint8_t)((value >> 8) & 0xFFu);
     buf[offset + 2] = (uint8_t)((value >> 16) & 0xFFu);
     buf[offset + 3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static void put_u16_le(uint8_t *buf, size_t offset, uint16_t value) {
+    buf[offset + 0] = (uint8_t)(value & 0xFFu);
+    buf[offset + 1] = (uint8_t)((value >> 8) & 0xFFu);
 }
 
 static void note_malformed_packet(const char *reason, uint16_t detail) {
@@ -380,6 +385,14 @@ static void send_usb_diag(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_se
     put_u32_le(buf, 68, snap.last_out_ms);
     buf[72] = snap.last_out_byte0;
     buf[73] = snap.last_out_byte1;
+    put_u32_le(buf, 74, snap.xinput_in_blocked_not_mounted_count);
+    put_u32_le(buf, 78, snap.xinput_in_blocked_not_ready_count);
+    put_u32_le(buf, 82, snap.xinput_in_blocked_short_write_count);
+    put_u32_le(buf, 86, snap.xinput_in_idle_suppressed_count);
+    put_u32_le(buf, 90, snap.last_in_blocked_ms);
+    buf[94] = snap.last_in_blocked_reason;
+    put_u16_le(buf, 96, snap.last_in_blocked_want);
+    put_u16_le(buf, 98, snap.last_in_blocked_got);
     uint16_t crc = crc16_ccitt_false(buf, USB_DIAG_WIRE_SIZE - 2);
     buf[USB_DIAG_WIRE_SIZE - 2] = (uint8_t)(crc & 0xFFu);
     buf[USB_DIAG_WIRE_SIZE - 1] = (uint8_t)((crc >> 8) & 0xFFu);
@@ -390,11 +403,14 @@ static void send_usb_diag(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_se
         diag_log_printf("net_udp: usb_diag send err=%d (%s)", (int)e, lwip_err_name(e));
     } else {
         tx_count++;
-        diag_log_printf("net_udp: usb_diag -> %u.%u.%u.%u:%u mounted=%d sent=%u out=%u",
-                        ip4_addr1(ip_2_ip4(to_addr)), ip4_addr2(ip_2_ip4(to_addr)),
-                        ip4_addr3(ip_2_ip4(to_addr)), ip4_addr4(ip_2_ip4(to_addr)),
-                        (unsigned)to_port, (int)snap.mounted, (unsigned)snap.xinput_in_sent_count,
-                        (unsigned)snap.xinput_out_count);
+        diag_log_printf(
+            "net_udp: usb_diag -> %u.%u.%u.%u:%u mounted=%d sent=%u out=%u blocked=%u/%u/%u",
+            ip4_addr1(ip_2_ip4(to_addr)), ip4_addr2(ip_2_ip4(to_addr)),
+            ip4_addr3(ip_2_ip4(to_addr)), ip4_addr4(ip_2_ip4(to_addr)), (unsigned)to_port,
+            (int)snap.mounted, (unsigned)snap.xinput_in_sent_count, (unsigned)snap.xinput_out_count,
+            (unsigned)snap.xinput_in_blocked_not_mounted_count,
+            (unsigned)snap.xinput_in_blocked_not_ready_count,
+            (unsigned)snap.xinput_in_blocked_short_write_count);
     }
 }
 
@@ -482,6 +498,14 @@ static void send_pico_state(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_
     buf[91] = usb_flags;
     buf[92] = activity_flags;
     put_u32_le(buf, 96, malformed_count);
+    put_u32_le(buf, 100, snap.xinput_in_blocked_not_mounted_count);
+    put_u32_le(buf, 104, snap.xinput_in_blocked_not_ready_count);
+    put_u32_le(buf, 108, snap.xinput_in_blocked_short_write_count);
+    put_u32_le(buf, 112, snap.xinput_in_idle_suppressed_count);
+    put_u32_le(buf, 116, snap.last_in_blocked_ms);
+    buf[120] = snap.last_in_blocked_reason;
+    put_u16_le(buf, 122, snap.last_in_blocked_want);
+    put_u16_le(buf, 124, snap.last_in_blocked_got);
     uint16_t crc = crc16_ccitt_false(buf, PICO_STATE_WIRE_SIZE - 2);
     buf[PICO_STATE_WIRE_SIZE - 2] = (uint8_t)(crc & 0xFFu);
     buf[PICO_STATE_WIRE_SIZE - 1] = (uint8_t)((crc >> 8) & 0xFFu);

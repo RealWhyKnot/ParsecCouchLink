@@ -93,6 +93,11 @@ static void build_current_report(dinput_report_t *out) {
         dinput_build_ps3_report(&state, out);
 }
 
+static uint16_t expected_wire_report_len(void) {
+    return (boot_mode_run_persona() == RUN_PERSONA_PS4) ? DINPUT_PS4_WIRE_REPORT_LEN
+                                                        : DINPUT_PS3_WIRE_REPORT_LEN;
+}
+
 void dinput_init(void) {
     memset(&last_sent, 0, sizeof(last_sent));
     have_last_sent = false;
@@ -107,10 +112,15 @@ void dinput_note_usb_reset(void) {
 }
 
 void dinput_task(void) {
-    if (!tud_mounted())
+    uint16_t want = expected_wire_report_len();
+    if (!tud_mounted()) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_MOUNTED, want, 0);
         return;
-    if (!tud_hid_ready())
+    }
+    if (!tud_hid_ready()) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_READY, want, 0);
         return;
+    }
 
     dinput_report_t rep;
     build_current_report(&rep);
@@ -118,6 +128,7 @@ void dinput_task(void) {
     uint32_t now = to_ms_since_boot(get_absolute_time());
     bool changed = !have_last_sent || memcmp(&rep, &last_sent, sizeof(rep)) != 0;
     if (!changed && (uint32_t)(now - last_report_ms) < DINPUT_IDLE_REPORT_INTERVAL_MS) {
+        usb_diag_note_xinput_in_idle_suppressed();
         return;
     }
 
@@ -129,6 +140,8 @@ void dinput_task(void) {
         last_report_ms = now;
         if (boot_mode_run_persona() == RUN_PERSONA_PS4)
             ps4_report_counter = (uint8_t)((ps4_report_counter + 1u) & 0x3Fu);
+    } else {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_READY, rep.len, 0);
     }
 }
 

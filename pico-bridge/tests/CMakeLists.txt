@@ -53,3 +53,14 @@ target_include_directories(test_usb_packet_debug PRIVATE
 )
 
 add_test(NAME usb_packet_debug COMMAND test_usb_packet_debug)
+
+add_executable(test_usb_diag
+    test_usb_diag.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/usb_diag.c
+)
+target_include_directories(test_usb_diag PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+
+add_test(NAME usb_diag COMMAND test_usb_diag)

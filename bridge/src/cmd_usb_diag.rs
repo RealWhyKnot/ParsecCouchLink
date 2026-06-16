@@ -217,9 +217,21 @@ pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> 
     );
     let _ = writeln!(
         out,
-        "  recent: mount={} in={} out={} bridge_packet={}",
+        "  IN report blocks: not_mounted={} not_ready={} short_write={} idle_suppressed={} last={} want={} got={}",
+        diag.xinput_in_blocked_not_mounted_count,
+        diag.xinput_in_blocked_not_ready_count,
+        diag.xinput_in_blocked_short_write_count,
+        diag.xinput_in_idle_suppressed_count,
+        protocol::usb_in_blocked_reason_label(diag.last_in_blocked_reason),
+        diag.last_in_blocked_want,
+        diag.last_in_blocked_got,
+    );
+    let _ = writeln!(
+        out,
+        "  recent: mount={} in={} blocked={} out={} bridge_packet={}",
         age_label(diag, diag.last_mount_ms),
         age_label(diag, diag.last_in_sent_ms),
+        age_label(diag, diag.last_in_blocked_ms),
         age_label(diag, diag.last_out_ms),
         age_label(diag, diag.last_bridge_packet_ms),
     );
@@ -247,9 +259,18 @@ fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str) -> String {
             "FAIL  Pico sees no USB host enumeration traffic.".to_string()
         }
     } else if !diag.xinput_report_sent() {
-        format!(
-            "WARN  USB is configured, but the host has not accepted a {device_label} report yet."
-        )
+        if diag.in_blocked_total() > 0 && diag.last_in_blocked_reason != 0 {
+            format!(
+                "WARN  USB is configured, but the latest {device_label} report was blocked: {} (want={} got={}).",
+                protocol::usb_in_blocked_reason_label(diag.last_in_blocked_reason),
+                diag.last_in_blocked_want,
+                diag.last_in_blocked_got,
+            )
+        } else {
+            format!(
+                "WARN  USB is configured, but the host has not accepted a {device_label} report yet."
+            )
+        }
     } else if diag.xinput_out_seen() {
         format!("PASS  USB host is polling and has sent {device_label} OUT traffic.")
     } else {
@@ -308,11 +329,19 @@ mod tests {
             xinput_in_queued_count: if sent { 1 } else { 0 },
             xinput_in_sent_count: if sent { 1 } else { 0 },
             xinput_out_count: if out { 1 } else { 0 },
+            xinput_in_blocked_not_mounted_count: 0,
+            xinput_in_blocked_not_ready_count: 0,
+            xinput_in_blocked_short_write_count: 0,
+            xinput_in_idle_suppressed_count: 0,
             last_mount_ms: 9000,
             last_umount_ms: 0,
             last_in_queued_ms: 0,
             last_in_sent_ms: if sent { 9500 } else { 0 },
             last_out_ms: if out { 9600 } else { 0 },
+            last_in_blocked_ms: 0,
+            last_in_blocked_reason: 0,
+            last_in_blocked_want: 0,
+            last_in_blocked_got: 0,
             last_out_byte0: 0,
             last_out_byte1: 0,
         }
@@ -353,7 +382,21 @@ mod tests {
         assert!(text.contains("PS4 HID gamepad"));
         assert!(text.contains("mounts=1"));
         assert!(text.contains("host_accepted_reports=1"));
+        assert!(text.contains("IN report blocks:"));
         assert!(text.contains("stream state:"));
+    }
+
+    #[test]
+    fn verdict_reports_block_reason_when_configured_without_sent_report() {
+        let mut d = diag(true, false, false, true);
+        d.xinput_in_blocked_not_ready_count = 3;
+        d.last_in_blocked_reason = protocol::USB_DIAG_IN_BLOCKED_NOT_READY;
+        d.last_in_blocked_want = 20;
+        d.last_in_blocked_got = 0;
+
+        let verdict = usb_verdict(&d, "XInput");
+        assert!(verdict.contains("blocked: not_ready"));
+        assert!(verdict.contains("want=20 got=0"));
     }
 
     #[test]

@@ -32,10 +32,14 @@ void hid_kbd_note_usb_reset(void) {
 }
 
 void hid_kbd_task(void) {
-    if (!tud_mounted())
+    if (!tud_mounted()) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_MOUNTED, 8, 0);
         return;
-    if (!tud_hid_ready())
+    }
+    if (!tud_hid_ready()) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_READY, 8, 0);
         return;
+    }
 
     // Read the shared state field-by-field so each access is a volatile
     // load (single-writer net_udp, single-reader here).
@@ -48,6 +52,7 @@ void hid_kbd_task(void) {
     bool changed =
         !have_last_sent || mods != last_mods || memcmp(keys, last_keys, sizeof(keys)) != 0;
     if (!changed && (uint32_t)(now - last_report_ms) < HID_KBD_IDLE_REPORT_INTERVAL_MS) {
+        usb_diag_note_xinput_in_idle_suppressed();
         return;
     }
 
@@ -59,5 +64,7 @@ void hid_kbd_task(void) {
         memcpy(last_keys, keys, sizeof(keys));
         have_last_sent = true;
         last_report_ms = now;
+    } else {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_READY, 8, 0);
     }
 }

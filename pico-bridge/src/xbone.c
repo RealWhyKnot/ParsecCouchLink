@@ -59,16 +59,22 @@ static void put_header(uint8_t *packet, uint8_t command, uint8_t flags, uint8_t 
 }
 
 static bool vendor_send(uint8_t const *packet, uint16_t len) {
-    if (!tud_mounted())
+    if (!tud_mounted()) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_MOUNTED, len, 0);
         return false;
-    if (tud_vendor_write_available() < len)
+    }
+    uint32_t available = tud_vendor_write_available();
+    if (available < len) {
+        usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_NOT_READY, len, (uint16_t)available);
         return false;
+    }
     uint32_t wrote = tud_vendor_write(packet, len);
     if (wrote == len) {
         usb_diag_note_xinput_in_queued(wrote);
         tud_vendor_write_flush();
         return true;
     }
+    usb_diag_note_xinput_in_blocked(USB_DIAG_IN_BLOCKED_SHORT_WRITE, len, (uint16_t)wrote);
     return false;
 }
 
@@ -188,8 +194,10 @@ void xbone_task(void) {
     bool changed =
         !have_last_sent || memcmp(&report.buttons0, &last_sent.buttons0,
                                   sizeof(report) - offsetof(xbone_input_report_t, buttons0)) != 0;
-    if (!changed && (uint32_t)(now - last_report_ms) < XBONE_IDLE_REPORT_INTERVAL_MS)
+    if (!changed && (uint32_t)(now - last_report_ms) < XBONE_IDLE_REPORT_INTERVAL_MS) {
+        usb_diag_note_xinput_in_idle_suppressed();
         return;
+    }
 
     input_sequence++;
     if (input_sequence == 0)
