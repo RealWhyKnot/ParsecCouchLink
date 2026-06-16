@@ -68,3 +68,22 @@ void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_
         last_idle_in_sample_ms = now;
     note_packet("in", source, buffer, len, changed ? "changed" : "idle-sample", suppressed);
 }
+
+void usb_packet_debug_note_setup(const char *source, uint8_t bm_request_type, uint8_t b_request,
+                                 uint16_t w_value, uint16_t w_index, uint16_t w_length) {
+    uint8_t setup[8] = {
+        bm_request_type,
+        b_request,
+        (uint8_t)(w_value & 0xFFu),
+        (uint8_t)((w_value >> 8) & 0xFFu),
+        (uint8_t)(w_index & 0xFFu),
+        (uint8_t)((w_index >> 8) & 0xFFu),
+        (uint8_t)(w_length & 0xFFu),
+        (uint8_t)((w_length >> 8) & 0xFFu),
+    };
+    note_packet("setup", source, setup, sizeof(setup), "control-setup", 0);
+}
+
+void usb_packet_debug_note_control_in(const char *source, uint8_t const *buffer, uint16_t len) {
+    note_packet("control-in", source, buffer, len, "control-reply", 0);
+}

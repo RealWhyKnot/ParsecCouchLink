@@ -47,6 +47,8 @@ static void normal_persona_does_not_log_packets(void) {
     line_count = 0;
     usb_packet_debug_note_out("vendor", data, sizeof(data));
     usb_packet_debug_note_in("xinput", data, sizeof(data), true);
+    usb_packet_debug_note_setup("vendor-control", 0xC0, 0x20, 0x0102, 0x0304, 0x4000);
+    usb_packet_debug_note_control_in("desc-device", data, sizeof(data));
     assert(line_count == 0);
     current_persona = RUN_PERSONA_DEBUG;
 }
@@ -91,10 +93,36 @@ static void debug_in_packets_keep_changed_and_summarize_idle_suppression(void) {
     require_contains("suppressed=1");
 }
 
+static void debug_control_setup_logs_wire_bytes(void) {
+    fake_ms = 1200;
+    line_count = 0;
+    usb_packet_debug_note_setup("vendor-control", 0xC0, 0x20, 0x0102, 0x0304, 0x4000);
+    assert(line_count == 1);
+    require_contains("dir=setup");
+    require_contains("src=vendor-control");
+    require_contains("len=8");
+    require_contains("reason=control-setup");
+    require_contains("data=C020020104030040");
+}
+
+static void debug_control_in_logs_reply_payload(void) {
+    uint8_t data[] = {0x12, 0x01, 0x00, 0x02};
+    fake_ms = 1210;
+    line_count = 0;
+    usb_packet_debug_note_control_in("desc-device", data, sizeof(data));
+    assert(line_count == 1);
+    require_contains("dir=control-in");
+    require_contains("src=desc-device");
+    require_contains("reason=control-reply");
+    require_contains("data=12010002");
+}
+
 int main(void) {
     normal_persona_does_not_log_packets();
     debug_out_packet_logs_hex_payload();
     debug_in_packets_keep_changed_and_summarize_idle_suppression();
+    debug_control_setup_logs_wire_bytes();
+    debug_control_in_logs_reply_payload();
     puts("usb_packet_debug tests passed");
     return 0;
 }

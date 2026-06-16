@@ -178,22 +178,33 @@ uint8_t const *tud_descriptor_device_cb(void) {
         logged = true;
         diag_log_msg("usb_init: first GET_DESCRIPTOR(DEVICE) reply sent");
     }
-    if (boot_mode_current() != BOOT_MODE_RUN)
-        return (uint8_t const *)&desc_device_cdc;
+    uint8_t const *desc = NULL;
+    if (boot_mode_current() != BOOT_MODE_RUN) {
+        desc = (uint8_t const *)&desc_device_cdc;
+        usb_packet_debug_note_control_in("desc-device", desc, desc[0]);
+        return desc;
+    }
     switch (boot_mode_run_persona()) {
     case RUN_PERSONA_PS3:
-        return (uint8_t const *)&desc_device_ps3;
+        desc = (uint8_t const *)&desc_device_ps3;
+        break;
     case RUN_PERSONA_PS4:
-        return (uint8_t const *)&desc_device_ps4;
+        desc = (uint8_t const *)&desc_device_ps4;
+        break;
     case RUN_PERSONA_XBOXONE:
-        return (uint8_t const *)&desc_device_xboxone;
+        desc = (uint8_t const *)&desc_device_xboxone;
+        break;
     case RUN_PERSONA_KEYBOARD:
-        return (uint8_t const *)&desc_device_keyboard;
+        desc = (uint8_t const *)&desc_device_keyboard;
+        break;
     case RUN_PERSONA_XINPUT:
     case RUN_PERSONA_MAPLE:
     default:
-        return (uint8_t const *)&desc_device_xinput;
+        desc = (uint8_t const *)&desc_device_xinput;
+        break;
     }
+    usb_packet_debug_note_control_in("desc-device", desc, desc[0]);
+    return desc;
 }
 
 // -------- setup mode: CDC + WinUSB diag configuration ------------------
@@ -466,22 +477,35 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
         diag_log_msg("usb: host requested configuration descriptor (enum step 2)");
         logged = true;
     }
-    if (boot_mode_current() != BOOT_MODE_RUN)
-        return desc_configuration_cdc;
+    uint8_t const *desc = NULL;
+    if (boot_mode_current() != BOOT_MODE_RUN) {
+        desc = desc_configuration_cdc;
+        usb_packet_debug_note_control_in("desc-config", desc,
+                                         (uint16_t)(desc[2] | ((uint16_t)desc[3] << 8)));
+        return desc;
+    }
     switch (boot_mode_run_persona()) {
     case RUN_PERSONA_PS3:
-        return desc_configuration_ps3;
+        desc = desc_configuration_ps3;
+        break;
     case RUN_PERSONA_PS4:
-        return desc_configuration_ps4;
+        desc = desc_configuration_ps4;
+        break;
     case RUN_PERSONA_XBOXONE:
-        return desc_configuration_xboxone;
+        desc = desc_configuration_xboxone;
+        break;
     case RUN_PERSONA_KEYBOARD:
-        return desc_configuration_keyboard;
+        desc = desc_configuration_keyboard;
+        break;
     case RUN_PERSONA_XINPUT:
     case RUN_PERSONA_MAPLE:
     default:
-        return desc_configuration_xinput;
+        desc = desc_configuration_xinput;
+        break;
     }
+    usb_packet_debug_note_control_in("desc-config", desc,
+                                     (uint16_t)(desc[2] | ((uint16_t)desc[3] << 8)));
+    return desc;
 }
 
 // -------- string descriptors --------------------------------------------
@@ -567,6 +591,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         string_buf[6] = '0';
         string_buf[7] = '0';
         string_buf[8] = XGIP_MS_VENDOR_REQ_CODE;
+        usb_packet_debug_note_control_in("desc-string-msos10", (uint8_t const *)string_buf,
+                                         (uint16_t)(string_buf[0] & 0xFFu));
         return string_buf;
     }
 
@@ -598,6 +624,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         // LANGID descriptor is exactly 4 bytes: length(1)+type(1)+langid(2).
         string_buf[0] = (TUSB_DESC_STRING << 8) | 4;
         memcpy(&string_buf[1], arr[0], 2);
+        usb_packet_debug_note_control_in("desc-string", (uint8_t const *)string_buf,
+                                         (uint16_t)(string_buf[0] & 0xFFu));
         return string_buf;
     }
 
@@ -610,6 +638,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     for (size_t i = 0; i < len; i++)
         string_buf[1 + i] = (uint16_t)str[i];
     string_buf[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 + len * 2));
+    usb_packet_debug_note_control_in("desc-string", (uint8_t const *)string_buf,
+                                     (uint16_t)(string_buf[0] & 0xFFu));
     return string_buf;
 }
 
@@ -824,12 +854,17 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
     if (stage != CONTROL_STAGE_SETUP)
         return true;
 
+    usb_packet_debug_note_setup("vendor-control", req->bmRequestType, req->bRequest, req->wValue,
+                                req->wIndex, req->wLength);
+
     if (boot_mode_current() == BOOT_MODE_RUN && boot_mode_run_persona() == RUN_PERSONA_XBOXONE &&
         req->bmRequestType == 0xC0 && req->bRequest == XGIP_MS_VENDOR_REQ_CODE &&
         req->wIndex == MS_OS_10_COMPAT_ID_INDEX) {
         uint16_t want = req->wLength;
         if (want > sizeof(desc_xgip_compatible_id))
             want = sizeof(desc_xgip_compatible_id);
+        usb_packet_debug_note_control_in("xgip-compat-id",
+                                         (uint8_t const *)&desc_xgip_compatible_id, want);
         return tud_control_xfer(rhport, req, (void *)&desc_xgip_compatible_id, want);
     }
 
@@ -840,6 +875,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
         uint16_t want = req->wLength;
         if (want > sizeof(desc_ms_os_20))
             want = sizeof(desc_ms_os_20);
+        usb_packet_debug_note_control_in("ms-os-20", desc_ms_os_20, want);
         return tud_control_xfer(rhport, req, (void *)desc_ms_os_20, want);
     }
 
@@ -858,6 +894,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
         uint16_t want = req->wLength;
         if (want > avail)
             want = avail;
+        usb_packet_debug_note_control_in("setup-diag-log", diag_xfer_buf, want);
         return tud_control_xfer(rhport, req, diag_xfer_buf, want);
     }
 
