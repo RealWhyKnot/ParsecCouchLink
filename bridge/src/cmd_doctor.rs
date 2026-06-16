@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 use console::style;
 
-use crate::{cdc, config, protocol, support};
+use crate::{cdc, config, discovery, support};
 
 #[derive(Debug)]
 pub enum CheckResult {
@@ -306,73 +306,87 @@ pub async fn check_discover() -> CheckResult {
             );
         }
     };
-    if let Err(e) = socket.set_broadcast(true) {
-        return CheckResult::Fail(
-            format!("set_broadcast failed on UDP socket: {e}"),
-            "Network adapter may not support broadcast (unusual). Try a \
-             different NIC, or disable the wrong-side adapter on a multi-homed PC."
-                .into(),
-        );
-    }
-    let discover = protocol::Packet::discover(0).encode();
-    if let Err(e) = socket.send_to(&discover, "255.255.255.255:4242").await {
-        return CheckResult::Fail(
-            format!("UDP broadcast send failed: {e}"),
-            "Likely a firewall rule blocking outbound UDP, or `255.255.255.255` \
-             is routed to the wrong NIC on this multi-homed PC. Run \
-             `couchlink test firewall`."
-                .into(),
-        );
-    }
 
-    let mut buf = [0u8; 64];
-    let recv = tokio::time::timeout(Duration::from_secs(3), socket.recv_from(&mut buf)).await;
-    match recv {
-        Ok(Ok((n, from))) => match protocol::Packet::decode(&buf[..n]) {
-            Ok(pkt) => match pkt.kind {
-                protocol::PacketKind::Ack(info) => CheckResult::Pass(format!(
-                    "ack from {from} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s",
-                    info.proto_version,
-                    info.firmware_version(),
-                    info.board_type,
-                    info.unique_id_short,
-                    info.uptime_seconds,
-                )),
-                other => {
-                    let head: Vec<u8> = buf[..n.min(16)].to_vec();
-                    tracing::debug!(
-                        "doctor: discovery got non-ack packet from {from}: kind={:?} first {} bytes = {:02X?}",
-                        other,
-                        head.len(),
-                        head,
-                    );
-                    CheckResult::Warn(format!("got non-ack packet from {from}: {other:?}"))
-                }
-            },
-            Err(e) => {
-                let head: Vec<u8> = buf[..n.min(32)].to_vec();
-                tracing::debug!(
-                    "doctor: discovery got {} bytes from {from} that did not parse: {e}; first {} = {:02X?}",
-                    n,
-                    head.len(),
-                    head,
-                );
-                CheckResult::Fail(
-                    format!("got {n} bytes from {from} but it did not parse as a Pico ack: {e}"),
-                    "Another device on the LAN is replying on UDP/4242, or the \
-                     Pico is running mismatched firmware. Re-flash via \
-                     `couchlink.exe flash` and try again."
-                        .into(),
-                )
-            }
-        },
-        Ok(Err(e)) => CheckResult::Fail(
-            format!("UDP recv error: {e}"),
-            "Network adapter dropped mid-test; rare. Re-run.".into(),
-        ),
-        Err(_) => CheckResult::Fail(
+    match discovery::collect(&socket, Duration::from_secs(3)).await {
+        Ok(replies) if !replies.is_empty() => CheckResult::Pass(format_discover_pass(&replies)),
+        Ok(_) => CheckResult::Fail(
             "no Pico replied within 3 s on UDP/4242".into(),
             support::no_pico_wifi_short_hint().into(),
         ),
+        Err(e) => CheckResult::Fail(
+            format!("UDP discovery failed: {e}"),
+            "Likely a firewall rule, a network adapter problem, or a route selection issue. \
+             Run `couchlink test discover --all`; if that fails too, run `couchlink bundle`."
+                .into(),
+        ),
+    }
+}
+
+fn format_discover_pass(replies: &[discovery::DiscoveryReply]) -> String {
+    let first = &replies[0];
+    let count_prefix = if replies.len() == 1 {
+        "1 Pico reply".to_string()
+    } else {
+        format!("{} Pico replies", replies.len())
+    };
+    format!(
+        "{count_prefix}; first ack from {} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s",
+        first.peer,
+        first.info.proto_version,
+        first.info.firmware_version(),
+        first.info.board_type,
+        first.info.unique_id_short,
+        first.info.uptime_seconds,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    use crate::protocol::{self, AckInfo, Persona};
+
+    use super::*;
+
+    #[test]
+    fn discover_pass_message_reports_count_and_first_ack() {
+        let replies = vec![
+            discovery::DiscoveryReply {
+                peer: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 50, 226)), 4242),
+                info: AckInfo {
+                    proto_version: 1,
+                    fw_major: 26,
+                    fw_minor: 6,
+                    fw_patch: 16,
+                    board_type: protocol::BOARD_PICO_2_W,
+                    uptime_seconds: 42,
+                    unique_id_short: 0x07D37EB6,
+                    full_version: None,
+                },
+                persona: Persona::Ps4,
+                flags: 0,
+            },
+            discovery::DiscoveryReply {
+                peer: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 50, 4)), 4242),
+                info: AckInfo {
+                    proto_version: 1,
+                    fw_major: 26,
+                    fw_minor: 6,
+                    fw_patch: 16,
+                    board_type: protocol::BOARD_PICO_W_RP2040,
+                    uptime_seconds: 41,
+                    unique_id_short: 0x523861E6,
+                    full_version: None,
+                },
+                persona: Persona::Ps4,
+                flags: 0,
+            },
+        ];
+
+        let message = format_discover_pass(&replies);
+        assert!(message.contains("2 Pico replies"));
+        assert!(message.contains("first ack from 192.168.50.226:4242"));
+        assert!(message.contains("board=0x01"));
+        assert!(message.contains("uid=0x07D37EB6"));
     }
 }
