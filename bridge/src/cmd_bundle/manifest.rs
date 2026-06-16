@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 5;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 6;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -71,6 +71,8 @@ pub(super) struct Manifest {
     usb_packet_summary_path: &'static str,
     usb_packet_records_included: bool,
     usb_packet_records_path: &'static str,
+    debug_capture_verdict_included: bool,
+    debug_capture_verdict_path: &'static str,
     diagnostic_cache_included: bool,
     retained_debug_packet_logs: Vec<String>,
     per_pico_capture_outcomes: Vec<ManifestPicoCapture>,
@@ -140,6 +142,8 @@ pub(super) async fn build_manifest(
         usb_packet_summary_path: "usb-packets-summary.json",
         usb_packet_records_included: true,
         usb_packet_records_path: "usb-packets.jsonl",
+        debug_capture_verdict_included: true,
+        debug_capture_verdict_path: "debug-capture-verdict.txt",
         diagnostic_cache_included,
         retained_debug_packet_logs: retained_debug_packet_logs.to_vec(),
         per_pico_capture_outcomes: per_pico_capture_outcomes.to_vec(),
@@ -155,6 +159,7 @@ pub(super) async fn build_manifest(
             "Retained debug packet logs include per-harvest health records for GET_LOG duration, chunks, lost bytes, packet counts, and failures.",
             "usb-packets-summary.json summarizes packet directions, sources, reasons, sequence gaps, truncation, and firmware packet-stat checkpoints.",
             "usb-packets.jsonl normalizes each packet/stat line for reverse-engineering tools.",
+            "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
         ],
         redaction_policy: vec![
             "Wi-Fi passwords are not included.",
@@ -262,6 +267,11 @@ mod tests {
         assert_eq!(json["usb_packet_summary_path"], "usb-packets-summary.json");
         assert_eq!(json["usb_packet_records_included"], true);
         assert_eq!(json["usb_packet_records_path"], "usb-packets.jsonl");
+        assert_eq!(json["debug_capture_verdict_included"], true);
+        assert_eq!(
+            json["debug_capture_verdict_path"],
+            "debug-capture-verdict.txt"
+        );
         assert_eq!(json["per_pico_capture_outcomes"][0]["uid"], "02E22DA9");
         assert_eq!(
             json["per_pico_capture_outcomes"][0]["usb_packet_dump_count"],

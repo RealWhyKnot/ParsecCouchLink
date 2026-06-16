@@ -39,7 +39,7 @@ use usb_enum::{
 };
 use usb_packet_summary::{
     records_jsonl_for_sources, records_jsonl_for_text, summarize_sources, summarize_text,
-    UsbPacketSummarySource,
+    UsbPacketBundleSummary, UsbPacketSummarySource,
 };
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
@@ -61,6 +61,7 @@ pub struct BundleSummary {
     pub usb_packet_dump_count: usize,
     pub retained_debug_packet_log_count: usize,
     pub retained_debug_packet_count: usize,
+    pub debug_capture_status: String,
     pub per_pico_capture_count: usize,
     pub host_snapshot_count: usize,
     pub diagnostic_cache_included: bool,
@@ -246,6 +247,16 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     let usb_packet_summary_json = serde_json::to_string_pretty(&usb_packet_summary)?;
     let usb_packet_records_jsonl =
         records_jsonl_for_sources(&per_pico_packet_sources, &retained_packet_sources)?;
+    let debug_capture_status = debug_capture_overall_status(
+        &usb_packet_summary,
+        &per_pico_captures,
+        &retained_debug_packet_logs,
+    );
+    let debug_capture_verdict = debug_capture_verdict_text(
+        &per_pico_captures,
+        &retained_debug_packet_logs,
+        &usb_packet_summary,
+    );
     capture_log.record_duration(
         "usb_packet_summary",
         0,
@@ -262,6 +273,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         "included",
         usb_packet_records_jsonl.len(),
         "jsonl",
+    );
+    capture_log.record_duration(
+        "debug_capture_verdict",
+        0,
+        "included",
+        debug_capture_verdict.len(),
+        debug_capture_status,
     );
 
     let host_snapshots = capture_host_snapshots().await;
@@ -421,6 +439,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.start_file("usb-packets.jsonl", opts)?;
     zip.write_all(redact_bundle_text(&usb_packet_records_jsonl).as_bytes())?;
+
+    zip.start_file("debug-capture-verdict.txt", opts)?;
+    zip.write_all(redact_bundle_text(&debug_capture_verdict).as_bytes())?;
 
     for log in &retained_debug_packet_logs {
         zip.start_file(format!("debug-packets/{}", log.name), opts)?;
@@ -585,6 +606,7 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         usb_packet_dump_count,
         retained_debug_packet_log_count: retained_debug_packet_logs.len(),
         retained_debug_packet_count,
+        debug_capture_status: debug_capture_status.to_string(),
         per_pico_capture_count: per_pico_captures.len(),
         host_snapshot_count: host_snapshots.len(),
         diagnostic_cache_included,
@@ -1188,6 +1210,156 @@ fn aggregate_usb_packets(
     out
 }
 
+fn debug_capture_verdict_text(
+    captures: &[PicoBundleCapture],
+    retained_logs: &[RetainedDebugPacketLog],
+    summary: &UsbPacketBundleSummary,
+) -> String {
+    let status = debug_capture_overall_status(summary, captures, retained_logs);
+    let mut out = String::from("Debug input packet capture verdict\n\n");
+    let _ = writeln!(out, "overall_status={status}");
+    let _ = writeln!(out, "raw_packet_lines={}", summary.aggregate.packet_lines);
+    let _ = writeln!(out, "packet_stats_lines={}", summary.aggregate.stats_lines);
+    let _ = writeln!(out, "harvest_lines={}", summary.aggregate.harvest_lines);
+    let _ = writeln!(
+        out,
+        "harvest_statuses={}",
+        format_count_map(&summary.aggregate.harvest_statuses)
+    );
+    let _ = writeln!(out, "retained_debug_packet_logs={}", retained_logs.len());
+    let _ = writeln!(out, "per_pico_captures={}", captures.len());
+    let _ = writeln!(out);
+
+    out.push_str("meaning=");
+    match status {
+        "raw_packets_captured" => out.push_str(
+            "This bundle contains raw debug input USB packets for adapter reverse engineering.",
+        ),
+        "debug_stats_only" => out.push_str(
+            "Debug input packet counters were present, but raw packet payload lines were not retained.",
+        ),
+        "harvest_attempted_no_packets" => out.push_str(
+            "The bridge attempted retained debug packet harvests, but no raw packet payload lines were captured.",
+        ),
+        "retained_logs_without_packet_lines" => out.push_str(
+            "Retained debug packet log files exist, but they did not contain packet, stats, or harvest records.",
+        ),
+        "live_picos_no_packet_evidence" => out.push_str(
+            "At least one Pico was reachable, but the captured diagnostics did not include debug input packet evidence.",
+        ),
+        "only_offline_or_cached_picos" => out.push_str(
+            "No Pico was reachable during bundle capture; packet evidence can only come from retained debug logs.",
+        ),
+        _ => out.push_str("No Pico or retained debug packet evidence was present in this bundle."),
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(out);
+
+    out.push_str("next_steps=\n");
+    if summary.aggregate.packet_lines == 0 {
+        out.push_str(
+            "- Switch the target Pico to debug input mode, reproduce adapter traffic, then run bundle again.\n",
+        );
+        out.push_str(
+            "- Keep the bridge stream running while reproducing the issue so retained debug packet harvests can write debug-packets/*.log.\n",
+        );
+        out.push_str(
+            "- If harvest_statuses shows error, check bundle-capture.txt and debug-packets/*.log for GET_LOG failures and timing.\n",
+        );
+    } else {
+        out.push_str(
+            "- Use usb-packets.jsonl for scripts and usb-packets-summary.json for sequence, direction, truncation, and harvest health totals.\n",
+        );
+    }
+    let _ = writeln!(out);
+
+    out.push_str("per_pico=\n");
+    if captures.is_empty() {
+        out.push_str("- none\n");
+    } else {
+        for capture in captures {
+            let persona =
+                state_json_persona(&capture.state_json).unwrap_or_else(|| "unknown".to_string());
+            let _ = writeln!(
+                out,
+                "- uid={} live={} peer={} persona={} source={} pico_state={} pico_diag={} usb_diag={} packet_status={} raw_packets={} path={}",
+                capture.manifest.uid,
+                capture.manifest.live,
+                capture.manifest.peer.as_deref().unwrap_or("none"),
+                persona,
+                capture.manifest.source,
+                capture.manifest.pico_state_status,
+                capture.manifest.pico_diag_status,
+                capture.manifest.usb_diag_status,
+                capture.manifest.usb_packet_dump_status,
+                capture.manifest.usb_packet_dump_count,
+                capture.manifest.path
+            );
+        }
+    }
+    let _ = writeln!(out);
+
+    out.push_str("retained_logs=\n");
+    if retained_logs.is_empty() {
+        out.push_str("- none\n");
+    } else {
+        for log in retained_logs {
+            let log_summary = summarize_text(&log.text);
+            let _ = writeln!(
+                out,
+                "- path=debug-packets/{} raw_packets={} stats={} harvest_lines={} harvest_statuses={}",
+                log.name,
+                log_summary.packet_lines,
+                log_summary.stats_lines,
+                log_summary.harvest_lines,
+                format_count_map(&log_summary.harvest_statuses)
+            );
+        }
+    }
+
+    out
+}
+
+fn debug_capture_overall_status(
+    summary: &UsbPacketBundleSummary,
+    captures: &[PicoBundleCapture],
+    retained_logs: &[RetainedDebugPacketLog],
+) -> &'static str {
+    if summary.aggregate.packet_lines > 0 {
+        "raw_packets_captured"
+    } else if summary.aggregate.stats_lines > 0 {
+        "debug_stats_only"
+    } else if summary.aggregate.harvest_lines > 0 {
+        "harvest_attempted_no_packets"
+    } else if !retained_logs.is_empty() {
+        "retained_logs_without_packet_lines"
+    } else if captures.iter().any(|capture| capture.manifest.live) {
+        "live_picos_no_packet_evidence"
+    } else if !captures.is_empty() {
+        "only_offline_or_cached_picos"
+    } else {
+        "no_pico_or_packet_evidence"
+    }
+}
+
+fn state_json_persona(state_json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(state_json).ok()?;
+    value
+        .get("persona")?
+        .as_str()
+        .map(|value| value.to_string())
+}
+
+fn format_count_map(map: &BTreeMap<String, u64>) -> String {
+    if map.is_empty() {
+        return "none".to_string();
+    }
+    map.iter()
+        .map(|(key, value)| format!("{key}:{value}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn is_usb_packet_diagnostic_line(line: &str) -> bool {
     line.starts_with("usb-packet ") || line.starts_with("usb-packet-stats ")
 }
@@ -1230,6 +1402,10 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     } else {
         println!("  usb-packets.txt: no raw packets captured (debug input mode only)");
     }
+    println!(
+        "  debug-capture-verdict.txt: {}",
+        summary.debug_capture_status
+    );
     if summary.retained_debug_packet_log_count > 0 {
         println!(
             "  debug-packets/: {} retained packet log(s)",
@@ -1288,8 +1464,10 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 mod tests {
     use super::{
         aggregate_usb_packets, count_usb_packet_lines, count_usb_packet_stats_lines,
-        sanitize_path_component, usb_packets_text_from_diag, RetainedDebugPacketLog,
+        debug_capture_overall_status, debug_capture_verdict_text, sanitize_path_component,
+        usb_packets_text_from_diag, PicoBundleCapture, RetainedDebugPacketLog,
     };
+    use super::{summarize_sources, ManifestPicoCapture, UsbPacketSummarySource};
 
     #[test]
     fn pico_bundle_path_component_is_sanitized() {
@@ -1319,5 +1497,89 @@ mod tests {
         assert!(out.contains("usb-packet seq=4 dir=out data=010203"));
         assert!(out.contains("usb-packet-stats total=64 in=10 out=54"));
         assert!(!out.contains("No raw USB packets"));
+    }
+
+    #[test]
+    fn debug_capture_verdict_identifies_raw_packets() {
+        let capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"debug\"}\n",
+            "usb-packet seq=1 dir=out data=010203\n",
+        );
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: &capture.usb_packets_text,
+        }];
+        let summary = summarize_sources(&per_pico, &[]);
+        assert_eq!(
+            debug_capture_overall_status(&summary, std::slice::from_ref(&capture), &[]),
+            "raw_packets_captured"
+        );
+
+        let text = debug_capture_verdict_text(&[capture], &[], &summary);
+        assert!(text.contains("overall_status=raw_packets_captured"));
+        assert!(text.contains("raw_packet_lines=1"));
+        assert!(text.contains("persona=debug"));
+        assert!(text.contains("path=picos/02E22DA9"));
+    }
+
+    #[test]
+    fn debug_capture_verdict_identifies_harvest_without_packets() {
+        let retained = vec![RetainedDebugPacketLog {
+            name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
+            text: "# harvest {\"status\":\"error\",\"duration_ms\":1200,\"error\":\"no log chunks received\"}\n"
+                .to_string(),
+        }];
+        let retained_sources = [UsbPacketSummarySource {
+            label: retained[0].name.clone(),
+            path: format!("debug-packets/{}", retained[0].name),
+            text: &retained[0].text,
+        }];
+        let summary = summarize_sources(&[], &retained_sources);
+
+        assert_eq!(
+            debug_capture_overall_status(&summary, &[], &retained),
+            "harvest_attempted_no_packets"
+        );
+        let text = debug_capture_verdict_text(&[], &retained, &summary);
+        assert!(text.contains("overall_status=harvest_attempted_no_packets"));
+        assert!(text.contains("harvest_statuses=error:1"));
+        assert!(text.contains("GET_LOG failures"));
+        assert!(text.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
+    }
+
+    fn pico_capture(
+        uid: &str,
+        live: bool,
+        state_json: &str,
+        usb_packets_text: &str,
+    ) -> PicoBundleCapture {
+        PicoBundleCapture {
+            manifest: ManifestPicoCapture {
+                uid: uid.to_string(),
+                path: format!("picos/{uid}"),
+                peer: live.then(|| "10.0.0.24:4242".to_string()),
+                live,
+                source: "test".to_string(),
+                state_captured: true,
+                pico_diag_status: "captured".to_string(),
+                usb_diag_status: "captured".to_string(),
+                pico_state_status: "captured".to_string(),
+                usb_packet_dump_status: if usb_packets_text.contains("usb-packet ") {
+                    "captured"
+                } else {
+                    "no_packets"
+                }
+                .to_string(),
+                usb_packet_dump_count: count_usb_packet_lines(usb_packets_text),
+                cached_state_included: false,
+            },
+            state_json: state_json.to_string(),
+            pico_diag_text: String::new(),
+            usb_diag_text: String::new(),
+            usb_packets_text: usb_packets_text.to_string(),
+        }
     }
 }
