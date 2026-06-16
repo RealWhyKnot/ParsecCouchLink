@@ -1256,11 +1256,29 @@ fn debug_capture_verdict_text(
     summary: &UsbPacketBundleSummary,
 ) -> String {
     let status = debug_capture_overall_status(summary, captures, retained_logs);
+    let evidence_grade = debug_capture_evidence_grade(summary);
+    let (gate, gate_reason) = debug_capture_gate(summary);
+    let endpoint_in_lines = debug_summary_direction_count(summary, "in");
+    let endpoint_out_lines = debug_summary_direction_count(summary, "out");
+    let setup_lines = debug_summary_direction_count(summary, "setup");
+    let control_in_lines = debug_summary_direction_count(summary, "control-in");
+    let debug_persona_captures = captures
+        .iter()
+        .filter(|capture| state_json_persona(&capture.state_json).as_deref() == Some("debug"))
+        .count();
     let mut out = String::from("Debug input packet capture verdict\n\n");
     let _ = writeln!(out, "overall_status={status}");
+    let _ = writeln!(out, "evidence_grade={evidence_grade}");
+    let _ = writeln!(out, "adapter_reverse_engineering_gate={gate}");
+    let _ = writeln!(out, "gate_reason={gate_reason}");
     let _ = writeln!(out, "raw_packet_lines={}", summary.aggregate.packet_lines);
     let _ = writeln!(out, "packet_stats_lines={}", summary.aggregate.stats_lines);
     let _ = writeln!(out, "harvest_lines={}", summary.aggregate.harvest_lines);
+    let _ = writeln!(out, "endpoint_in_lines={endpoint_in_lines}");
+    let _ = writeln!(out, "endpoint_out_lines={endpoint_out_lines}");
+    let _ = writeln!(out, "setup_lines={setup_lines}");
+    let _ = writeln!(out, "control_in_lines={control_in_lines}");
+    let _ = writeln!(out, "debug_persona_captures={debug_persona_captures}");
     let _ = writeln!(
         out,
         "harvest_statuses={}",
@@ -1268,6 +1286,26 @@ fn debug_capture_verdict_text(
     );
     let _ = writeln!(out, "retained_debug_packet_logs={}", retained_logs.len());
     let _ = writeln!(out, "per_pico_captures={}", captures.len());
+    let _ = writeln!(out);
+
+    out.push_str("minimum_evidence=\n");
+    out.push_str("- raw_packet_lines > 0 is required before this bundle is enough for adapter reverse engineering.\n");
+    out.push_str("- setup_lines or control_in_lines > 0 is preferred for enumeration/control-transfer failures.\n");
+    out.push_str(
+        "- endpoint_in_lines or endpoint_out_lines > 0 is preferred for runtime adapter traffic.\n",
+    );
+    out.push_str("- debug_persona_captures > 0 proves the Pico was in debug input mode when bundle captured current state.\n");
+    let _ = writeln!(out);
+
+    out.push_str("missing_evidence=\n");
+    for line in debug_capture_missing_evidence_lines(
+        summary,
+        captures,
+        retained_logs,
+        debug_persona_captures,
+    ) {
+        let _ = writeln!(out, "- {line}");
+    }
     let _ = writeln!(out);
 
     out.push_str("meaning=");
@@ -1358,6 +1396,78 @@ fn debug_capture_verdict_text(
     }
 
     out
+}
+
+fn debug_capture_evidence_grade(summary: &UsbPacketBundleSummary) -> &'static str {
+    if summary.aggregate.packet_lines > 0
+        && (debug_summary_direction_count(summary, "setup") > 0
+            || debug_summary_direction_count(summary, "control-in") > 0)
+        && (debug_summary_direction_count(summary, "in") > 0
+            || debug_summary_direction_count(summary, "out") > 0)
+    {
+        "complete"
+    } else if summary.aggregate.packet_lines > 0 {
+        "usable_raw_packets"
+    } else if summary.aggregate.stats_lines > 0 || summary.aggregate.harvest_lines > 0 {
+        "partial_no_payloads"
+    } else {
+        "missing"
+    }
+}
+
+fn debug_capture_gate(summary: &UsbPacketBundleSummary) -> (&'static str, &'static str) {
+    if summary.aggregate.packet_lines > 0 {
+        ("pass", "raw debug input packet payload lines are present")
+    } else {
+        ("fail", "raw debug input packet payload lines are missing")
+    }
+}
+
+fn debug_capture_missing_evidence_lines(
+    summary: &UsbPacketBundleSummary,
+    captures: &[PicoBundleCapture],
+    retained_logs: &[RetainedDebugPacketLog],
+    debug_persona_captures: usize,
+) -> Vec<&'static str> {
+    let mut lines = Vec::new();
+    if summary.aggregate.packet_lines == 0 {
+        lines.push("raw USB packet payload lines from debug input mode");
+    }
+    if debug_summary_direction_count(summary, "setup") == 0
+        && debug_summary_direction_count(summary, "control-in") == 0
+    {
+        lines.push("USB setup/control-IN traffic for enumeration analysis");
+    }
+    if debug_summary_direction_count(summary, "in") == 0
+        && debug_summary_direction_count(summary, "out") == 0
+    {
+        lines.push("endpoint IN/OUT traffic for runtime adapter analysis");
+    }
+    if debug_persona_captures == 0 {
+        lines.push("current per-Pico state proving persona=debug");
+    }
+    if summary.aggregate.packet_lines == 0
+        && summary.aggregate.harvest_lines == 0
+        && retained_logs.is_empty()
+    {
+        lines.push("retained host harvest logs proving stream-time capture ran");
+    }
+    if captures.is_empty() && retained_logs.is_empty() {
+        lines.push("live, cached, or retained Pico evidence");
+    }
+    if lines.is_empty() {
+        lines.push("none");
+    }
+    lines
+}
+
+fn debug_summary_direction_count(summary: &UsbPacketBundleSummary, direction: &str) -> u64 {
+    summary
+        .aggregate
+        .directions
+        .get(direction)
+        .copied()
+        .unwrap_or(0)
 }
 
 fn debug_capture_overall_status(
@@ -1578,9 +1688,36 @@ mod tests {
 
         let text = debug_capture_verdict_text(&[capture], &[], &summary);
         assert!(text.contains("overall_status=raw_packets_captured"));
+        assert!(text.contains("evidence_grade=usable_raw_packets"));
+        assert!(text.contains("adapter_reverse_engineering_gate=pass"));
+        assert!(text.contains("endpoint_out_lines=1"));
+        assert!(text.contains("debug_persona_captures=1"));
+        assert!(text.contains("- USB setup/control-IN traffic for enumeration analysis"));
         assert!(text.contains("raw_packet_lines=1"));
         assert!(text.contains("persona=debug"));
         assert!(text.contains("path=picos/02E22DA9"));
+    }
+
+    #[test]
+    fn debug_capture_verdict_marks_complete_adapter_evidence() {
+        let capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"debug\"}\n",
+            "usb-packet seq=1 dir=setup bm=0x80 req=0x06 value=0x0100 index=0x0000 wlen=18 data=8006000100001200\nusb-packet seq=2 dir=out data=010203\n",
+        );
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: &capture.usb_packets_text,
+        }];
+        let summary = summarize_sources(&per_pico, &[]);
+        let text = debug_capture_verdict_text(&[capture], &[], &summary);
+        assert!(text.contains("evidence_grade=complete"));
+        assert!(text.contains("adapter_reverse_engineering_gate=pass"));
+        assert!(text.contains("setup_lines=1"));
+        assert!(text.contains("endpoint_out_lines=1"));
+        assert!(text.contains("- none"));
     }
 
     #[test]
@@ -1603,6 +1740,10 @@ mod tests {
         );
         let text = debug_capture_verdict_text(&[], &retained, &summary);
         assert!(text.contains("overall_status=harvest_attempted_no_packets"));
+        assert!(text.contains("evidence_grade=partial_no_payloads"));
+        assert!(text.contains("adapter_reverse_engineering_gate=fail"));
+        assert!(text.contains("gate_reason=raw debug input packet payload lines are missing"));
+        assert!(text.contains("- raw USB packet payload lines from debug input mode"));
         assert!(text.contains("harvest_statuses=error:1"));
         assert!(text.contains("GET_LOG failures"));
         assert!(text.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
