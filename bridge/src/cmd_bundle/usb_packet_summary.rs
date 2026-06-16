@@ -1202,6 +1202,12 @@ struct UsbEnumerationAnalysis {
     hid_output_reports: u64,
     hid_feature_reports: u64,
     first_device_vid_pid: Option<String>,
+    first_device_identity: Option<String>,
+    first_device_class: Option<String>,
+    first_device_bcd_usb: Option<String>,
+    first_device_bcd_device: Option<String>,
+    first_device_max_packet: Option<u64>,
+    first_device_configurations: Option<u64>,
     first_configuration_interfaces: Option<u64>,
     known_vendor_requests: BTreeMap<String, u64>,
     control_payload_replies: BTreeMap<String, u64>,
@@ -1276,7 +1282,15 @@ impl UsbEnumerationAnalysis {
             Some("device") => {
                 self.device_descriptor_replies += 1;
                 if self.first_device_vid_pid.is_none() {
-                    self.first_device_vid_pid = device_descriptor_vid_pid(fields);
+                    if let Some(facts) = device_descriptor_facts(fields) {
+                        self.first_device_vid_pid = Some(facts.vid_pid);
+                        self.first_device_identity = Some(facts.identity);
+                        self.first_device_class = Some(facts.class);
+                        self.first_device_bcd_usb = Some(facts.bcd_usb);
+                        self.first_device_bcd_device = Some(facts.bcd_device);
+                        self.first_device_max_packet = Some(facts.max_packet);
+                        self.first_device_configurations = Some(facts.configurations);
+                    }
                 }
             }
             Some("configuration") => {
@@ -1302,16 +1316,57 @@ impl UsbEnumerationAnalysis {
     }
 }
 
-fn device_descriptor_vid_pid(fields: &BTreeMap<&str, &str>) -> Option<String> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DeviceDescriptorFacts {
+    vid_pid: String,
+    identity: String,
+    class: String,
+    bcd_usb: String,
+    bcd_device: String,
+    max_packet: u64,
+    configurations: u64,
+}
+
+fn device_descriptor_facts(fields: &BTreeMap<&str, &str>) -> Option<DeviceDescriptorFacts> {
     let bytes = hex_bytes(fields.get("data"))?;
-    if bytes.len() < 12 {
+    if bytes.len() < 18 {
         return None;
     }
-    Some(format!(
-        "{}:{}",
-        hex_u16(le_u16(&bytes, 8)),
-        hex_u16(le_u16(&bytes, 10))
-    ))
+    let vid = le_u16(&bytes, 8);
+    let pid = le_u16(&bytes, 10);
+    let class = u64::from(bytes[4]);
+    let subclass = u64::from(bytes[5]);
+    let protocol = u64::from(bytes[6]);
+    Some(DeviceDescriptorFacts {
+        vid_pid: format!("{}:{}", hex_u16(vid), hex_u16(pid)),
+        identity: known_device_identity(vid, pid, class, subclass, protocol).to_string(),
+        class: format!(
+            "class=0x{:02X},subclass=0x{:02X},protocol=0x{:02X}",
+            class, subclass, protocol
+        ),
+        bcd_usb: hex_u16(le_u16(&bytes, 2)),
+        bcd_device: hex_u16(le_u16(&bytes, 12)),
+        max_packet: u64::from(bytes[7]),
+        configurations: u64::from(bytes[17]),
+    })
+}
+
+fn known_device_identity(
+    vid: u64,
+    pid: u64,
+    class: u64,
+    subclass: u64,
+    protocol: u64,
+) -> &'static str {
+    match (vid, pid, class, subclass, protocol) {
+        (0x2E8A, 0xCAF0, 0xEF, 0x02, 0x01) => "couchlink_setup_cdc_winusb",
+        (0x045E, 0x028E, 0xFF, 0xFF, 0xFF) => "couchlink_xinput_maple_debug_shape",
+        (0x2E8A, 0xCAF1, 0x00, 0x00, 0x00) => "couchlink_keyboard_hid_boot_shape",
+        (0x054C, 0x0268, 0x00, 0x00, 0x00) => "couchlink_ps3_hid_shape",
+        (0x054C, 0x09CC, 0x00, 0x00, 0x00) => "couchlink_ps4_hid_shape",
+        (0x0E6F, 0x02A4, 0xFF, 0xFF, 0xFF) => "couchlink_xboxone_xgip_shape",
+        _ => "unknown_usb_device_identity",
+    }
 }
 
 fn configuration_descriptor_interfaces(fields: &BTreeMap<&str, &str>) -> Option<u64> {
@@ -1361,6 +1416,54 @@ fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysi
         format_args!(
             "device_vid_pid={}\n",
             analysis.first_device_vid_pid.as_deref().unwrap_or("-")
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "device_identity={}\n",
+            analysis.first_device_identity.as_deref().unwrap_or("-")
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "device_class={}\n",
+            analysis.first_device_class.as_deref().unwrap_or("-")
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "device_bcd_usb={}\n",
+            analysis.first_device_bcd_usb.as_deref().unwrap_or("-")
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "device_bcd_device={}\n",
+            analysis.first_device_bcd_device.as_deref().unwrap_or("-")
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "device_max_packet={}\n",
+            analysis
+                .first_device_max_packet
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "device_configurations={}\n",
+            analysis
+                .first_device_configurations
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
         ),
     );
     write_bool(
@@ -2102,7 +2205,7 @@ usb-packet seq=9 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=
     fn enumeration_analysis_reports_descriptor_configuration_and_endpoint_phases() {
         let text = "\
 usb-packet seq=1 t=10 dir=setup src=standard-control bm=0x80 req=0x06 value=0x0100 index=0x0000 wlen=18 len=8 captured=8 data=8006000100001200
-usb-packet seq=2 t=11 dir=control-in src=desc-device len=18 captured=18 dropped=0 reason=control-reply data=12010002000000405E048E02011401020301
+usb-packet seq=2 t=11 dir=control-in src=desc-device len=18 captured=18 dropped=0 reason=control-reply data=12010002FFFFFF405E048E02140101020301
 usb-packet seq=3 t=12 dir=setup src=standard-control bm=0x00 req=0x05 value=0x0005 index=0x0000 wlen=0 len=8 captured=8 data=0005050000000000
 usb-packet seq=4 t=13 dir=setup src=standard-control bm=0x80 req=0x06 value=0x0200 index=0x0000 wlen=32 len=8 captured=8 data=8006000200002000
 usb-packet seq=5 t=14 dir=control-in src=desc-config len=9 captured=9 dropped=0 reason=control-reply data=09022000010100A032
@@ -2119,6 +2222,12 @@ usb-packet seq=9 t=18 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-
         assert!(out.contains("device_descriptor_request=yes"));
         assert!(out.contains("device_descriptor_reply=yes"));
         assert!(out.contains("device_vid_pid=0x045E:0x028E"));
+        assert!(out.contains("device_identity=couchlink_xinput_maple_debug_shape"));
+        assert!(out.contains("device_class=class=0xFF,subclass=0xFF,protocol=0xFF"));
+        assert!(out.contains("device_bcd_usb=0x0200"));
+        assert!(out.contains("device_bcd_device=0x0114"));
+        assert!(out.contains("device_max_packet=64"));
+        assert!(out.contains("device_configurations=1"));
         assert!(out.contains("configuration_descriptor_request=yes"));
         assert!(out.contains("configuration_descriptor_reply=yes"));
         assert!(out.contains("configuration_interfaces=1"));
@@ -2156,6 +2265,38 @@ usb-packet seq=9 t=18 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-
         assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
         assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
         assert!(out.contains("verdict=setup_requests_seen_no_descriptor_reply"));
+    }
+
+    #[test]
+    fn known_device_identity_names_couchlink_usb_shapes() {
+        assert_eq!(
+            known_device_identity(0x2E8A, 0xCAF0, 0xEF, 0x02, 0x01),
+            "couchlink_setup_cdc_winusb"
+        );
+        assert_eq!(
+            known_device_identity(0x045E, 0x028E, 0xFF, 0xFF, 0xFF),
+            "couchlink_xinput_maple_debug_shape"
+        );
+        assert_eq!(
+            known_device_identity(0x2E8A, 0xCAF1, 0x00, 0x00, 0x00),
+            "couchlink_keyboard_hid_boot_shape"
+        );
+        assert_eq!(
+            known_device_identity(0x054C, 0x0268, 0x00, 0x00, 0x00),
+            "couchlink_ps3_hid_shape"
+        );
+        assert_eq!(
+            known_device_identity(0x054C, 0x09CC, 0x00, 0x00, 0x00),
+            "couchlink_ps4_hid_shape"
+        );
+        assert_eq!(
+            known_device_identity(0x0E6F, 0x02A4, 0xFF, 0xFF, 0xFF),
+            "couchlink_xboxone_xgip_shape"
+        );
+        assert_eq!(
+            known_device_identity(0x1234, 0x5678, 0x00, 0x00, 0x00),
+            "unknown_usb_device_identity"
+        );
     }
 
     #[test]

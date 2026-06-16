@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 16;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 17;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -183,7 +183,7 @@ pub(super) async fn build_manifest(
             "usb-control-transfers.txt extracts setup and control-IN traffic into a compact transcript with decoded setup request names.",
             "usb-hid-reports.txt extracts HID report ids and report types from HID OUT/FEATURE payloads and HID GET_REPORT/SET_REPORT setup requests.",
             "usb-packet-timeline.txt extracts packet, stats, and harvest records in timestamp order with per-source timing deltas.",
-            "usb-enumeration-analysis.txt turns packet captures into a phase checklist for descriptor fetches, configuration, vendor probes, HID reports, and endpoint traffic.",
+            "usb-enumeration-analysis.txt turns packet captures into a phase checklist for descriptor fetches, USB identity, configuration, vendor probes, HID reports, and endpoint traffic.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
             "debug-capture-evidence.json exposes the same debug capture gate, lossiness, and per-source evidence counts in machine-readable form.",
         ],
