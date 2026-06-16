@@ -25,7 +25,9 @@ use chrono::Local;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::{cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache, pico_state};
+use crate::{
+    cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache, pico_state, protocol,
+};
 
 use collect::{bundle_log_prefix, collect_crash_file_names, collect_setup_transcript_names};
 use host_snapshot::capture_host_snapshots;
@@ -42,6 +44,8 @@ use usb_packet_summary::{
     records_jsonl_for_text, summarize_sources, summarize_text, UsbPacketBundleSummary,
     UsbPacketSummarySource,
 };
+
+const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
 /// callers get a typed answer without
@@ -982,7 +986,8 @@ async fn capture_one_pico(
         pico_state_status = target_pico_state_status;
         pico_diag_status = target_pico_diag_status;
         pico_diag_text = target_pico_diag_text;
-        usb_packets_text = usb_packets_text_from_diag(&seed.uid, &pico_diag_text);
+        usb_packets_text =
+            bundle_usb_packets_for_target(&seed.uid, target, &pico_diag_text, capture_log).await;
         usb_diag_status = target_usb_diag_status;
         usb_diag_text = target_usb_diag_text;
         state_json_from_snapshot(&snapshot)
@@ -1018,10 +1023,13 @@ async fn capture_one_pico(
     };
     let usb_packet_count = count_usb_packet_lines(&usb_packets_text);
     let usb_packet_stats_count = count_usb_packet_stats_lines(&usb_packets_text);
+    let usb_packet_harvest_count = count_usb_packet_harvest_lines(&usb_packets_text);
     let usb_packet_status = if usb_packet_count > 0 {
         "captured"
     } else if usb_packet_stats_count > 0 {
         "stats_only"
+    } else if usb_packet_harvest_count > 0 {
+        "harvest_only"
     } else if seed.target.is_some() {
         "no_packets"
     } else {
@@ -1032,7 +1040,9 @@ async fn capture_one_pico(
         0,
         usb_packet_status,
         usb_packets_text.len(),
-        format!("count={usb_packet_count}; stats={usb_packet_stats_count}"),
+        format!(
+            "count={usb_packet_count}; stats={usb_packet_stats_count}; harvest={usb_packet_harvest_count}"
+        ),
     );
 
     PicoBundleCapture {
@@ -1054,6 +1064,58 @@ async fn capture_one_pico(
         pico_diag_text,
         usb_diag_text,
         usb_packets_text,
+    }
+}
+
+async fn bundle_usb_packets_for_target(
+    uid: &str,
+    target: &cmd_run::PicoTarget,
+    fallback_diag_text: &str,
+    capture_log: &mut CaptureLog,
+) -> String {
+    if target.persona != protocol::Persona::Debug {
+        return usb_packets_text_from_diag(uid, fallback_diag_text);
+    }
+
+    let started = Instant::now();
+    match debug_packets::capture_run_diag_log(target.peer, BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT)
+        .await
+    {
+        Ok(snapshot) => {
+            let duration_ms = duration_ms_u64(started.elapsed());
+            let text = usb_packets_text_from_debug_snapshot(uid, &snapshot, duration_ms);
+            capture_log.record(
+                format!("per_pico.{uid}.debug_packet_harvest"),
+                started,
+                "captured",
+                text.len(),
+                format!(
+                    "chunks={}; missing_chunks={}; lost_bytes={}; diag_bytes={}",
+                    snapshot.chunk_count,
+                    snapshot.missing_chunks.len(),
+                    snapshot.lost_bytes,
+                    snapshot.byte_count
+                ),
+            );
+            text
+        }
+        Err(e) => {
+            let duration_ms = duration_ms_u64(started.elapsed());
+            let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
+            text.push_str(&debug_packets::harvest_error_line(
+                duration_ms,
+                &format!("{e:#}"),
+            ));
+            text.push('\n');
+            capture_log.record(
+                format!("per_pico.{uid}.debug_packet_harvest"),
+                started,
+                "error",
+                text.len(),
+                format!("{e:#}"),
+            );
+            text
+        }
     }
 }
 
@@ -1126,6 +1188,40 @@ fn offline_pico_text(seed: &PicoCaptureSeed, artifact: &str) -> String {
 }
 
 fn usb_packets_text_from_diag(uid: &str, diag_text: &str) -> String {
+    let lines = diag_text
+        .lines()
+        .filter_map(|line| usb_packet_line_index(line).map(|idx| line[idx..].to_string()))
+        .collect::<Vec<_>>();
+    usb_packets_text_from_lines(uid, &lines, None)
+}
+
+fn usb_packets_text_from_debug_snapshot(
+    uid: &str,
+    snapshot: &debug_packets::DiagLogSnapshot,
+    duration_ms: u64,
+) -> String {
+    let lines = debug_packets::extract_usb_packet_lines(&snapshot.text);
+    let raw_packet_lines = lines
+        .iter()
+        .filter(|line| line.starts_with("usb-packet "))
+        .count();
+    let stats_lines = lines
+        .iter()
+        .filter(|line| line.starts_with("usb-packet-stats "))
+        .count();
+    let harvest = debug_packets::HarvestOkRecord {
+        duration_ms,
+        snapshot: snapshot.clone(),
+        packet_lines: lines.len(),
+        raw_packet_lines,
+        stats_lines,
+        new_lines: lines.len(),
+    };
+    let harvest_line = debug_packets::harvest_ok_line(&harvest, lines.len());
+    usb_packets_text_from_lines(uid, &lines, Some(harvest_line.as_str()))
+}
+
+fn usb_packets_text_from_lines(uid: &str, lines: &[String], harvest_line: Option<&str>) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -1137,19 +1233,19 @@ fn usb_packets_text_from_diag(uid: &str, diag_text: &str) -> String {
         "# These lines are present only when the Pico is in debug input mode."
     );
     let _ = writeln!(out);
-    let mut count = 0usize;
-    for line in diag_text.lines() {
-        if let Some(idx) = usb_packet_line_index(line) {
-            out.push_str(&line[idx..]);
-            out.push('\n');
-            count += 1;
-        }
+    for line in lines {
+        out.push_str(line);
+        out.push('\n');
     }
-    if count == 0 {
+    if lines.is_empty() {
         let _ = writeln!(
             out,
             "No usb-packet lines were present. Switch the Pico to debug input mode, reproduce the adapter traffic, then run bundle again."
         );
+    }
+    if let Some(line) = harvest_line {
+        out.push_str(line);
+        out.push('\n');
     }
     out
 }
@@ -1166,9 +1262,19 @@ fn count_usb_packet_stats_lines(text: &str) -> usize {
         .count()
 }
 
+fn count_usb_packet_harvest_lines(text: &str) -> usize {
+    text.lines()
+        .filter(|line| line.starts_with("# harvest "))
+        .count()
+}
+
 fn usb_packet_line_index(line: &str) -> Option<usize> {
     line.find("usb-packet ")
         .or_else(|| line.find("usb-packet-stats "))
+}
+
+fn duration_ms_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn count_retained_debug_packet_lines(logs: &[RetainedDebugPacketLog]) -> usize {
@@ -1638,9 +1744,10 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_usb_packets, count_usb_packet_lines, count_usb_packet_stats_lines,
-        debug_capture_overall_status, debug_capture_verdict_text, sanitize_path_component,
-        usb_packets_text_from_diag, PicoBundleCapture, RetainedDebugPacketLog,
+        aggregate_usb_packets, count_usb_packet_harvest_lines, count_usb_packet_lines,
+        count_usb_packet_stats_lines, debug_capture_overall_status, debug_capture_verdict_text,
+        sanitize_path_component, usb_packets_text_from_debug_snapshot, usb_packets_text_from_diag,
+        PicoBundleCapture, RetainedDebugPacketLog,
     };
     use super::{summarize_sources, ManifestPicoCapture, UsbPacketSummarySource};
 
@@ -1659,6 +1766,47 @@ mod tests {
         assert!(out.contains("usb-packet-stats total=64 in=10 out=54"));
         assert_eq!(count_usb_packet_lines(&out), 1);
         assert_eq!(count_usb_packet_stats_lines(&out), 1);
+        assert_eq!(count_usb_packet_harvest_lines(&out), 0);
+    }
+
+    #[test]
+    fn bundle_debug_snapshot_includes_harvest_health() {
+        let snapshot = crate::debug_packets::DiagLogSnapshot {
+            text: "usb-packet seq=1 dir=out data=010203\nusb-packet-stats total=1 out=1\n"
+                .to_string(),
+            lost_bytes: 7,
+            chunk_count: 2,
+            expected_chunks: Some(3),
+            missing_chunks: vec![1],
+            duplicate_chunk_count: 1,
+            got_last: true,
+            byte_count: 72,
+            line_count: 2,
+        };
+        let out = usb_packets_text_from_debug_snapshot("02E22DA9", &snapshot, 25);
+        assert!(out.contains("usb-packet seq=1 dir=out data=010203"));
+        assert!(out.contains("usb-packet-stats total=1 out=1"));
+        assert!(out.contains("# harvest {"));
+        assert!(out.contains("\"duration_ms\":25"));
+        assert!(out.contains("\"missing_chunk_count\":1"));
+        assert!(out.contains("\"duplicate_chunk_count\":1"));
+        assert!(out.contains("\"chunk_complete\":false"));
+        assert!(out.contains("\"lost_bytes\":7"));
+        assert!(out.contains("\"raw_packet_lines\":1"));
+        assert!(out.contains("\"stats_lines\":1"));
+        assert_eq!(count_usb_packet_lines(&out), 1);
+        assert_eq!(count_usb_packet_stats_lines(&out), 1);
+        assert_eq!(count_usb_packet_harvest_lines(&out), 1);
+    }
+
+    #[test]
+    fn harvest_error_text_counts_as_harvest_only_evidence() {
+        let mut text = usb_packets_text_from_diag("02E22DA9", "no packet lines\n");
+        text.push_str(&crate::debug_packets::harvest_error_line(1200, "timeout"));
+        text.push('\n');
+        assert_eq!(count_usb_packet_lines(&text), 0);
+        assert_eq!(count_usb_packet_stats_lines(&text), 0);
+        assert_eq!(count_usb_packet_harvest_lines(&text), 1);
     }
 
     #[test]

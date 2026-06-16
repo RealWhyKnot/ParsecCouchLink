@@ -102,45 +102,13 @@ impl DebugPacketSink {
     }
 
     pub(crate) fn append_harvest_ok(&mut self, record: HarvestOkRecord) -> Result<()> {
-        let missing_chunk_count = record.snapshot.missing_chunks.len();
-        let duplicate_lines = record.packet_lines.saturating_sub(record.new_lines);
-        let chunk_complete = record.snapshot.got_last
-            && record
-                .snapshot
-                .expected_chunks
-                .map(|expected| usize::from(expected) == record.snapshot.chunk_count)
-                .unwrap_or(false)
-            && record.snapshot.missing_chunks.is_empty();
-        self.append_harvest_record(json!({
-            "at": Local::now().to_rfc3339(),
-            "status": "ok",
-            "duration_ms": record.duration_ms,
-            "chunk_count": record.snapshot.chunk_count,
-            "expected_chunks": record.snapshot.expected_chunks,
-            "missing_chunk_count": missing_chunk_count,
-            "missing_chunks": record.snapshot.missing_chunks,
-            "duplicate_chunk_count": record.snapshot.duplicate_chunk_count,
-            "got_last": record.snapshot.got_last,
-            "chunk_complete": chunk_complete,
-            "lost_bytes": record.snapshot.lost_bytes,
-            "diag_bytes": record.snapshot.byte_count,
-            "diag_lines": record.snapshot.line_count,
-            "packet_lines": record.packet_lines,
-            "raw_packet_lines": record.raw_packet_lines,
-            "stats_lines": record.stats_lines,
-            "new_lines": record.new_lines,
-            "duplicate_lines": duplicate_lines,
-            "total_packet_lines": self.total_written,
-        }))
+        self.append_harvest_record(harvest_ok_json(&record, self.total_written))
     }
 
     pub(crate) fn append_harvest_error(&mut self, duration_ms: u64, error: &str) -> Result<()> {
-        self.append_harvest_record(json!({
-            "at": Local::now().to_rfc3339(),
-            "status": "error",
-            "duration_ms": duration_ms,
-            "error": error,
-        }))
+        writeln!(self.file, "{}", harvest_error_line(duration_ms, error))?;
+        self.file.flush()?;
+        Ok(())
     }
 
     fn append_harvest_record(&mut self, record: serde_json::Value) -> Result<()> {
@@ -148,6 +116,55 @@ impl DebugPacketSink {
         self.file.flush()?;
         Ok(())
     }
+}
+
+pub(crate) fn harvest_ok_line(record: &HarvestOkRecord, total_packet_lines: usize) -> String {
+    format!("# harvest {}", harvest_ok_json(record, total_packet_lines))
+}
+
+pub(crate) fn harvest_error_line(duration_ms: u64, error: &str) -> String {
+    format!(
+        "# harvest {}",
+        json!({
+            "at": Local::now().to_rfc3339(),
+            "status": "error",
+            "duration_ms": duration_ms,
+            "error": error,
+        })
+    )
+}
+
+fn harvest_ok_json(record: &HarvestOkRecord, total_packet_lines: usize) -> serde_json::Value {
+    let missing_chunk_count = record.snapshot.missing_chunks.len();
+    let duplicate_lines = record.packet_lines.saturating_sub(record.new_lines);
+    let chunk_complete = record.snapshot.got_last
+        && record
+            .snapshot
+            .expected_chunks
+            .map(|expected| usize::from(expected) == record.snapshot.chunk_count)
+            .unwrap_or(false)
+        && record.snapshot.missing_chunks.is_empty();
+    json!({
+        "at": Local::now().to_rfc3339(),
+        "status": "ok",
+        "duration_ms": record.duration_ms,
+        "chunk_count": record.snapshot.chunk_count,
+        "expected_chunks": record.snapshot.expected_chunks,
+        "missing_chunk_count": missing_chunk_count,
+        "missing_chunks": record.snapshot.missing_chunks,
+        "duplicate_chunk_count": record.snapshot.duplicate_chunk_count,
+        "got_last": record.snapshot.got_last,
+        "chunk_complete": chunk_complete,
+        "lost_bytes": record.snapshot.lost_bytes,
+        "diag_bytes": record.snapshot.byte_count,
+        "diag_lines": record.snapshot.line_count,
+        "packet_lines": record.packet_lines,
+        "raw_packet_lines": record.raw_packet_lines,
+        "stats_lines": record.stats_lines,
+        "new_lines": record.new_lines,
+        "duplicate_lines": duplicate_lines,
+        "total_packet_lines": total_packet_lines,
+    })
 }
 
 pub(crate) fn packet_log_dir() -> Result<PathBuf> {
