@@ -3,26 +3,65 @@
 #include <string.h>
 
 #include "tusb.h"
+#include "pico/stdlib.h"
 #include "pico/unique_id.h"
 
 #include "flash_creds.h"
 #include "diag_log.h"
 #include "version.h"
 
-#define RX_BUFFER_SIZE (CDC_MAX_FRAME * 2)
-#define TX_BUFFER_SIZE (CDC_MAX_FRAME * 2)
+#define RX_BUFFER_SIZE (CDC_MAX_FRAME + 64)
 
 static uint8_t rx_buf[RX_BUFFER_SIZE];
+static uint8_t tx_frame[CDC_MAX_FRAME];
+static uint8_t log_payload[4 + DIAG_LOG_RING_SIZE];
 static size_t rx_len;
 static bool reboot_pending;
 static bool bootsel_pending;
 
+static void write_cdc_frame(const uint8_t *frame, size_t n) {
+    if (!frame || n == 0)
+        return;
+
+    size_t sent = 0;
+    absolute_time_t deadline = make_timeout_time_ms(3000);
+    while (sent < n) {
+        tud_task();
+        uint32_t avail = tud_cdc_write_available();
+        if (avail == 0) {
+            tud_cdc_write_flush();
+            if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0)
+                break;
+            sleep_ms(1);
+            continue;
+        }
+
+        size_t chunk = n - sent;
+        if (chunk > avail)
+            chunk = avail;
+        uint32_t wrote = tud_cdc_write(frame + sent, (uint32_t)chunk);
+        if (wrote == 0) {
+            tud_cdc_write_flush();
+            if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0)
+                break;
+            sleep_ms(1);
+            continue;
+        }
+        sent += wrote;
+        tud_cdc_write_flush();
+    }
+
+    if (sent < n) {
+        diag_log_printf("cdc: response write timed out sent=%u total=%u", (unsigned)sent,
+                        (unsigned)n);
+    }
+}
+
 static void send_nack(uint8_t seq, uint8_t code, uint8_t detail) {
     uint8_t payload[2] = {code, detail};
-    uint8_t frame[CDC_MAX_FRAME];
-    size_t n = cdc_encode(CDC_RSP_NACK, seq, payload, 2, frame, sizeof(frame));
+    size_t n = cdc_encode(CDC_RSP_NACK, seq, payload, 2, tx_frame, sizeof(tx_frame));
     if (n)
-        tud_cdc_write(frame, n);
+        write_cdc_frame(tx_frame, n);
 }
 
 static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
@@ -155,17 +194,16 @@ static size_t handle_log_buffer(uint8_t seq, uint8_t *reply, size_t cap) {
     // prefix on `payload_len >= 4`, so older firmware (no prefix) and
     // older hosts (no understanding of the prefix) interoperate as
     // long as one or the other is patched.
-    uint8_t buf[CDC_MAX_PAYLOAD];
-    if (sizeof(buf) < 4)
+    if (sizeof(log_payload) < 4)
         return 0;
     uint32_t lost = 0;
-    size_t tail_cap = sizeof(buf) - 4;
-    size_t n = diag_log_snapshot(buf + 4, tail_cap, &lost);
-    buf[0] = (uint8_t)(lost & 0xFFu);
-    buf[1] = (uint8_t)((lost >> 8) & 0xFFu);
-    buf[2] = (uint8_t)((lost >> 16) & 0xFFu);
-    buf[3] = (uint8_t)((lost >> 24) & 0xFFu);
-    return cdc_encode(CDC_RSP_LOG_BUFFER, seq, buf, 4 + n, reply, cap);
+    size_t tail_cap = sizeof(log_payload) - 4;
+    size_t n = diag_log_snapshot(log_payload + 4, tail_cap, &lost);
+    log_payload[0] = (uint8_t)(lost & 0xFFu);
+    log_payload[1] = (uint8_t)((lost >> 8) & 0xFFu);
+    log_payload[2] = (uint8_t)((lost >> 16) & 0xFFu);
+    log_payload[3] = (uint8_t)((lost >> 24) & 0xFFu);
+    return cdc_encode(CDC_RSP_LOG_BUFFER, seq, log_payload, 4 + n, reply, cap);
 }
 
 static size_t handle_self_test(uint8_t seq, uint8_t *reply, size_t cap) {
@@ -271,11 +309,9 @@ void cdc_handlers_poll(void) {
         if (st == CDC_DECODE_OK) {
             diag_log_printf("cdc: dispatching cmd=0x%02X seq=%u payload=%u bytes",
                             (unsigned)view.command, (unsigned)view.seq, (unsigned)view.payload_len);
-            uint8_t reply[CDC_MAX_FRAME];
-            size_t n = cdc_dispatch(&view, reply, sizeof(reply));
+            size_t n = cdc_dispatch(&view, tx_frame, sizeof(tx_frame));
             if (n > 0)
-                tud_cdc_write(reply, n);
-            tud_cdc_write_flush();
+                write_cdc_frame(tx_frame, n);
             // Shift remaining bytes down.
             memmove(rx_buf, &rx_buf[consumed], rx_len - consumed);
             rx_len -= consumed;

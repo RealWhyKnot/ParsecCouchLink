@@ -6,7 +6,7 @@
 // pico-diag.txt has a coarse timeline of what the firmware was doing
 // even when nothing else hit the log.
 //
-// Why: a 4 KiB diag ring with only event-driven entries can sit
+// Why: a 16 KiB diag ring with only event-driven entries can sit
 // silent for minutes if nothing fails. A bundle pulled in that window
 // is unable to answer "was the Pico even alive?". The heartbeat
 // guarantees there is always recent state to reason about.

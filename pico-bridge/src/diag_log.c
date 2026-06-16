@@ -7,14 +7,11 @@
 #include "pico/stdlib.h"
 #include "pico/sync.h"
 
-// 4 KiB ring buffer. Big enough to retain a full Wi-Fi retry storm
-// plus boot transcript without overflowing on most operator timelines.
-// The previous 2 KiB ring was wrapping silently under retry pressure;
-// host-side bundles now also carry an explicit lost-bytes counter so
-// truncation is visible.
-#define LOG_RING_SIZE 4096
-
-static uint8_t ring[LOG_RING_SIZE];
+// 16 KiB ring buffer. Large enough to retain setup, Wi-Fi retry, USB
+// enumeration, and bundle-triggered diagnostics in the same snapshot.
+// Host-side bundles also carry an explicit lost-bytes counter so any
+// remaining truncation is visible.
+static uint8_t ring[DIAG_LOG_RING_SIZE];
 static size_t head;   // next write position
 static size_t filled; // number of valid bytes in the ring
 static uint32_t lost; // bytes overwritten because the ring was full
@@ -30,7 +27,7 @@ void diag_log_init(void) {
 static void write_bytes(const uint8_t *data, size_t n) {
     critical_section_enter_blocking(&cs);
     for (size_t i = 0; i < n; i++) {
-        if (filled == LOG_RING_SIZE) {
+        if (filled == DIAG_LOG_RING_SIZE) {
             // Overwriting the oldest byte. Track it so a host pulling
             // a snapshot can tell the user that earlier lines were
             // dropped under retry / burst load instead of silently
@@ -38,8 +35,8 @@ static void write_bytes(const uint8_t *data, size_t n) {
             lost++;
         }
         ring[head] = data[i];
-        head = (head + 1) % LOG_RING_SIZE;
-        if (filled < LOG_RING_SIZE) {
+        head = (head + 1) % DIAG_LOG_RING_SIZE;
+        if (filled < DIAG_LOG_RING_SIZE) {
             filled++;
         }
     }
@@ -93,9 +90,9 @@ size_t diag_log_snapshot(uint8_t *out, size_t cap, uint32_t *lost_out) {
     size_t avail = filled;
     size_t skip = (avail > cap) ? (avail - cap) : 0;
     size_t to_write = avail - skip;
-    size_t start = (head + LOG_RING_SIZE - avail + skip) % LOG_RING_SIZE;
+    size_t start = (head + DIAG_LOG_RING_SIZE - avail + skip) % DIAG_LOG_RING_SIZE;
     for (size_t i = 0; i < to_write; i++) {
-        out[i] = ring[(start + i) % LOG_RING_SIZE];
+        out[i] = ring[(start + i) % DIAG_LOG_RING_SIZE];
     }
     if (lost_out) {
         // Count bytes we trimmed for `cap` as additional loss so the
@@ -116,7 +113,7 @@ static size_t copy_last_line_inner(char *out, size_t cap) {
             out[0] = 0;
         return 0;
     }
-    size_t end = (head + LOG_RING_SIZE - 1) % LOG_RING_SIZE;
+    size_t end = (head + DIAG_LOG_RING_SIZE - 1) % DIAG_LOG_RING_SIZE;
     size_t walk = 1;
     if (ring[end] == '\n') {
         if (walk >= avail) {
@@ -124,12 +121,12 @@ static size_t copy_last_line_inner(char *out, size_t cap) {
                 out[0] = 0;
             return 0;
         }
-        end = (end + LOG_RING_SIZE - 1) % LOG_RING_SIZE;
+        end = (end + DIAG_LOG_RING_SIZE - 1) % DIAG_LOG_RING_SIZE;
         walk++;
     }
     size_t line_end = end;
     while (walk < avail) {
-        size_t prev = (end + LOG_RING_SIZE - 1) % LOG_RING_SIZE;
+        size_t prev = (end + DIAG_LOG_RING_SIZE - 1) % DIAG_LOG_RING_SIZE;
         if (ring[prev] == '\n')
             break;
         end = prev;
@@ -137,11 +134,11 @@ static size_t copy_last_line_inner(char *out, size_t cap) {
     }
     size_t line_start = end;
     size_t len = (line_end >= line_start) ? (line_end - line_start + 1)
-                                          : (LOG_RING_SIZE - line_start + line_end + 1);
+                                          : (DIAG_LOG_RING_SIZE - line_start + line_end + 1);
     if (cap > 0 && len > cap - 1)
         len = cap - 1;
     for (size_t i = 0; i < len; i++) {
-        out[i] = (char)ring[(line_start + i) % LOG_RING_SIZE];
+        out[i] = (char)ring[(line_start + i) % DIAG_LOG_RING_SIZE];
     }
     if (cap > 0)
         out[len < cap ? len : cap - 1] = 0;

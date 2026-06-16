@@ -4,10 +4,39 @@ use anyhow::Result;
 use chrono::Local;
 use serde::Serialize;
 
-use crate::config;
+use crate::{config, logfile};
+
+use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
+
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 2;
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct ManifestPicoCapture {
+    pub uid: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
+    pub live: bool,
+    pub source: String,
+    pub state_captured: bool,
+    pub pico_diag_status: String,
+    pub usb_diag_status: String,
+    pub pico_state_status: String,
+    pub cached_state_included: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct ManifestHostSnapshot {
+    pub name: String,
+    pub path: String,
+    pub captured: bool,
+    pub bytes: usize,
+    pub status: String,
+}
 
 #[derive(Serialize)]
 pub(super) struct Manifest {
+    bundle_schema_version: u8,
     bridge_version: &'static str,
     protocol_version: u8,
     cdc_protocol_version: u8,
@@ -32,6 +61,13 @@ pub(super) struct Manifest {
     pico_usb_mode: Option<String>,
     pico_usb_diag_captured: bool,
     pico_usb_diag_target_count: usize,
+    app_log_retention_count: usize,
+    bundled_log_files_per_prefix: usize,
+    diagnostic_cache_included: bool,
+    per_pico_capture_outcomes: Vec<ManifestPicoCapture>,
+    host_snapshots: Vec<ManifestHostSnapshot>,
+    capture_policy_notes: Vec<&'static str>,
+    redaction_policy: Vec<&'static str>,
     crash_files: Vec<String>,
     setup_transcripts: Vec<String>,
     notes: Vec<&'static str>,
@@ -50,11 +86,15 @@ pub(super) async fn build_manifest(
     pico_usb_mode: Option<&str>,
     pico_usb_diag_captured: bool,
     pico_usb_diag_target_count: usize,
+    diagnostic_cache_included: bool,
+    per_pico_capture_outcomes: &[ManifestPicoCapture],
+    host_snapshots: &[ManifestHostSnapshot],
     crash_files: &[String],
     setup_transcripts: &[String],
 ) -> Result<Manifest> {
     let cfg = config::load().unwrap_or_default();
     Ok(Manifest {
+        bundle_schema_version: BUNDLE_SCHEMA_VERSION,
         bridge_version: env!("CARGO_PKG_VERSION"),
         protocol_version: crate::protocol::PROTO_VERSION,
         cdc_protocol_version: crate::cdc::PROTO_VERSION,
@@ -81,12 +121,31 @@ pub(super) async fn build_manifest(
         pico_usb_mode: pico_usb_mode.map(|s| s.to_string()),
         pico_usb_diag_captured,
         pico_usb_diag_target_count,
+        app_log_retention_count: logfile::LOG_FILE_RETENTION,
+        bundled_log_files_per_prefix: BUNDLE_LOG_FILES_PER_PREFIX,
+        diagnostic_cache_included,
+        per_pico_capture_outcomes: per_pico_capture_outcomes.to_vec(),
+        host_snapshots: host_snapshots.to_vec(),
+        capture_policy_notes: vec![
+            "Bundle capture is best-effort and non-interactive.",
+            "Run-mode Pico boards are queried over LAN from the bridge PC.",
+            "Setup-mode Pico boards are queried over USB CDC and WinUSB vendor diagnostics when available.",
+            "BOOTSEL drives are inventoried when present.",
+            "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
+        ],
+        redaction_policy: vec![
+            "Wi-Fi passwords are not included.",
+            "SSID values are redacted from bundle text.",
+            "Key/value fields named password, pass, ssid, token, secret, authorization, api_key, or apikey are redacted.",
+            "Lengths, failure codes, timings, local IPs, device names, driver names, firmware IDs, and filesystem paths may be included for diagnosis.",
+            "Raw per-key keyboard traces require trace logging and are not enabled by default.",
+        ],
         crash_files: crash_files.to_vec(),
         setup_transcripts: setup_transcripts.to_vec(),
         notes: vec![
             "Wi-Fi credentials are NOT included.",
             "SSID is NOT included.",
-            "Logs are filtered to the last 3 rotated files per prefix.",
+            "Logs are filtered to the last 5 rotated files per prefix.",
         ],
     })
 }
@@ -104,4 +163,69 @@ pub(super) async fn windows_version() -> Option<String> {
 #[cfg(not(windows))]
 pub(super) async fn windows_version() -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn manifest_includes_diagnostics_schema_fields() {
+        let pico = ManifestPicoCapture {
+            uid: "02E22DA9".to_string(),
+            path: "picos/02E22DA9".to_string(),
+            peer: Some("10.0.0.24:4242".to_string()),
+            live: true,
+            source: "broadcast discovery".to_string(),
+            state_captured: true,
+            pico_diag_status: "captured".to_string(),
+            usb_diag_status: "captured".to_string(),
+            pico_state_status: "captured".to_string(),
+            cached_state_included: true,
+        };
+        let host = ManifestHostSnapshot {
+            name: "network_routes".to_string(),
+            path: "host/network-routes.txt".to_string(),
+            captured: true,
+            bytes: 123,
+            status: "captured in 1 ms".to_string(),
+        };
+
+        let manifest = build_manifest(
+            true,
+            0,
+            "captured",
+            Some("run-udp"),
+            true,
+            "pnputil",
+            true,
+            true,
+            Some("run"),
+            true,
+            1,
+            true,
+            &[pico],
+            &[host],
+            &[],
+            &[],
+        )
+        .await
+        .unwrap();
+        let json = serde_json::to_value(&manifest).unwrap();
+
+        assert_eq!(json["bundle_schema_version"], BUNDLE_SCHEMA_VERSION);
+        assert_eq!(
+            json["bundled_log_files_per_prefix"],
+            BUNDLE_LOG_FILES_PER_PREFIX
+        );
+        assert_eq!(json["app_log_retention_count"], logfile::LOG_FILE_RETENTION);
+        assert_eq!(json["diagnostic_cache_included"], true);
+        assert_eq!(json["per_pico_capture_outcomes"][0]["uid"], "02E22DA9");
+        assert_eq!(json["host_snapshots"][0]["path"], "host/network-routes.txt");
+        assert!(json["redaction_policy"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.as_str().unwrap().contains("SSID values are redacted")));
+    }
 }

@@ -10,6 +10,10 @@ use zip::ZipWriter;
 
 use crate::config;
 
+use super::redact::redact_bundle_text;
+
+pub(super) const BUNDLE_LOG_FILES_PER_PREFIX: usize = 5;
+
 pub(super) fn bundle_log_prefix(
     log_dir: &std::path::Path,
     prefix: &str,
@@ -46,14 +50,15 @@ pub(super) fn bundle_log_prefix(
         }
     }
     paths.sort();
-    let take = 3.min(paths.len());
+    let take = BUNDLE_LOG_FILES_PER_PREFIX.min(paths.len());
     let recent = &paths[paths.len() - take..];
     for p in recent {
         let Some(name) = p.file_name() else { continue };
         match std::fs::read(p) {
             Ok(bytes) => {
                 zip.start_file(format!("logs/{}", name.to_string_lossy()), opts)?;
-                zip.write_all(&bytes)?;
+                let text = String::from_utf8_lossy(&bytes);
+                zip.write_all(redact_bundle_text(&text).as_bytes())?;
             }
             Err(e) => {
                 tracing::debug!("bundle: could not read log file {}: {e}", p.display());
@@ -126,6 +131,51 @@ pub(super) fn collect_setup_transcript_names() -> Vec<String> {
         }
     }
     names.sort();
-    let take = 3.min(names.len());
+    let take = BUNDLE_LOG_FILES_PER_PREFIX.min(names.len());
     names[names.len() - take..].to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_log_prefix_includes_five_recent_logs() {
+        let root =
+            std::env::temp_dir().join(format!("couchlink-log-bundle-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        for day in 1..=7 {
+            let path = root.join(format!("couchlink.2026-06-{day:02}.log"));
+            std::fs::write(path, format!("log day {day}\n")).unwrap();
+        }
+        std::fs::write(root.join("other.2026-06-08.log"), "ignored\n").unwrap();
+
+        let zip_path = root.join("bundle.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let opts = SimpleFileOptions::default();
+        bundle_log_prefix(&root, "couchlink.", &mut zip, opts).unwrap();
+        zip.finish().unwrap();
+
+        let file = std::fs::File::open(&zip_path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut names = Vec::new();
+        for i in 0..archive.len() {
+            names.push(archive.by_index(i).unwrap().name().to_string());
+        }
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "logs/couchlink.2026-06-03.log",
+                "logs/couchlink.2026-06-04.log",
+                "logs/couchlink.2026-06-05.log",
+                "logs/couchlink.2026-06-06.log",
+                "logs/couchlink.2026-06-07.log",
+            ]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

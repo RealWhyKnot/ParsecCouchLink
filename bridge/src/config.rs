@@ -34,6 +34,14 @@ pub fn log_dir() -> Result<PathBuf> {
     Ok(dirs()?.data_local_dir().join("logs"))
 }
 
+pub fn data_dir() -> Result<PathBuf> {
+    Ok(dirs()?.data_local_dir().to_path_buf())
+}
+
+pub fn diag_cache_dir() -> Result<PathBuf> {
+    Ok(data_dir()?.join("diagnostics"))
+}
+
 /// Directory for panic crash files. Sibling of `log_dir()`.
 pub fn crash_dir() -> Result<PathBuf> {
     Ok(log_dir()?
@@ -175,6 +183,7 @@ pub fn ensure_dirs() -> Result<()> {
     fs::create_dir_all(d.config_dir())?;
     fs::create_dir_all(d.data_local_dir())?;
     fs::create_dir_all(log_dir()?)?;
+    fs::create_dir_all(diag_cache_dir()?)?;
     Ok(())
 }
 

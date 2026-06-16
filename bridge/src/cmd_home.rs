@@ -1406,6 +1406,7 @@ mod tests {
                 full_version: None,
             },
             persona: protocol::Persona::Xinput,
+            ack_flags: 0,
         }
     }
 

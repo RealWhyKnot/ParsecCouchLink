@@ -14,12 +14,19 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Result};
 
 use crate::protocol::Persona;
-use crate::{cmd_run, pico_mode, support};
+use crate::{cmd_run, pico_cache, pico_mode, support};
 
 pub(crate) const DISCOVER: Duration = Duration::from_secs(5);
 pub(crate) const REBOOT_WAIT: Duration = Duration::from_secs(60);
 
 pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bool) -> Result<()> {
+    tracing::info!(
+        "persona: desired={} selectors={} all={} stream={}",
+        desired.label(),
+        selectors.len(),
+        all,
+        stream,
+    );
     let picos = cmd_run::discover_picos_with_auto_recovery(DISCOVER, false).await?;
     if picos.is_empty() {
         bail!("{}", support::no_pico_wifi_help(DISCOVER.as_secs()));
@@ -30,6 +37,10 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
     let mut switched_uids = Vec::new();
     for t in &targets {
         if t.persona == desired {
+            pico_cache::record(
+                pico_cache::PicoStateSnapshot::from_target("persona-already", t)
+                    .with_outcome(format!("already_{}", desired.label())),
+            );
             println!(
                 "{} is already in {} mode.",
                 t.short_label(),
@@ -41,6 +52,16 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
             "Switching {} to {} mode...",
             t.short_label(),
             desired.label()
+        );
+        tracing::info!(
+            "persona: switching {} from {} to {}",
+            t.short_label(),
+            t.persona.label(),
+            desired.label(),
+        );
+        pico_cache::record(
+            pico_cache::PicoStateSnapshot::from_target("persona-switch-request", t)
+                .with_outcome(format!("requested_{}", desired.label())),
         );
         pico_mode::request_set_persona(t, desired).await?;
         switched_uids.push(t.info.unique_id_short);
@@ -68,6 +89,10 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
             "  [{mark}] {} is now in {} mode",
             t.short_label(),
             t.persona.label()
+        );
+        pico_cache::record(
+            pico_cache::PicoStateSnapshot::from_target("persona-confirm", t)
+                .with_outcome(format!("mark={mark} desired={}", desired.label())),
         );
     }
     let pending: Vec<_> = final_targets

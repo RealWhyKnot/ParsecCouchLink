@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use tokio::time::interval;
 
 use crate::tui::{input_text, select};
-use crate::{cmd_run, protocol, support};
+use crate::{cmd_run, pico_cache, protocol, support};
 
 const DISCOVER_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -155,8 +155,14 @@ pub async fn query_usb_diag(
                 if from.ip() != pico.peer.ip() {
                     continue;
                 }
-                return protocol::UsbDiag::decode(&buf[..n])
-                    .context("decoding USB diagnostic reply");
+                let diag = protocol::UsbDiag::decode(&buf[..n])
+                    .context("decoding USB diagnostic reply")?;
+                pico_cache::record(
+                    pico_cache::PicoStateSnapshot::from_target("usb-diag", pico)
+                        .with_usb_diag(&diag, pico.persona)
+                        .with_outcome("usb_diag_captured"),
+                );
+                return Ok(diag);
             }
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
                 bail!(

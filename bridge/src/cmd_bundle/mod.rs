@@ -6,26 +6,31 @@
 //! never reads them. SSID is also omitted by default to be safe.
 
 mod collect;
+mod host_snapshot;
 mod manifest;
 mod pico_diag;
+mod redact;
 mod sysinfo;
 mod usb_enum;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Local;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::{cmd_run, cmd_usb_diag, config, journal};
+use crate::{cmd_run, cmd_usb_diag, config, journal, pico_cache, pico_state};
 
 use collect::{bundle_log_prefix, collect_crash_file_names, collect_setup_transcript_names};
-use manifest::build_manifest;
+use host_snapshot::capture_host_snapshots;
+use manifest::{build_manifest, ManifestHostSnapshot, ManifestPicoCapture};
 use pico_diag::{capture_pico_diag, DiagOutcome};
+use redact::redact_bundle_text;
 use sysinfo::{build_system_info, run_doctor_silently};
 use usb_enum::{
     capture_usb_devices, capture_windows_usb_events, classify_pico_enum, parent_only_stub_text,
@@ -48,6 +53,9 @@ pub struct BundleSummary {
     pub pico_usb_enumerated: bool,
     pub usb_diag_captured: bool,
     pub usb_diag_target_count: usize,
+    pub per_pico_capture_count: usize,
+    pub host_snapshot_count: usize,
+    pub diagnostic_cache_included: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +65,80 @@ struct UsbDiagBundle {
     target_count: usize,
 }
 
+#[derive(Clone, Debug)]
+struct PicoBundleCapture {
+    manifest: ManifestPicoCapture,
+    state_json: String,
+    pico_diag_text: String,
+    usb_diag_text: String,
+}
+
+#[derive(Clone, Debug)]
+struct PicoCaptureSeed {
+    uid: String,
+    target: Option<cmd_run::PicoTarget>,
+    saved: Option<config::PicoIdentity>,
+    source: String,
+    cached_state_json: Option<String>,
+}
+
+#[derive(Default)]
+struct CaptureLog {
+    lines: Vec<String>,
+}
+
+impl CaptureLog {
+    fn record_duration(
+        &mut self,
+        step: impl AsRef<str>,
+        duration_ms: u64,
+        status: impl AsRef<str>,
+        bytes: usize,
+        reason: impl AsRef<str>,
+    ) {
+        let step = sanitize_log_field(step.as_ref());
+        let status = sanitize_log_field(status.as_ref());
+        let reason = sanitize_log_field(reason.as_ref());
+        tracing::debug!(
+            "bundle-capture: step={} duration_ms={} status={} bytes={} reason={}",
+            step,
+            duration_ms,
+            status,
+            bytes,
+            reason
+        );
+        self.lines.push(format!(
+            "{}\t{step}\t{duration_ms}\t{status}\t{bytes}\t{reason}",
+            Local::now().to_rfc3339()
+        ));
+    }
+
+    fn record(
+        &mut self,
+        step: impl AsRef<str>,
+        started: Instant,
+        status: impl AsRef<str>,
+        bytes: usize,
+        reason: impl AsRef<str>,
+    ) {
+        let duration_ms = pico_cache::duration_ms(started.elapsed());
+        self.record_duration(step, duration_ms, status, bytes, reason);
+    }
+
+    fn text(&self) -> String {
+        let mut out = String::from("captured_at\tstep\tduration_ms\tstatus\tbytes\treason\n");
+        for line in &self.lines {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    }
+}
+
+fn sanitize_log_field(value: &str) -> String {
+    value.replace(['\r', '\n', '\t'], " ").trim().to_string()
+}
+
 /// Build the support bundle zip. Captures diag, doctor, usb topology,
 /// logs, and writes them to `out_path`. Returns a structured summary.
 ///
@@ -64,7 +146,18 @@ struct UsbDiagBundle {
 /// `run`, not here -- this function is silent on stdout/stderr.
 pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     journal!("bundle", "run started");
+    tracing::info!("bundle: run started out_path={}", out_path.display());
+    let mut capture_log = CaptureLog::default();
+
+    let started = Instant::now();
     let diag = capture_pico_diag().await;
+    capture_log.record(
+        "top_level_pico_diag",
+        started,
+        diag.discriminant_str(),
+        diag.stub_text().len(),
+        diag.source_str().unwrap_or(""),
+    );
     journal!(
         "bundle",
         "diag capture outcome: {}",
@@ -88,7 +181,61 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     let usb_events = capture_windows_usb_events().await;
     let usb_events_captured = usb_events.is_some();
 
+    let started = Instant::now();
     let usb_diag = capture_usb_diag_text().await;
+    capture_log.record(
+        "top_level_usb_diag",
+        started,
+        if usb_diag.captured {
+            "captured"
+        } else {
+            "not_captured"
+        },
+        usb_diag.text.len(),
+        format!("targets={}", usb_diag.target_count),
+    );
+
+    let per_pico_captures = capture_per_pico(&mut capture_log).await;
+    let per_pico_manifest: Vec<ManifestPicoCapture> = per_pico_captures
+        .iter()
+        .map(|capture| capture.manifest.clone())
+        .collect();
+
+    let host_snapshots = capture_host_snapshots().await;
+    for snapshot in &host_snapshots {
+        capture_log.record_duration(
+            format!("host_snapshot.{}", snapshot.manifest.name),
+            snapshot.duration_ms,
+            &snapshot.manifest.status,
+            snapshot.text.len(),
+            if snapshot.manifest.captured {
+                "captured"
+            } else {
+                "not_captured"
+            },
+        );
+    }
+    let host_snapshot_manifest: Vec<ManifestHostSnapshot> = host_snapshots
+        .iter()
+        .map(|snapshot| snapshot.manifest.clone())
+        .collect();
+
+    let started = Instant::now();
+    let cache_current = pico_cache::read_current();
+    let cache_history = pico_cache::read_history();
+    let diagnostic_cache_included = cache_current.is_some() || cache_history.is_some();
+    capture_log.record(
+        "diagnostic_cache",
+        started,
+        if diagnostic_cache_included {
+            "included"
+        } else {
+            "not_present"
+        },
+        cache_current.as_ref().map(|s| s.len()).unwrap_or(0)
+            + cache_history.as_ref().map(|s| s.len()).unwrap_or(0),
+        "",
+    );
 
     // Classify current Pico USB enumeration state from the pnputil output.
     // Used both in manifest.json and in the VendorNotFound stub text.
@@ -120,6 +267,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         pico_usb_mode.as_deref(),
         usb_diag.captured,
         usb_diag.target_count,
+        diagnostic_cache_included,
+        &per_pico_manifest,
+        &host_snapshot_manifest,
         &crash_files,
         &setup_transcripts,
     )
@@ -138,8 +288,11 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     zip.start_file("manifest.json", opts)?;
     zip.write_all(manifest_json.as_bytes())?;
 
+    zip.start_file("bundle-capture.txt", opts)?;
+    zip.write_all(redact_bundle_text(&capture_log.text()).as_bytes())?;
+
     zip.start_file("doctor.txt", opts)?;
-    zip.write_all(doctor_text.as_bytes())?;
+    zip.write_all(redact_bundle_text(&doctor_text).as_bytes())?;
 
     // Always write pico-diag.txt. The body is a self-narrating stub
     // when capture failed; the per-variant message names the failing
@@ -154,18 +307,44 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         _ => diag.stub_text(),
     };
     zip.start_file("pico-diag.txt", opts)?;
-    zip.write_all(pico_diag_body.as_bytes())?;
+    zip.write_all(redact_bundle_text(&pico_diag_body).as_bytes())?;
 
     // usb-diag.txt: structured run-mode USB counters from the Pico. This
     // complements pico-diag.txt's firmware log ring with the current USB
     // mount, descriptor, input-report, and host OUT counters.
     zip.start_file("usb-diag.txt", opts)?;
-    zip.write_all(usb_diag.text.as_bytes())?;
+    zip.write_all(redact_bundle_text(&usb_diag.text).as_bytes())?;
+
+    for pico in &per_pico_captures {
+        let base = pico.manifest.path.trim_end_matches('/');
+        zip.start_file(format!("{base}/state.json"), opts)?;
+        zip.write_all(redact_bundle_text(&pico.state_json).as_bytes())?;
+
+        zip.start_file(format!("{base}/pico-diag.txt"), opts)?;
+        zip.write_all(redact_bundle_text(&pico.pico_diag_text).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-diag.txt"), opts)?;
+        zip.write_all(redact_bundle_text(&pico.usb_diag_text).as_bytes())?;
+    }
+
+    if let Some(text) = cache_current.as_ref() {
+        zip.start_file("diagnostics/pico-state-current.json", opts)?;
+        zip.write_all(redact_bundle_text(text).as_bytes())?;
+    }
+    if let Some(text) = cache_history.as_ref() {
+        zip.start_file("diagnostics/pico-state-history.jsonl", opts)?;
+        zip.write_all(redact_bundle_text(text).as_bytes())?;
+    }
+
+    for snapshot in &host_snapshots {
+        zip.start_file(snapshot.manifest.path.as_str(), opts)?;
+        zip.write_all(redact_bundle_text(&snapshot.text).as_bytes())?;
+    }
 
     // system-info.txt: always present. Captures the Windows build,
     // couchlink version, last-known Pico identity, short hostname.
     zip.start_file("system-info.txt", opts)?;
-    zip.write_all(system_info.as_bytes())?;
+    zip.write_all(redact_bundle_text(&system_info).as_bytes())?;
 
     // usb-devices.txt: pnputil dump if available (Windows 10 1903+),
     // otherwise a SetupAPI-via-serialport fallback so the bundle always
@@ -173,7 +352,7 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     if let Some((text, method)) = usb_devices.as_ref() {
         zip.start_file("usb-devices.txt", opts)?;
         zip.write_all(format!("# capture method: {method}\n\n").as_bytes())?;
-        zip.write_all(text.as_bytes())?;
+        zip.write_all(redact_bundle_text(text).as_bytes())?;
     } else {
         zip.start_file("usb-devices.txt", opts)?;
         zip.write_all(
@@ -192,7 +371,7 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         zip.start_file("usb-events.txt", opts)?;
         zip.write_all(b"# Windows event log entries from the last 15 minutes\n")?;
         zip.write_all(b"# filtered to USB / usbhub / usbser / Kernel-PnP providers\n\n")?;
-        zip.write_all(text.as_bytes())?;
+        zip.write_all(redact_bundle_text(text).as_bytes())?;
     } else {
         zip.start_file("usb-events.txt", opts)?;
         zip.write_all(
@@ -253,8 +432,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         }
     }
 
-    // Logs: last 3 couchlink.*.log (bridge, written by tracing-appender's
-    // daily rotation as couchlink.YYYY-MM-DD.log) and last 3 setup-*.log
+    // Logs: last 5 couchlink.*.log (bridge, written by tracing-appender's
+    // daily rotation as couchlink.YYYY-MM-DD.log) and last 5 setup-*.log
     // (PowerShell transcripts from setup.ps1).
     // The bridge prefix was previously "couchlink-" which never matched
     // tracing-appender's actual filename format and silently produced
@@ -281,6 +460,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     }
 
     zip.finish()?;
+    tracing::info!(
+        "bundle: run finished out_path={} per_pico={} host_snapshots={} cache_included={}",
+        out_path.display(),
+        per_pico_captures.len(),
+        host_snapshots.len(),
+        diagnostic_cache_included,
+    );
 
     Ok(BundleSummary {
         zip_path: out_path,
@@ -293,6 +479,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         pico_usb_enumerated,
         usb_diag_captured: usb_diag.captured,
         usb_diag_target_count: usb_diag.target_count,
+        per_pico_capture_count: per_pico_captures.len(),
+        host_snapshot_count: host_snapshots.len(),
+        diagnostic_cache_included,
     })
 }
 
@@ -374,6 +563,357 @@ async fn resolve_usb_diag_targets() -> Result<(Vec<cmd_run::PicoTarget>, String)
     Ok((vec![pico], format!("last-known IP {ip}")))
 }
 
+async fn capture_per_pico(capture_log: &mut CaptureLog) -> Vec<PicoBundleCapture> {
+    let mut seeds: BTreeMap<String, PicoCaptureSeed> = BTreeMap::new();
+
+    let started = Instant::now();
+    match cmd_run::discover_picos(Duration::from_secs(2)).await {
+        Ok(picos) => {
+            capture_log.record(
+                "per_pico.broadcast_discovery",
+                started,
+                "ok",
+                picos.len(),
+                format!("targets={}", picos.len()),
+            );
+            for target in picos {
+                let uid = target.uid_hex();
+                seeds
+                    .entry(uid.clone())
+                    .and_modify(|seed| {
+                        seed.target = Some(target.clone());
+                        seed.source = "broadcast discovery".to_string();
+                    })
+                    .or_insert(PicoCaptureSeed {
+                        uid,
+                        target: Some(target),
+                        saved: None,
+                        source: "broadcast discovery".to_string(),
+                        cached_state_json: None,
+                    });
+            }
+        }
+        Err(e) => {
+            capture_log.record(
+                "per_pico.broadcast_discovery",
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
+            );
+        }
+    }
+
+    let cfg = config::load().unwrap_or_default();
+    for saved in saved_picos_from_config(&cfg) {
+        let uid = saved.uid_hex();
+        seeds
+            .entry(uid.clone())
+            .and_modify(|seed| {
+                seed.saved = Some(saved.clone());
+            })
+            .or_insert(PicoCaptureSeed {
+                uid: uid.clone(),
+                target: None,
+                saved: Some(saved.clone()),
+                source: "saved config".to_string(),
+                cached_state_json: None,
+            });
+
+        let already_live = seeds
+            .get(&uid)
+            .and_then(|seed| seed.target.as_ref())
+            .is_some();
+        if already_live {
+            continue;
+        }
+        let Some(last_ip) = saved.last_ip.as_deref() else {
+            continue;
+        };
+        let Some(ip) = cmd_run::parse_ip_selector(last_ip) else {
+            capture_log.record(
+                format!("per_pico.{uid}.last_known_ip_probe"),
+                Instant::now(),
+                "invalid_saved_ip",
+                0,
+                last_ip,
+            );
+            continue;
+        };
+
+        let started = Instant::now();
+        match cmd_run::probe_pico_ip(ip, Duration::from_secs(2)).await {
+            Ok(target) => {
+                capture_log.record(
+                    format!("per_pico.{uid}.last_known_ip_probe"),
+                    started,
+                    "ok",
+                    1,
+                    target.peer.to_string(),
+                );
+                seeds
+                    .entry(uid.clone())
+                    .and_modify(|seed| {
+                        seed.target = Some(target.clone());
+                        seed.source = "last-known IP probe".to_string();
+                    })
+                    .or_insert(PicoCaptureSeed {
+                        uid,
+                        target: Some(target),
+                        saved: Some(saved),
+                        source: "last-known IP probe".to_string(),
+                        cached_state_json: None,
+                    });
+            }
+            Err(e) => {
+                capture_log.record(
+                    format!("per_pico.{uid}.last_known_ip_probe"),
+                    started,
+                    "not_reachable",
+                    0,
+                    format!("{e:#}"),
+                );
+            }
+        }
+    }
+
+    if let Some(cache) = pico_cache::read_current() {
+        if let Some(uid) = uid_from_cache_json(&cache) {
+            seeds
+                .entry(uid.clone())
+                .and_modify(|seed| {
+                    seed.cached_state_json = Some(cache.clone());
+                })
+                .or_insert(PicoCaptureSeed {
+                    uid,
+                    target: None,
+                    saved: None,
+                    source: "diagnostic cache".to_string(),
+                    cached_state_json: Some(cache),
+                });
+        }
+    }
+
+    let mut captures = Vec::new();
+    for seed in seeds.into_values() {
+        captures.push(capture_one_pico(seed, capture_log).await);
+    }
+    captures
+}
+
+async fn capture_one_pico(
+    seed: PicoCaptureSeed,
+    capture_log: &mut CaptureLog,
+) -> PicoBundleCapture {
+    let path = format!("picos/{}", sanitize_path_component(&seed.uid));
+    let state_captured: bool;
+    let pico_diag_status: String;
+    let usb_diag_status: String;
+    let pico_state_status: String;
+    let pico_diag_text: String;
+    let usb_diag_text: String;
+
+    let state_json = if let Some(target) = seed.target.as_ref() {
+        state_captured = true;
+        let mut snapshot = pico_cache::PicoStateSnapshot::from_target("bundle", target);
+        let target_pico_state_status;
+        let target_usb_diag_status;
+
+        let started = Instant::now();
+        match pico_state::query_pico_state(target, Duration::from_millis(900)).await {
+            Ok(state) => {
+                target_pico_state_status = "captured".to_string();
+                snapshot = snapshot.with_pico_state(&state);
+                capture_log.record(
+                    format!("per_pico.{}.pico_state", seed.uid),
+                    started,
+                    "captured",
+                    crate::protocol::PICO_STATE_WIRE_SIZE,
+                    "",
+                );
+            }
+            Err(e) => {
+                target_pico_state_status = "timeout_or_unsupported".to_string();
+                capture_log.record(
+                    format!("per_pico.{}.pico_state", seed.uid),
+                    started,
+                    "timeout_or_unsupported",
+                    0,
+                    format!("{e:#}"),
+                );
+            }
+        }
+
+        let started = Instant::now();
+        let diag = pico_diag::capture_run_udp_for_target(target).await;
+        let target_pico_diag_status = diag.discriminant_str().to_string();
+        let target_pico_diag_text = diag.stub_text();
+        capture_log.record(
+            format!("per_pico.{}.pico_diag", seed.uid),
+            started,
+            &target_pico_diag_status,
+            target_pico_diag_text.len(),
+            diag.source_str().unwrap_or(""),
+        );
+
+        let started = Instant::now();
+        let target_usb_diag_text =
+            match cmd_usb_diag::query_usb_diag(target, Duration::from_secs(3)).await {
+                Ok(diag) => {
+                    target_usb_diag_status = "captured".to_string();
+                    let text = cmd_usb_diag::format_usb_diag(&diag, target.persona);
+                    snapshot = snapshot.with_usb_diag(&diag, target.persona);
+                    capture_log.record(
+                        format!("per_pico.{}.usb_diag", seed.uid),
+                        started,
+                        "captured",
+                        text.len(),
+                        "",
+                    );
+                    text
+                }
+                Err(e) => {
+                    target_usb_diag_status = "not_captured".to_string();
+                    let text = format!(
+                    "Structured Pico USB diagnostics were not captured for {}.\n\nerror={e:#}\n",
+                    target.detail_label()
+                );
+                    capture_log.record(
+                        format!("per_pico.{}.usb_diag", seed.uid),
+                        started,
+                        "not_captured",
+                        text.len(),
+                        format!("{e:#}"),
+                    );
+                    text
+                }
+            };
+
+        snapshot = snapshot.with_outcome(format!(
+            "bundle: pico_state={target_pico_state_status}; pico_diag={target_pico_diag_status}; usb_diag={target_usb_diag_status}"
+        ));
+        pico_cache::record(snapshot.clone());
+        pico_state_status = target_pico_state_status;
+        pico_diag_status = target_pico_diag_status;
+        pico_diag_text = target_pico_diag_text;
+        usb_diag_status = target_usb_diag_status;
+        usb_diag_text = target_usb_diag_text;
+        state_json_from_snapshot(&snapshot)
+    } else if let Some(saved) = seed.saved.as_ref() {
+        state_captured = true;
+        let snapshot = pico_cache::PicoStateSnapshot::offline_from_config("bundle-offline", saved);
+        pico_cache::record(snapshot.clone());
+        pico_diag_status = "offline_not_attempted".to_string();
+        usb_diag_status = "offline_not_attempted".to_string();
+        pico_state_status = "offline_not_attempted".to_string();
+        pico_diag_text = offline_pico_text(&seed, "firmware diag log");
+        usb_diag_text = offline_pico_text(&seed, "USB counters");
+        state_json_from_snapshot(&snapshot)
+    } else if let Some(cached) = seed.cached_state_json.as_ref() {
+        state_captured = true;
+        pico_diag_status = "cache_only_not_attempted".to_string();
+        usb_diag_status = "cache_only_not_attempted".to_string();
+        pico_state_status = "cache_only".to_string();
+        pico_diag_text = offline_pico_text(&seed, "firmware diag log");
+        usb_diag_text = offline_pico_text(&seed, "USB counters");
+        cached.clone()
+    } else {
+        state_captured = false;
+        pico_diag_status = "no_state".to_string();
+        usb_diag_status = "no_state".to_string();
+        pico_state_status = "no_state".to_string();
+        pico_diag_text = offline_pico_text(&seed, "firmware diag log");
+        usb_diag_text = offline_pico_text(&seed, "USB counters");
+        "{}\n".to_string()
+    };
+
+    PicoBundleCapture {
+        manifest: ManifestPicoCapture {
+            uid: seed.uid,
+            path,
+            peer: seed.target.as_ref().map(|target| target.peer.to_string()),
+            live: seed.target.is_some(),
+            source: seed.source,
+            state_captured,
+            pico_diag_status,
+            usb_diag_status,
+            pico_state_status,
+            cached_state_included: seed.cached_state_json.is_some(),
+        },
+        state_json,
+        pico_diag_text,
+        usb_diag_text,
+    }
+}
+
+fn saved_picos_from_config(cfg: &config::Config) -> Vec<config::PicoIdentity> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for pico in &cfg.picos {
+        if seen.insert(pico.unique_id_short) {
+            out.push(pico.clone());
+        }
+    }
+    if let Some(pico) = cfg.last_pico.as_ref() {
+        if seen.insert(pico.unique_id_short) {
+            out.push(pico.clone());
+        }
+    }
+    out
+}
+
+fn uid_from_cache_json(text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    if let Some(uid) = value.get("uid").and_then(|v| v.as_str()) {
+        return Some(sanitize_path_component(uid));
+    }
+    let uid = value.get("unique_id_short").and_then(|v| v.as_u64())?;
+    Some(format!("{:08X}", uid as u32))
+}
+
+fn sanitize_path_component(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect();
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn state_json_from_snapshot(snapshot: &pico_cache::PicoStateSnapshot) -> String {
+    serde_json::to_string_pretty(snapshot).unwrap_or_else(|e| {
+        format!(
+            "{{\"capture_outcome\":\"state_serialization_failed\",\"error\":\"{}\"}}\n",
+            e
+        )
+    })
+}
+
+fn offline_pico_text(seed: &PicoCaptureSeed, artifact: &str) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "{artifact} was not captured because this Pico was not reachable during bundle capture."
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(out, "uid={}", seed.uid);
+    let _ = writeln!(out, "source={}", seed.source);
+    if let Some(saved) = seed.saved.as_ref() {
+        let _ = writeln!(out, "saved_board={}", saved.board_label());
+        let _ = writeln!(out, "saved_firmware={}", saved.firmware_version());
+        if let Some(ip) = saved.last_ip.as_deref() {
+            let _ = writeln!(out, "last_known_ip={ip}");
+        }
+    }
+    if seed.cached_state_json.is_some() {
+        let _ = writeln!(out, "cached_state_available=true");
+    }
+    out
+}
+
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
     let out_path = output.unwrap_or_else(|| {
         let stamp = Local::now().format("%Y%m%d-%H%M%S");
@@ -449,4 +989,16 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_path_component;
+
+    #[test]
+    fn pico_bundle_path_component_is_sanitized() {
+        assert_eq!(sanitize_path_component("02E22DA9"), "02E22DA9");
+        assert_eq!(sanitize_path_component("../02:E2\\2D/A9"), "02E22DA9");
+        assert_eq!(sanitize_path_component(""), "unknown");
+    }
 }

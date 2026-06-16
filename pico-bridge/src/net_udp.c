@@ -81,9 +81,11 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_KEY_HEARTBEAT 0x09
 #define TYPE_SET_PERSONA 0x0A
 #define TYPE_GET_VERSION 0x0B
+#define TYPE_GET_PICO_STATE 0x0C
 #define TYPE_LOG_CHUNK 0x85
 #define TYPE_USB_DIAG 0x86
 #define TYPE_VERSION 0x87
+#define TYPE_PICO_STATE 0x88
 
 #define FLAG_PARSEC_CONNECTED 0x01
 // Capability bit set in ACK[3] (the flags byte, formerly always zero)
@@ -122,15 +124,18 @@ static const char *lwip_err_name(err_t e) {
 #define USB_DIAG_ACTIVITY_PEER 0x08
 #define USB_DIAG_ACTIVITY_PARSEC 0x10
 
+#define PICO_STATE_WIRE_SIZE 104
+#define PICO_STATE_VERSION 1
+
 // LogChunk layout (matches bridge protocol.rs):
 //   header (12 bytes) + payload (<= 256 bytes) + crc16 (2 bytes)
 #define LOG_CHUNK_HEADER_LEN 12
 #define LOG_CHUNK_MAX_PAYLOAD 256
 #define LOG_CHUNK_FLAG_LAST 0x01
 
-// Diag log snapshot capacity. The ring buffer is 4 KiB; sized to match
+// Diag log snapshot capacity. The ring buffer is 16 KiB; sized to match
 // so we always pull the full ring in one snapshot call.
-#define DIAG_SNAPSHOT_CAP 4096
+#define DIAG_SNAPSHOT_CAP DIAG_LOG_RING_SIZE
 
 static struct udp_pcb *pcb;
 static bool have_peer;
@@ -143,6 +148,7 @@ static uint32_t rx_count; // received datagrams (including malformed)
 static bool reboot_to_setup_pending;
 static bool set_persona_pending;
 static uint8_t set_persona_value;
+static uint32_t malformed_count;
 
 // CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
 static uint8_t crc8(const uint8_t *data, size_t n) {
@@ -175,6 +181,14 @@ static void put_u32_le(uint8_t *buf, size_t offset, uint32_t value) {
     buf[offset + 1] = (uint8_t)((value >> 8) & 0xFFu);
     buf[offset + 2] = (uint8_t)((value >> 16) & 0xFFu);
     buf[offset + 3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static void note_malformed_packet(const char *reason, uint16_t detail) {
+    malformed_count++;
+    if (malformed_count <= 5 || (malformed_count % 64u) == 0) {
+        diag_log_printf("net_udp: malformed packet reason=%s detail=%u count=%u", reason,
+                        (unsigned)detail, (unsigned)malformed_count);
+    }
 }
 
 static void build_state_fields(uint8_t *buf, uint8_t type, uint8_t seq) {
@@ -245,7 +259,7 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
 }
 
 // Push the diag-log ring out as one or more LogChunk datagrams. Bounded
-// by DIAG_SNAPSHOT_CAP / LOG_CHUNK_MAX_PAYLOAD = 16 chunks; each chunk
+// by DIAG_SNAPSHOT_CAP / LOG_CHUNK_MAX_PAYLOAD = 64 chunks; each chunk
 // is its own pbuf_alloc/udp_sendto/pbuf_free so memory pressure shows
 // up as a per-chunk ERR_MEM rather than a single all-or-nothing alloc.
 static void send_log_chunks(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
@@ -382,6 +396,106 @@ static void send_usb_diag(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_se
     }
 }
 
+static uint8_t current_persona_byte(void) {
+    switch (boot_mode_run_persona()) {
+    case RUN_PERSONA_KEYBOARD:
+        return FLASH_PERSONA_KEYBOARD;
+    case RUN_PERSONA_MAPLE:
+        return FLASH_PERSONA_MAPLE;
+    case RUN_PERSONA_PS3:
+        return FLASH_PERSONA_PS3;
+    case RUN_PERSONA_PS4:
+        return FLASH_PERSONA_PS4;
+    case RUN_PERSONA_XBOXONE:
+        return FLASH_PERSONA_XBOXONE;
+    case RUN_PERSONA_XINPUT:
+    default:
+        return FLASH_PERSONA_XINPUT;
+    }
+}
+
+static void send_pico_state(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
+    usb_diag_snapshot_t snap;
+    usb_diag_snapshot(&snap);
+
+    uint8_t usb_flags = 0;
+    if (snap.mounted)
+        usb_flags |= USB_DIAG_FLAG_MOUNTED;
+    if (snap.suspended)
+        usb_flags |= USB_DIAG_FLAG_SUSPENDED;
+
+    uint8_t activity_flags = 0;
+    if (snap.xinput_in_queued_count > 0)
+        activity_flags |= USB_DIAG_ACTIVITY_QUEUED;
+    if (snap.xinput_in_sent_count > 0)
+        activity_flags |= USB_DIAG_ACTIVITY_SENT;
+    if (snap.xinput_out_count > 0)
+        activity_flags |= USB_DIAG_ACTIVITY_OUT;
+    if (have_peer)
+        activity_flags |= USB_DIAG_ACTIVITY_PEER;
+    if (g_parsec_connected)
+        activity_flags |= USB_DIAG_ACTIVITY_PARSEC;
+
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, PICO_STATE_WIRE_SIZE, PBUF_RAM);
+    if (!p) {
+        diag_log_msg("net_udp: pico_state pbuf_alloc failed (ERR_MEM)");
+        return;
+    }
+
+    uint8_t *buf = (uint8_t *)p->payload;
+    memset(buf, 0, PICO_STATE_WIRE_SIZE);
+    buf[0] = MAGIC;
+    buf[1] = TYPE_PICO_STATE;
+    buf[2] = in_seq;
+    buf[3] = 0;
+    buf[4] = PICO_STATE_VERSION;
+    buf[5] = PICO_BRIDGE_UDP_PROTO_VERSION;
+    buf[6] = PICO_BRIDGE_BOARD_TYPE;
+    buf[7] = current_persona_byte();
+    put_u32_le(buf, 8, uid_short);
+    put_u32_le(buf, 12, (uint32_t)(to_ms_since_boot(get_absolute_time()) / 1000));
+    put_u32_le(buf, 16, tx_count);
+    put_u32_le(buf, 20, rx_count);
+    put_u32_le(buf, 24, snap.now_ms);
+    put_u32_le(buf, 28, g_last_packet_ms);
+    put_u32_le(buf, 32, snap.mount_count);
+    put_u32_le(buf, 36, snap.umount_count);
+    put_u32_le(buf, 40, snap.suspend_count);
+    put_u32_le(buf, 44, snap.resume_count);
+    put_u32_le(buf, 48, snap.device_desc_count);
+    put_u32_le(buf, 52, snap.config_desc_count);
+    put_u32_le(buf, 56, snap.xinput_in_queued_count);
+    put_u32_le(buf, 60, snap.xinput_in_sent_count);
+    put_u32_le(buf, 64, snap.xinput_out_count);
+    put_u32_le(buf, 68, snap.last_mount_ms);
+    put_u32_le(buf, 72, snap.last_umount_ms);
+    put_u32_le(buf, 76, snap.last_in_queued_ms);
+    put_u32_le(buf, 80, snap.last_in_sent_ms);
+    put_u32_le(buf, 84, snap.last_out_ms);
+    buf[88] = snap.last_out_len;
+    buf[89] = snap.last_out_byte0;
+    buf[90] = snap.last_out_byte1;
+    buf[91] = usb_flags;
+    buf[92] = activity_flags;
+    put_u32_le(buf, 96, malformed_count);
+    uint16_t crc = crc16_ccitt_false(buf, PICO_STATE_WIRE_SIZE - 2);
+    buf[PICO_STATE_WIRE_SIZE - 2] = (uint8_t)(crc & 0xFFu);
+    buf[PICO_STATE_WIRE_SIZE - 1] = (uint8_t)((crc >> 8) & 0xFFu);
+
+    err_t e = udp_sendto(pcb, p, to_addr, to_port);
+    pbuf_free(p);
+    if (e != ERR_OK) {
+        diag_log_printf("net_udp: pico_state send err=%d (%s)", (int)e, lwip_err_name(e));
+    } else {
+        tx_count++;
+        diag_log_printf("net_udp: pico_state -> %u.%u.%u.%u:%u tx=%u rx=%u malformed=%u",
+                        ip4_addr1(ip_2_ip4(to_addr)), ip4_addr2(ip_2_ip4(to_addr)),
+                        ip4_addr3(ip_2_ip4(to_addr)), ip4_addr4(ip_2_ip4(to_addr)),
+                        (unsigned)to_port, (unsigned)tx_count, (unsigned)rx_count,
+                        (unsigned)malformed_count);
+    }
+}
+
 static void send_version(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     uint8_t buf[WIRE_PKT_SIZE];
     memset(buf, 0, sizeof(buf));
@@ -491,6 +605,7 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
     // contiguous local buffer rather than reading p->payload directly so we
     // never read past the first segment of a chain.
     if (p->tot_len != WIRE_PKT_SIZE) {
+        note_malformed_packet("size", p->tot_len);
         pbuf_free(p);
         return;
     }
@@ -498,12 +613,18 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
     u16_t copied = pbuf_copy_partial(p, buf, WIRE_PKT_SIZE, 0);
     pbuf_free(p);
     p = NULL;
-    if (copied != WIRE_PKT_SIZE)
+    if (copied != WIRE_PKT_SIZE) {
+        note_malformed_packet("copy", copied);
         return;
-    if (buf[0] != MAGIC)
+    }
+    if (buf[0] != MAGIC) {
+        note_malformed_packet("magic", buf[0]);
         return;
-    if (crc8(buf, 16) != buf[16])
+    }
+    if (crc8(buf, 16) != buf[16]) {
+        note_malformed_packet("crc", buf[1]);
         return;
+    }
 
     uint8_t type = buf[1];
     uint8_t seq = buf[2];
@@ -524,6 +645,8 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
         send_usb_diag(addr, port, seq);
     } else if (type == TYPE_GET_VERSION) {
         send_version(addr, port, seq);
+    } else if (type == TYPE_GET_PICO_STATE) {
+        send_pico_state(addr, port, seq);
     } else if (type == TYPE_REBOOT_TO_SETUP) {
         send_ack(addr, port, seq);
         reboot_to_setup_pending = true;
@@ -553,6 +676,8 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
             apply_key_body(&buf[4], flags);
         else
             apply_state_body(&buf[4], flags);
+    } else {
+        note_malformed_packet("type", type);
     }
     // pbuf already freed above after pbuf_copy_partial; nothing to do here.
 }
@@ -609,6 +734,7 @@ bool net_udp_init(void) {
                 ((uint32_t)id.id[3] << 24);
 
     have_peer = false;
+    malformed_count = 0;
     reboot_to_setup_pending = false;
     set_persona_pending = false;
     next_keepalive = make_timeout_time_ms(1000);

@@ -811,8 +811,8 @@ uint8_t const *tud_descriptor_bos_cb(void) {
 // Static response buffer for GET_DIAG_LOG. Filled in the SETUP stage of
 // the control transfer; TinyUSB chunks it into 64-byte EP0 DATA packets
 // automatically up to req->wLength. Sized to hold [lost_le32] plus the
-// full diag ring (4 KiB).
-static uint8_t diag_xfer_buf[4 + 4096];
+// full diag ring (16 KiB).
+static uint8_t diag_xfer_buf[4 + DIAG_LOG_RING_SIZE];
 
 bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *req) {
     if (stage != CONTROL_STAGE_SETUP)

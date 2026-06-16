@@ -13,7 +13,9 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, MissedTickBehavior};
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, Persona, FLAG_PARSEC_CONNECTED};
-use crate::{cdc, cmd_flash, config, discovery, journal, keyboard, net, support, xinput};
+use crate::{
+    cdc, cmd_flash, config, discovery, journal, keyboard, net, pico_cache, support, xinput,
+};
 
 const DEFAULT_DISCOVER_SECONDS: u64 = 5;
 const DEFAULT_STATUS_SECONDS: u64 = 2;
@@ -61,6 +63,7 @@ pub struct PicoTarget {
     /// ACK flags at discovery. Determines whether the bridge streams pad
     /// state or keyboard reports to it.
     pub persona: Persona,
+    pub ack_flags: u8,
 }
 
 impl PicoTarget {
@@ -87,12 +90,13 @@ impl PicoTarget {
 
     pub fn detail_label(&self) -> String {
         format!(
-            "{} {}  {}  fw v{}  uptime {}s",
+            "{} {}  {}  fw v{}  uptime {}s flags=0x{:02X}",
             self.board_label(),
             self.uid_hex(),
             self.peer,
             self.info.firmware_version(),
             self.info.uptime_seconds,
+            self.ack_flags,
         )
     }
 }
@@ -204,14 +208,19 @@ pub async fn discover_picos(timeout: Duration) -> Result<Vec<PicoTarget>> {
     let found = discovery::collect(&socket, timeout)
         .await
         .context("collecting Pico discovery replies")?;
-    Ok(found
+    let targets: Vec<PicoTarget> = found
         .into_iter()
-        .map(|(peer, info, persona)| PicoTarget {
-            peer,
-            info,
-            persona,
+        .map(|reply| PicoTarget {
+            peer: reply.peer,
+            info: reply.info,
+            persona: reply.persona,
+            ack_flags: reply.flags,
         })
-        .collect())
+        .collect();
+    for pico in &targets {
+        pico_cache::record_target("discover", pico);
+    }
+    Ok(targets)
 }
 
 pub async fn discover_picos_with_auto_recovery(
@@ -276,7 +285,7 @@ pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> 
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP manual-IP probe socket")?;
-    let Some((peer, info, persona)) = discovery::probe_ip(&socket, ip, timeout)
+    let Some(reply) = discovery::probe_ip(&socket, ip, timeout)
         .await
         .with_context(|| format!("probing Pico at {ip}:{}", protocol::PORT))?
     else {
@@ -286,18 +295,22 @@ pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> 
             timeout.as_secs()
         );
     };
-    if info.proto_version != protocol::PROTO_VERSION {
+    if reply.info.proto_version != protocol::PROTO_VERSION {
         bail!(
-            "Pico at {peer} speaks protocol v{}, bridge speaks v{}. Update whichever side is older.",
-            info.proto_version,
+            "Pico at {} speaks protocol v{}, bridge speaks v{}. Update whichever side is older.",
+            reply.peer,
+            reply.info.proto_version,
             protocol::PROTO_VERSION,
         );
     }
-    Ok(PicoTarget {
-        peer,
-        info,
-        persona,
-    })
+    let target = PicoTarget {
+        peer: reply.peer,
+        info: reply.info,
+        persona: reply.persona,
+        ack_flags: reply.flags,
+    };
+    pico_cache::record_target("probe-ip", &target);
+    Ok(target)
 }
 
 async fn recover_setup_usb_to_wifi(quiet: bool) -> Result<usize> {
@@ -664,6 +677,33 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
     if options.save_routes {
         save_routes(&routes)?;
     }
+    tracing::info!(
+        "stream: starting {} route(s), status={}s quiet={} save_routes={}",
+        routes.len(),
+        options.status_seconds,
+        options.quiet,
+        options.save_routes,
+    );
+    for route in &routes {
+        tracing::debug!(
+            "stream: route source_slot={} source={} pico={} peer={} persona={} flags=0x{:02X}",
+            route.source_slot,
+            route.source_label(),
+            route.pico.uid_hex(),
+            route.pico.peer,
+            route.pico.persona.label(),
+            route.pico.ack_flags,
+        );
+        pico_cache::record(
+            pico_cache::PicoStateSnapshot::from_target("stream-start", &route.pico).with_route(
+                pico_cache::RouteSnapshot {
+                    source_slot: Some(route.source_slot),
+                    source_label: Some(route.source_label()),
+                    ..pico_cache::RouteSnapshot::default()
+                },
+            ),
+        );
+    }
 
     let socket = net::bind_udp("0.0.0.0:0")
         .await
@@ -973,6 +1013,25 @@ fn print_status(routes: &mut [RouteRuntime]) {
                 )
             }
         };
+        let last_inbound_ms_ago = if route.inbound_total == 0 {
+            None
+        } else {
+            Some(pico_cache::duration_ms(inbound_age))
+        };
+        pico_cache::record(
+            pico_cache::PicoStateSnapshot::from_target("stream-status", &route.route.pico)
+                .with_route(pico_cache::RouteSnapshot {
+                    source_slot: Some(route.route.source_slot),
+                    source_label: Some(route.route.source_label()),
+                    peer_health: Some(peer_state.clone()),
+                    sent_total: Some(route.sent_total),
+                    inbound_total: Some(route.inbound_total),
+                    sent_delta: Some(sent_delta),
+                    last_inbound_ms_ago,
+                    source_connected: Some(route.source_connected),
+                    last_send_type: Some(route.last_send_type.to_string()),
+                }),
+        );
         println!(
             "  {} -> {} | {} | out +{} total {} | in {} ({}) | {} {}",
             route.route.source_label(),
@@ -1110,6 +1169,7 @@ mod tests {
                 full_version: None,
             },
             persona: Persona::Xinput,
+            ack_flags: 0,
         }
     }
 

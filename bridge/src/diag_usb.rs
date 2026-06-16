@@ -16,7 +16,7 @@ const PICO_VID: u16 = 0x2E8A;
 const PICO_PID: u16 = 0xCAF0;
 const DIAG_ITF_NUM: u8 = 2;
 const DIAG_GET_LOG_REQ: u8 = 0x01;
-const MAX_RESPONSE_BYTES: usize = 4 + 4096;
+const MAX_RESPONSE_BYTES: usize = 4 + 16384;
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Result of a vendor-control diag-log fetch. Translated to

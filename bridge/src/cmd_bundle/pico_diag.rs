@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use crate::protocol::{self, LogChunk, Packet, PacketKind, ACK_FLAG_LOG_CHUNK_SUPPORTED};
-use crate::{cdc, config};
+use crate::{cdc, cmd_run, config};
 use tokio::net::UdpSocket;
 
 use super::usb_enum::{setup_probe_failed_diagnosis, stub_failure};
@@ -391,6 +391,36 @@ pub(super) async fn capture_pico_diag() -> DiagOutcome {
     cdc_result
 }
 
+pub(super) async fn capture_run_udp_for_target(pico: &cmd_run::PicoTarget) -> DiagOutcome {
+    let socket = match crate::net::bind_udp("0.0.0.0:0").await {
+        Ok(s) => s,
+        Err(e) => {
+            return DiagOutcome::UdpDiscoveryFailed {
+                reason: format!("bind: {e}"),
+            };
+        }
+    };
+    let ack_started = Instant::now();
+    let ack_packet = match unicast_for_ack(&socket, pico.peer, Duration::from_secs(2)).await {
+        Ok(p) => p,
+        Err(e) => {
+            return DiagOutcome::UdpDiscoveryFailed {
+                reason: format!("ack probe to {}: {e}", pico.peer),
+            };
+        }
+    };
+    tracing::info!(
+        "bundle: per-Pico UDP ack from {} after {} ms, flags=0x{:02X}",
+        pico.peer,
+        ack_started.elapsed().as_millis(),
+        ack_packet.flags,
+    );
+    if ack_packet.flags & ACK_FLAG_LOG_CHUNK_SUPPORTED == 0 {
+        return DiagOutcome::UdpUnsupported { peer: pico.peer };
+    }
+    capture_log_chunks(&socket, pico.peer).await
+}
+
 /// WinUSB vendor-control diag retrieval. Wraps the blocking nusb
 /// implementation in `spawn_blocking` (matches `try_capture_setup_cdc`'s
 /// shape), translates `VendorDiagOutcome` to `DiagOutcome`.
@@ -602,7 +632,11 @@ async fn try_capture_run_udp() -> DiagOutcome {
         return DiagOutcome::UdpUnsupported { peer: peer_addr };
     }
 
-    // Step 2: send GET_LOG, collect chunks until LAST_CHUNK or timeout.
+    capture_log_chunks(&socket, peer_addr).await
+}
+
+async fn capture_log_chunks(socket: &UdpSocket, peer_addr: SocketAddr) -> DiagOutcome {
+    // Send GET_LOG, collect chunks until LAST_CHUNK or timeout.
     let started = Instant::now();
     let req = protocol::encode_get_log(0);
     if let Err(e) = socket.send_to(&req, peer_addr).await {
@@ -618,10 +652,10 @@ async fn try_capture_run_udp() -> DiagOutcome {
     let mut chunks: BTreeMap<u8, LogChunk> = BTreeMap::new();
     let mut got_last = false;
     let mut buf = [0u8; 1024];
-    // Overall deadline gives the firmware time to drain the ring. With 16
+    // Overall deadline gives the firmware time to drain the ring. With 64
     // chunks of 256 bytes each, even a slow per-chunk cadence completes
     // well inside this budget.
-    let deadline = started + Duration::from_millis(1500);
+    let deadline = started + Duration::from_millis(4000);
     while !got_last {
         let remaining = match deadline.checked_duration_since(Instant::now()) {
             Some(d) if !d.is_zero() => d,
@@ -670,7 +704,7 @@ async fn try_capture_run_udp() -> DiagOutcome {
             step: "wait_for_chunks",
             elapsed_ms: started.elapsed().as_millis(),
             chunks_received: 0,
-            error: "no LogChunk datagrams received before the 1500 ms deadline".to_string(),
+            error: "no LogChunk datagrams received before the 4000 ms deadline".to_string(),
         };
     }
 

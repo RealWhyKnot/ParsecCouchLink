@@ -7,12 +7,21 @@ use anyhow::{Context, Result};
 use crate::{cdc, cmd_run, net, protocol};
 
 pub async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
+    tracing::info!(
+        "pico-mode: request reboot-to-setup for {}",
+        pico.short_label()
+    );
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP reboot-to-setup socket")?;
     let mut seq = 0xE0u8;
     for _ in 0..8 {
         let req = protocol::encode_reboot_to_setup(seq);
+        tracing::debug!(
+            "pico-mode: send reboot-to-setup seq=0x{:02X} to {}",
+            seq,
+            pico.peer,
+        );
         seq = seq.wrapping_add(1);
         socket
             .send_to(&req, pico.peer)
@@ -32,16 +41,32 @@ pub async fn request_set_persona(
     pico: &cmd_run::PicoTarget,
     persona: protocol::Persona,
 ) -> Result<()> {
+    tracing::info!(
+        "pico-mode: request set-persona {} for {}",
+        persona.label(),
+        pico.short_label(),
+    );
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP set-persona socket")?;
     let mut seq = 0xD0u8;
     for _ in 0..6 {
         let req = protocol::encode_set_persona(seq, persona);
+        tracing::debug!(
+            "pico-mode: send set-persona seq=0x{:02X} persona={} to {}",
+            seq,
+            persona.label(),
+            pico.peer,
+        );
         seq = seq.wrapping_add(1);
         match socket.send_to(&req, pico.peer).await {
             Ok(_) => {}
-            Err(e) if net::is_transient(&e) => break,
+            Err(e) if net::is_transient(&e) => {
+                tracing::debug!(
+                    "pico-mode: transient set-persona send error after reboot start: {e}"
+                );
+                break;
+            }
             Err(e) => {
                 return Err(e)
                     .with_context(|| format!("sending set-persona request to {}", pico.peer))

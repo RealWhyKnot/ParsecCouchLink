@@ -114,8 +114,9 @@ void wifi_start_join(const char *ssid, uint8_t ssid_len, const char *password, u
     saved_pass[pass_len] = 0;
     saved_pass_len = pass_len;
 
-    diag_log_printf("wifi: starting join to %s (ssid_len=%u pass_len=%u)", saved_ssid,
-                    (unsigned)ssid_len, (unsigned)pass_len);
+    const char *ssid_class = (ssid_len <= 8) ? "short" : ((ssid_len <= 16) ? "medium" : "long");
+    diag_log_printf("wifi: starting join (ssid_len=%u ssid_class=%s pass_len=%u)",
+                    (unsigned)ssid_len, ssid_class, (unsigned)pass_len);
     state = WIFI_STATE_JOINING;
     last_error = 0;
     join_started = get_absolute_time();

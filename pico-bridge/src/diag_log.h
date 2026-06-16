@@ -8,6 +8,8 @@
 // bundle in future versions. Keep messages short and stateful (boot,
 // state transitions, errors) -- never log per-packet noise.
 
+#define DIAG_LOG_RING_SIZE 16384u
+
 void diag_log_init(void);
 void diag_log_msg(const char *msg);
 void diag_log_printf(const char *fmt, ...);

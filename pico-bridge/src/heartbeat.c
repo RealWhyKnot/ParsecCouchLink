@@ -11,7 +11,7 @@
 #include "wifi.h"
 
 // 5 seconds keeps the ring populated without burning bytes on a quiet
-// system. 4 KiB diag_log ring / ~96 bytes per heartbeat = ~43 entries
+// system. 16 KiB diag_log ring / ~96 bytes per heartbeat = ~170 entries
 // or ~3.5 minutes of history even if nothing else ever logs.
 #define HEARTBEAT_INTERVAL_MS 5000
 

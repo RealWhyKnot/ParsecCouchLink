@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "diag_log.h"
+
 // Mirrors bridge/src/cdc.rs and wiki/Protocol.md v1. Frame format:
 //
 //   magic(2)=A5 5A | proto_version(1) | command(1) | payload_len(2 LE)
@@ -14,7 +16,7 @@
 #define CDC_FRAME_MAGIC0 0xA5
 #define CDC_FRAME_MAGIC1 0x5A
 #define CDC_PROTO_VERSION 1
-#define CDC_MAX_PAYLOAD 256
+#define CDC_MAX_PAYLOAD (4u + DIAG_LOG_RING_SIZE)
 #define CDC_HEADER_LEN 8
 #define CDC_CRC_LEN 2
 #define CDC_MAX_FRAME (CDC_HEADER_LEN + CDC_MAX_PAYLOAD + CDC_CRC_LEN)

@@ -21,6 +21,7 @@ use crate::config;
 type FilterSetter = Box<dyn Fn(&str) -> Result<()> + Send + Sync>;
 static STDERR_SETTER: OnceLock<FilterSetter> = OnceLock::new();
 static FILE_SETTER: OnceLock<FilterSetter> = OnceLock::new();
+pub const LOG_FILE_RETENTION: usize = 5;
 
 /// Apply a new tracing filter directive at runtime. Both stderr and file
 /// filters (when present) are updated. Returns an error if the directive does
@@ -92,7 +93,7 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
         .rotation(Rotation::DAILY)
         .filename_prefix("couchlink")
         .filename_suffix("log")
-        .max_log_files(7)
+        .max_log_files(LOG_FILE_RETENTION)
         .build(&log_dir)?;
     let (nonblock, guard) = tracing_appender::non_blocking(appender);
 

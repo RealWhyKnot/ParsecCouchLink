@@ -26,7 +26,7 @@ pub const SETUP_PID: u16 = 0xCAF0;
 
 pub const FRAME_MAGIC: [u8; 2] = [0xA5, 0x5A];
 pub const PROTO_VERSION: u8 = 1;
-pub const MAX_PAYLOAD: usize = 256;
+pub const MAX_PAYLOAD: usize = 4 + 16384;
 pub const HEADER_LEN: usize = 8; // magic(2) + ver(1) + cmd(1) + len(2) + seq(1) + reserved(1)
 pub const CRC_LEN: usize = 2;
 pub const MAX_FRAME: usize = HEADER_LEN + MAX_PAYLOAD + CRC_LEN;

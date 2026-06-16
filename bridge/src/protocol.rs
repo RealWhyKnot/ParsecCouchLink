@@ -42,6 +42,10 @@ pub const TYPE_SET_PERSONA: u8 = 0x0A;
 /// compact legacy date triplet; this optional follow-up carries revision and
 /// development suffix without changing the ACK shape.
 pub const TYPE_GET_VERSION: u8 = 0x0B;
+/// Request a richer current-state diagnostic snapshot from run-mode
+/// firmware. Optional: older firmware ignores it and the bridge falls back
+/// to ACK/version/USB-diag/log/cache evidence.
+pub const TYPE_GET_PICO_STATE: u8 = 0x0C;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
@@ -51,6 +55,8 @@ pub const TYPE_LOG_CHUNK: u8 = 0x85;
 pub const TYPE_USB_DIAG: u8 = 0x86;
 /// Fixed 17-byte reply to `TYPE_GET_VERSION`.
 pub const TYPE_VERSION: u8 = 0x87;
+/// Current-state diagnostic reply sent by run-mode firmware.
+pub const TYPE_PICO_STATE: u8 = 0x88;
 
 pub const FLAG_PARSEC_CONNECTED: u8 = 1 << 0;
 pub const FLAG_NEUTRALIZE: u8 = 1 << 1;
@@ -95,12 +101,15 @@ pub const USB_DIAG_ACTIVITY_OUT: u8 = 1 << 2;
 pub const USB_DIAG_ACTIVITY_PEER: u8 = 1 << 3;
 pub const USB_DIAG_ACTIVITY_PARSEC: u8 = 1 << 4;
 
+pub const PICO_STATE_WIRE_SIZE: usize = 104;
+pub const PICO_STATE_VERSION: u8 = 1;
+
 /// Set in a `TYPE_LOG_CHUNK` datagram's `flags` byte to mark the final
 /// chunk in the reply sequence.
 pub const LOG_CHUNK_FLAG_LAST: u8 = 1 << 0;
 
-/// Maximum log-chunk payload size in bytes. With a 4 KiB diag ring on
-/// the firmware, a complete snapshot fits in 16 chunks. Comfortably
+/// Maximum log-chunk payload size in bytes. With a 16 KiB diag ring on
+/// the firmware, a complete snapshot fits in 64 chunks. Comfortably
 /// below the Wi-Fi MTU after IP+UDP headers.
 pub const LOG_CHUNK_MAX_PAYLOAD: usize = 256;
 
@@ -521,6 +530,17 @@ pub fn encode_get_version(seq: u8) -> [u8; PACKET_SIZE] {
     buf
 }
 
+/// Build a `TYPE_GET_PICO_STATE` request datagram. Same fixed shape as
+/// discovery and the other diagnostic requests.
+pub fn encode_get_pico_state(seq: u8) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_GET_PICO_STATE;
+    buf[2] = seq;
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
 impl VersionInfo {
     pub fn encode(&self, seq: u8, flags: u8) -> [u8; PACKET_SIZE] {
         let mut buf = [0u8; PACKET_SIZE];
@@ -756,6 +776,220 @@ impl UsbDiag {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PicoStateDiag {
+    pub seq: u8,
+    pub flags: u8,
+    pub version: u8,
+    pub proto_version: u8,
+    pub board_type: u8,
+    pub persona_byte: u8,
+    pub unique_id_short: u32,
+    pub uptime_seconds: u32,
+    pub tx_count: u32,
+    pub rx_count: u32,
+    pub now_ms: u32,
+    pub last_bridge_packet_ms: u32,
+    pub mount_count: u32,
+    pub umount_count: u32,
+    pub suspend_count: u32,
+    pub resume_count: u32,
+    pub device_desc_count: u32,
+    pub config_desc_count: u32,
+    pub xinput_in_queued_count: u32,
+    pub xinput_in_sent_count: u32,
+    pub xinput_out_count: u32,
+    pub last_mount_ms: u32,
+    pub last_umount_ms: u32,
+    pub last_in_queued_ms: u32,
+    pub last_in_sent_ms: u32,
+    pub last_out_ms: u32,
+    pub last_out_len: u8,
+    pub last_out_byte0: u8,
+    pub last_out_byte1: u8,
+    pub usb_flags: u8,
+    pub activity_flags: u8,
+    pub malformed_udp_count: u32,
+}
+
+impl PicoStateDiag {
+    pub fn encode(&self) -> [u8; PICO_STATE_WIRE_SIZE] {
+        let mut buf = [0u8; PICO_STATE_WIRE_SIZE];
+        buf[0] = MAGIC;
+        buf[1] = TYPE_PICO_STATE;
+        buf[2] = self.seq;
+        buf[3] = self.flags;
+        buf[4] = self.version;
+        buf[5] = self.proto_version;
+        buf[6] = self.board_type;
+        buf[7] = self.persona_byte;
+        put_u32_le(&mut buf, 8, self.unique_id_short);
+        put_u32_le(&mut buf, 12, self.uptime_seconds);
+        put_u32_le(&mut buf, 16, self.tx_count);
+        put_u32_le(&mut buf, 20, self.rx_count);
+        put_u32_le(&mut buf, 24, self.now_ms);
+        put_u32_le(&mut buf, 28, self.last_bridge_packet_ms);
+        put_u32_le(&mut buf, 32, self.mount_count);
+        put_u32_le(&mut buf, 36, self.umount_count);
+        put_u32_le(&mut buf, 40, self.suspend_count);
+        put_u32_le(&mut buf, 44, self.resume_count);
+        put_u32_le(&mut buf, 48, self.device_desc_count);
+        put_u32_le(&mut buf, 52, self.config_desc_count);
+        put_u32_le(&mut buf, 56, self.xinput_in_queued_count);
+        put_u32_le(&mut buf, 60, self.xinput_in_sent_count);
+        put_u32_le(&mut buf, 64, self.xinput_out_count);
+        put_u32_le(&mut buf, 68, self.last_mount_ms);
+        put_u32_le(&mut buf, 72, self.last_umount_ms);
+        put_u32_le(&mut buf, 76, self.last_in_queued_ms);
+        put_u32_le(&mut buf, 80, self.last_in_sent_ms);
+        put_u32_le(&mut buf, 84, self.last_out_ms);
+        buf[88] = self.last_out_len;
+        buf[89] = self.last_out_byte0;
+        buf[90] = self.last_out_byte1;
+        buf[91] = self.usb_flags;
+        buf[92] = self.activity_flags;
+        put_u32_le(&mut buf, 96, self.malformed_udp_count);
+        let crc =
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..PICO_STATE_WIRE_SIZE - 2]);
+        buf[PICO_STATE_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
+        buf[PICO_STATE_WIRE_SIZE - 1] = (crc >> 8) as u8;
+        buf
+    }
+
+    pub fn decode(buf: &[u8]) -> Result<Self, PicoStateDecodeError> {
+        if buf.len() != PICO_STATE_WIRE_SIZE {
+            return Err(PicoStateDecodeError::WrongSize {
+                got: buf.len(),
+                want: PICO_STATE_WIRE_SIZE,
+            });
+        }
+        if buf[0] != MAGIC {
+            return Err(PicoStateDecodeError::WrongMagic);
+        }
+        if buf[1] != TYPE_PICO_STATE {
+            return Err(PicoStateDecodeError::WrongType(buf[1]));
+        }
+        let crc_lo = buf[PICO_STATE_WIRE_SIZE - 2] as u16;
+        let crc_hi = buf[PICO_STATE_WIRE_SIZE - 1] as u16;
+        let crc_got = crc_lo | (crc_hi << 8);
+        let crc_want =
+            crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..PICO_STATE_WIRE_SIZE - 2]);
+        if crc_got != crc_want {
+            return Err(PicoStateDecodeError::BadCrc {
+                got: crc_got,
+                want: crc_want,
+            });
+        }
+        if buf[4] != PICO_STATE_VERSION {
+            return Err(PicoStateDecodeError::UnsupportedVersion(buf[4]));
+        }
+        Ok(Self {
+            seq: buf[2],
+            flags: buf[3],
+            version: buf[4],
+            proto_version: buf[5],
+            board_type: buf[6],
+            persona_byte: buf[7],
+            unique_id_short: read_u32_le(buf, 8),
+            uptime_seconds: read_u32_le(buf, 12),
+            tx_count: read_u32_le(buf, 16),
+            rx_count: read_u32_le(buf, 20),
+            now_ms: read_u32_le(buf, 24),
+            last_bridge_packet_ms: read_u32_le(buf, 28),
+            mount_count: read_u32_le(buf, 32),
+            umount_count: read_u32_le(buf, 36),
+            suspend_count: read_u32_le(buf, 40),
+            resume_count: read_u32_le(buf, 44),
+            device_desc_count: read_u32_le(buf, 48),
+            config_desc_count: read_u32_le(buf, 52),
+            xinput_in_queued_count: read_u32_le(buf, 56),
+            xinput_in_sent_count: read_u32_le(buf, 60),
+            xinput_out_count: read_u32_le(buf, 64),
+            last_mount_ms: read_u32_le(buf, 68),
+            last_umount_ms: read_u32_le(buf, 72),
+            last_in_queued_ms: read_u32_le(buf, 76),
+            last_in_sent_ms: read_u32_le(buf, 80),
+            last_out_ms: read_u32_le(buf, 84),
+            last_out_len: buf[88],
+            last_out_byte0: buf[89],
+            last_out_byte1: buf[90],
+            usb_flags: buf[91],
+            activity_flags: buf[92],
+            malformed_udp_count: read_u32_le(buf, 96),
+        })
+    }
+
+    pub fn persona(&self) -> Option<Persona> {
+        match self.persona_byte {
+            0 => Some(Persona::Xinput),
+            1 => Some(Persona::Keyboard),
+            2 => Some(Persona::Maple),
+            3 => Some(Persona::Ps3),
+            4 => Some(Persona::Ps4),
+            5 => Some(Persona::XboxOne),
+            _ => None,
+        }
+    }
+
+    pub fn to_json_map(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        let mut out = std::collections::BTreeMap::new();
+        out.insert("version".into(), serde_json::json!(self.version));
+        out.insert(
+            "proto_version".into(),
+            serde_json::json!(self.proto_version),
+        );
+        out.insert("board_type".into(), serde_json::json!(self.board_type));
+        out.insert("persona_byte".into(), serde_json::json!(self.persona_byte));
+        out.insert(
+            "persona".into(),
+            serde_json::json!(self.persona().map(|p| p.label())),
+        );
+        out.insert(
+            "unique_id_short".into(),
+            serde_json::json!(format!("{:08X}", self.unique_id_short)),
+        );
+        out.insert(
+            "uptime_seconds".into(),
+            serde_json::json!(self.uptime_seconds),
+        );
+        out.insert("tx_count".into(), serde_json::json!(self.tx_count));
+        out.insert("rx_count".into(), serde_json::json!(self.rx_count));
+        out.insert(
+            "malformed_udp_count".into(),
+            serde_json::json!(self.malformed_udp_count),
+        );
+        out.insert("now_ms".into(), serde_json::json!(self.now_ms));
+        out.insert(
+            "last_bridge_packet_ms".into(),
+            serde_json::json!(self.last_bridge_packet_ms),
+        );
+        out.insert("usb_flags".into(), serde_json::json!(self.usb_flags));
+        out.insert(
+            "activity_flags".into(),
+            serde_json::json!(self.activity_flags),
+        );
+        out.insert("mount_count".into(), serde_json::json!(self.mount_count));
+        out.insert("umount_count".into(), serde_json::json!(self.umount_count));
+        out.insert(
+            "device_desc_count".into(),
+            serde_json::json!(self.device_desc_count),
+        );
+        out.insert(
+            "config_desc_count".into(),
+            serde_json::json!(self.config_desc_count),
+        );
+        out.insert(
+            "host_accepted_reports".into(),
+            serde_json::json!(self.xinput_in_sent_count),
+        );
+        out.insert(
+            "host_out_reports".into(),
+            serde_json::json!(self.xinput_out_count),
+        );
+        out
+    }
+}
+
 fn put_u32_le(buf: &mut [u8], offset: usize, value: u32) {
     buf[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
@@ -793,6 +1027,36 @@ impl std::fmt::Display for UsbDiagDecodeError {
 }
 
 impl std::error::Error for UsbDiagDecodeError {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PicoStateDecodeError {
+    WrongSize { got: usize, want: usize },
+    WrongMagic,
+    WrongType(u8),
+    UnsupportedVersion(u8),
+    BadCrc { got: u16, want: u16 },
+}
+
+impl std::fmt::Display for PicoStateDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::WrongSize { got, want } => {
+                write!(f, "Pico state wrong size: got {got}, want {want}")
+            }
+            Self::WrongMagic => write!(f, "Pico state wrong magic"),
+            Self::WrongType(t) => write!(f, "Pico state wrong type 0x{t:02X}"),
+            Self::UnsupportedVersion(v) => write!(f, "Pico state unsupported version {v}"),
+            Self::BadCrc { got, want } => {
+                write!(
+                    f,
+                    "Pico state CRC-16 mismatch: got 0x{got:04X}, want 0x{want:04X}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PicoStateDecodeError {}
 
 /// One chunk of the firmware's diag-log ring, sent in reply to a
 /// `TYPE_GET_LOG` request. The bridge reassembles a multi-chunk reply
@@ -1327,6 +1591,24 @@ mod tests {
     }
 
     #[test]
+    fn pico_state_request_encode_shape() {
+        let buf = encode_get_pico_state(11);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_GET_PICO_STATE);
+        assert_eq!(buf[2], 11);
+        assert_eq!(buf[3], 0);
+        for b in &buf[4..16] {
+            assert_eq!(*b, 0);
+        }
+        assert_eq!(buf[16], crc8(&buf[..16]));
+        assert_eq!(
+            Packet::decode(&buf),
+            Err(DecodeError::UnknownType(TYPE_GET_PICO_STATE))
+        );
+    }
+
+    #[test]
     fn reboot_to_setup_request_encode_shape() {
         let buf = encode_reboot_to_setup(9);
         assert_eq!(buf.len(), PACKET_SIZE);
@@ -1415,6 +1697,97 @@ mod tests {
         buf[10] ^= 0xFF;
         match UsbDiag::decode(&buf) {
             Err(UsbDiagDecodeError::BadCrc { .. }) => (),
+            other => panic!("expected BadCrc, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pico_state_roundtrip() {
+        let diag = PicoStateDiag {
+            seq: 3,
+            flags: 0,
+            version: PICO_STATE_VERSION,
+            proto_version: PROTO_VERSION,
+            board_type: BOARD_PICO_2_W,
+            persona_byte: Persona::Maple.flash_byte(),
+            unique_id_short: 0x02E22DA9,
+            uptime_seconds: 123,
+            tx_count: 456,
+            rx_count: 789,
+            now_ms: 1000,
+            last_bridge_packet_ms: 950,
+            mount_count: 1,
+            umount_count: 2,
+            suspend_count: 3,
+            resume_count: 4,
+            device_desc_count: 5,
+            config_desc_count: 6,
+            xinput_in_queued_count: 7,
+            xinput_in_sent_count: 8,
+            xinput_out_count: 9,
+            last_mount_ms: 10,
+            last_umount_ms: 11,
+            last_in_queued_ms: 12,
+            last_in_sent_ms: 13,
+            last_out_ms: 14,
+            last_out_len: 8,
+            last_out_byte0: 1,
+            last_out_byte1: 2,
+            usb_flags: USB_DIAG_FLAG_MOUNTED,
+            activity_flags: USB_DIAG_ACTIVITY_SENT | USB_DIAG_ACTIVITY_PEER,
+            malformed_udp_count: 42,
+        };
+
+        let buf = diag.encode();
+        assert_eq!(buf.len(), PICO_STATE_WIRE_SIZE);
+        assert_eq!(buf[1], TYPE_PICO_STATE);
+        let back = PicoStateDiag::decode(&buf).unwrap();
+        assert_eq!(back, diag);
+        assert_eq!(back.persona(), Some(Persona::Maple));
+        let json = back.to_json_map();
+        assert_eq!(json["malformed_udp_count"], serde_json::json!(42));
+    }
+
+    #[test]
+    fn pico_state_bad_crc_rejected() {
+        let mut buf = PicoStateDiag {
+            seq: 0,
+            flags: 0,
+            version: PICO_STATE_VERSION,
+            proto_version: PROTO_VERSION,
+            board_type: BOARD_PICO_2_W,
+            persona_byte: 0,
+            unique_id_short: 0,
+            uptime_seconds: 0,
+            tx_count: 0,
+            rx_count: 0,
+            now_ms: 0,
+            last_bridge_packet_ms: 0,
+            mount_count: 0,
+            umount_count: 0,
+            suspend_count: 0,
+            resume_count: 0,
+            device_desc_count: 0,
+            config_desc_count: 0,
+            xinput_in_queued_count: 0,
+            xinput_in_sent_count: 0,
+            xinput_out_count: 0,
+            last_mount_ms: 0,
+            last_umount_ms: 0,
+            last_in_queued_ms: 0,
+            last_in_sent_ms: 0,
+            last_out_ms: 0,
+            last_out_len: 0,
+            last_out_byte0: 0,
+            last_out_byte1: 0,
+            usb_flags: 0,
+            activity_flags: 0,
+            malformed_udp_count: 0,
+        }
+        .encode();
+        buf[20] ^= 0xFF;
+        match PicoStateDiag::decode(&buf) {
+            Err(PicoStateDecodeError::BadCrc { .. }) => (),
             other => panic!("expected BadCrc, got {other:?}"),
         }
     }

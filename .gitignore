@@ -11,6 +11,7 @@ build-host-tests/
 # Release/build staging
 dist/
 release/
+.local/
 .local_build_state.json
 version.txt
 build_log.txt

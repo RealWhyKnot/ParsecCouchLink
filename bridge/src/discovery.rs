@@ -28,7 +28,7 @@ const VERSION_QUERY_RETRY_INTERVAL: Duration = Duration::from_millis(125);
 pub async fn collect(
     socket: &UdpSocket,
     duration: Duration,
-) -> std::io::Result<Vec<(SocketAddr, AckInfo, Persona)>> {
+) -> std::io::Result<Vec<DiscoveryReply>> {
     socket.set_broadcast(true)?;
     let broadcast_addr = SocketAddr::V4(SocketAddrV4::new(
         std::net::Ipv4Addr::BROADCAST,
@@ -117,8 +117,21 @@ pub async fn collect(
     enrich_full_versions(socket, &extra_sockets, &mut found).await;
     Ok(found
         .into_iter()
-        .map(|pico| (pico.peer, pico.info, pico.persona))
+        .map(|pico| DiscoveryReply {
+            peer: pico.peer,
+            info: pico.info,
+            persona: pico.persona,
+            flags: pico.flags,
+        })
         .collect())
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DiscoveryReply {
+    pub peer: SocketAddr,
+    pub info: AckInfo,
+    pub persona: Persona,
+    pub flags: u8,
 }
 
 struct InterfaceBroadcastSocket {
@@ -140,7 +153,7 @@ pub async fn probe_ip(
     socket: &UdpSocket,
     ip: IpAddr,
     duration: Duration,
-) -> std::io::Result<Option<(SocketAddr, AckInfo, Persona)>> {
+) -> std::io::Result<Option<DiscoveryReply>> {
     let target = SocketAddr::new(ip, protocol::PORT);
     let mut seq: u8 = 0;
     let mut tick = interval(UNICAST_INTERVAL);
@@ -170,7 +183,12 @@ pub async fn probe_ip(
                             }
                         }
                     }
-                    return Ok(Some((peer, info, persona)));
+                    return Ok(Some(DiscoveryReply {
+                        peer,
+                        info,
+                        persona,
+                        flags,
+                    }));
                 }
                 tracing::debug!("discovery(manual-ip): ignoring reply from non-target {peer}");
             }
