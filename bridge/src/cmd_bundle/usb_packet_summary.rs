@@ -19,6 +19,15 @@ pub(super) struct UsbPacketSummary {
     pub directions: BTreeMap<String, u64>,
     pub sources: BTreeMap<String, u64>,
     pub reasons: BTreeMap<String, u64>,
+    pub setup_directions: BTreeMap<String, u64>,
+    pub setup_types: BTreeMap<String, u64>,
+    pub setup_recipients: BTreeMap<String, u64>,
+    pub setup_requests: BTreeMap<String, u64>,
+    pub setup_descriptor_requests: BTreeMap<String, u64>,
+    pub setup_known_requests: BTreeMap<String, u64>,
+    pub control_payload_kinds: BTreeMap<String, u64>,
+    pub control_descriptor_replies: BTreeMap<String, u64>,
+    pub control_payload_summaries: BTreeMap<String, u64>,
     pub first_seq: Option<u64>,
     pub last_seq: Option<u64>,
     pub min_seq: Option<u64>,
@@ -394,7 +403,7 @@ pub(super) fn summarize_sources(
         .collect();
 
     UsbPacketBundleSummary {
-        artifact_schema_version: 5,
+        artifact_schema_version: 6,
         aggregate,
         per_pico,
         retained_logs,
@@ -405,6 +414,7 @@ pub(super) fn summarize_sources(
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
             "Packet summaries separate per-packet truncation from cumulative firmware truncated_bytes so lossy captures are visible.",
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
+            "Setup/control summary maps expose observed enumeration requests, descriptor requests, known vendor probes, and control payload replies.",
             "Packet records decode USB setup direction, type, recipient, standard/class requests, descriptor types, and known CouchLink vendor requests.",
             "Packet records expose HID report id/type metadata from HID OUT/FEATURE lines and HID GET_REPORT/SET_REPORT setup requests.",
             "Control-IN packet records identify descriptor replies, MS OS descriptor payloads, and setup-mode diag-log payloads when the captured bytes are sufficient.",
@@ -1150,6 +1160,25 @@ impl UsbPacketSummary {
         if let Some(value) = fields.get("reason") {
             bump(&mut self.reasons, value);
         }
+        if let Some(setup) = decode_setup_fields(&fields) {
+            bump(&mut self.setup_directions, setup.direction);
+            bump(&mut self.setup_types, setup.request_type);
+            bump(&mut self.setup_recipients, setup.recipient);
+            bump(&mut self.setup_requests, &setup.request_name);
+            if let Some(descriptor_type) = setup.descriptor_type {
+                bump(&mut self.setup_descriptor_requests, descriptor_type);
+            }
+            if let Some(known_request) = setup.known_request {
+                bump(&mut self.setup_known_requests, known_request);
+            }
+        }
+        if let Some(payload) = decode_control_payload_fields(&fields) {
+            bump(&mut self.control_payload_kinds, payload.kind);
+            if let Some(descriptor_type) = payload.descriptor_type {
+                bump(&mut self.control_descriptor_replies, descriptor_type);
+            }
+            bump(&mut self.control_payload_summaries, &payload.summary);
+        }
         if let Some(report) = decode_hid_report_metadata(&fields) {
             self.hid_report_lines += 1;
             if let Some(report_type_name) = report.report_type_name {
@@ -1350,6 +1379,27 @@ impl UsbPacketSummary {
         merge_counts(&mut self.directions, &other.directions);
         merge_counts(&mut self.sources, &other.sources);
         merge_counts(&mut self.reasons, &other.reasons);
+        merge_counts(&mut self.setup_directions, &other.setup_directions);
+        merge_counts(&mut self.setup_types, &other.setup_types);
+        merge_counts(&mut self.setup_recipients, &other.setup_recipients);
+        merge_counts(&mut self.setup_requests, &other.setup_requests);
+        merge_counts(
+            &mut self.setup_descriptor_requests,
+            &other.setup_descriptor_requests,
+        );
+        merge_counts(&mut self.setup_known_requests, &other.setup_known_requests);
+        merge_counts(
+            &mut self.control_payload_kinds,
+            &other.control_payload_kinds,
+        );
+        merge_counts(
+            &mut self.control_descriptor_replies,
+            &other.control_descriptor_replies,
+        );
+        merge_counts(
+            &mut self.control_payload_summaries,
+            &other.control_payload_summaries,
+        );
         merge_counts(&mut self.harvest_statuses, &other.harvest_statuses);
         self.hid_report_lines += other.hid_report_lines;
         merge_counts(&mut self.hid_report_types, &other.hid_report_types);
@@ -1641,7 +1691,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
             text: "usb-packet-stats total=64 out=2 truncated_bytes=0 truncated_packets=0 idle_in_suppressed=0\n",
         }];
         let summary = summarize_sources(&per_pico, &retained);
-        assert_eq!(summary.artifact_schema_version, 5);
+        assert_eq!(summary.artifact_schema_version, 6);
         assert_eq!(summary.aggregate.packet_lines, 2);
         assert_eq!(summary.aggregate.stats_lines, 1);
         assert_eq!(summary.aggregate.missing_sequence_numbers, 1);
@@ -1706,6 +1756,20 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
 ";
         let out =
             control_transfers_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        let summary = summarize_text(text);
+        assert_eq!(summary.setup_directions["device_to_host"], 2);
+        assert_eq!(summary.setup_types["vendor"], 1);
+        assert_eq!(summary.setup_types["standard"], 1);
+        assert_eq!(summary.setup_recipients["device"], 2);
+        assert_eq!(summary.setup_requests["vendor_0x20"], 1);
+        assert_eq!(summary.setup_requests["get_descriptor"], 1);
+        assert_eq!(summary.setup_descriptor_requests["string"], 1);
+        assert_eq!(summary.control_payload_kinds["usb_descriptor"], 1);
+        assert_eq!(summary.control_descriptor_replies["device"], 1);
+        assert_eq!(
+            summary.control_payload_summaries["descriptor=device,captured_len=4"],
+            1
+        );
         assert!(out.contains("# source_label=02E22DA9"));
         assert!(out.contains("setup line=2 seq=8 t=11 src=vendor-control bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 len=8 captured=8 decode=device_to_host/vendor/device request=vendor_0x20 descriptor=- descriptor_index=- language_id=- known=- data=C020020104030040"));
         assert!(out.contains("control-in line=3 seq=9 t=12 src=desc-device reason=control-reply len=18 captured=18 dropped=0 payload_kind=usb_descriptor payload_descriptor=device payload_summary=descriptor=device,captured_len=4 data=12010002"));
@@ -1789,6 +1853,16 @@ usb-packet seq=3 t=12 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 r
 ";
         let out =
             control_transfers_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        let summary = summarize_text(text);
+        assert_eq!(summary.setup_requests["ms-os-20-descriptor-set"], 1);
+        assert_eq!(summary.setup_requests["couchlink-setup-diag-log"], 1);
+        assert_eq!(summary.setup_known_requests["ms-os-20-descriptor-set"], 1);
+        assert_eq!(summary.setup_known_requests["couchlink-setup-diag-log"], 1);
+        assert_eq!(summary.control_payload_kinds["known_vendor_payload"], 1);
+        assert_eq!(
+            summary.control_payload_summaries["ms-os-20-descriptor-set"],
+            1
+        );
         assert!(out.contains("request=ms-os-20-descriptor-set"));
         assert!(out.contains("known=ms-os-20-descriptor-set"));
         assert!(out.contains("request=couchlink-setup-diag-log"));

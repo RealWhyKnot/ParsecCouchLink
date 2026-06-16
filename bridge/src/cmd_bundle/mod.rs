@@ -1516,6 +1516,36 @@ fn debug_capture_verdict_text(
         "hid_report_ids={}",
         format_count_map(&summary.aggregate.hid_report_ids)
     );
+    let _ = writeln!(
+        out,
+        "setup_requests={}",
+        format_count_map(&summary.aggregate.setup_requests)
+    );
+    let _ = writeln!(
+        out,
+        "setup_descriptor_requests={}",
+        format_count_map(&summary.aggregate.setup_descriptor_requests)
+    );
+    let _ = writeln!(
+        out,
+        "setup_known_requests={}",
+        format_count_map(&summary.aggregate.setup_known_requests)
+    );
+    let _ = writeln!(
+        out,
+        "control_payload_kinds={}",
+        format_count_map(&summary.aggregate.control_payload_kinds)
+    );
+    let _ = writeln!(
+        out,
+        "control_descriptor_replies={}",
+        format_count_map(&summary.aggregate.control_descriptor_replies)
+    );
+    let _ = writeln!(
+        out,
+        "control_payload_summaries={}",
+        format_count_map(&summary.aggregate.control_payload_summaries)
+    );
     let _ = writeln!(out, "debug_persona_captures={debug_persona_captures}");
     let _ = writeln!(
         out,
@@ -1529,6 +1559,7 @@ fn debug_capture_verdict_text(
     out.push_str("minimum_evidence=\n");
     out.push_str("- raw_packet_lines > 0 is required before this bundle is enough for adapter reverse engineering.\n");
     out.push_str("- capture_quality=lossless_observed means bundled packet payloads and harvest chunks did not report truncation or ring loss.\n");
+    out.push_str("- setup_requests and control_payload_summaries show whether enumeration, descriptor fetches, class/HID probes, or known vendor probes were observed.\n");
     out.push_str("- setup_lines or control_in_lines > 0 is preferred for enumeration/control-transfer failures.\n");
     out.push_str("- hid_report_lines > 0 is useful for HID-class adapter report analysis.\n");
     out.push_str(
@@ -1586,7 +1617,7 @@ fn debug_capture_verdict_text(
         );
     } else {
         out.push_str(
-            "- Use usb-packets.jsonl for scripts, usb-packet-timeline.txt for timing, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, and harvest health totals.\n",
+            "- Use usb-packets.jsonl for scripts, usb-packet-timeline.txt for timing, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, setup/control behavior, and harvest health totals.\n",
         );
         if debug_capture_has_loss(summary) {
             out.push_str(
@@ -2197,6 +2228,8 @@ mod tests {
         assert!(text.contains("adapter_reverse_engineering_gate=pass"));
         assert!(text.contains("setup_lines=1"));
         assert!(text.contains("endpoint_out_lines=1"));
+        assert!(text.contains("setup_requests=get_descriptor:1"));
+        assert!(text.contains("setup_descriptor_requests=device:1"));
         assert!(text.contains("- none"));
     }
 
@@ -2265,6 +2298,8 @@ mod tests {
         assert_eq!(value["aggregate"]["packet_lines"], 2);
         assert_eq!(value["aggregate"]["hid_report_lines"], 1);
         assert_eq!(value["aggregate"]["max_inter_packet_gap_ms"], 25);
+        assert_eq!(value["aggregate"]["setup_requests"]["get_descriptor"], 1);
+        assert_eq!(value["aggregate"]["setup_descriptor_requests"]["device"], 1);
         assert_eq!(value["per_pico"][0]["uid"], "02E22DA9");
         assert_eq!(value["per_pico"][0]["persona"], "debug");
         assert_eq!(value["per_pico"][0]["missing_evidence"][0], "none");
