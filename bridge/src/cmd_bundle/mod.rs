@@ -436,7 +436,7 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         .unix_permissions(0o644);
 
     zip.start_file("manifest.json", opts)?;
-    zip.write_all(manifest_json.as_bytes())?;
+    zip.write_all(redact_bundle_text(&manifest_json).as_bytes())?;
 
     zip.start_file("bundle-capture.txt", opts)?;
     zip.write_all(redact_bundle_text(&capture_log.text()).as_bytes())?;
@@ -646,7 +646,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
                                     format!("crashes/{}", name.to_string_lossy()),
                                     opts,
                                 )?;
-                                zip.write_all(&bytes)?;
+                                let text = String::from_utf8_lossy(&bytes);
+                                zip.write_all(redact_bundle_text(&text).as_bytes())?;
                             }
                             Err(e) => {
                                 tracing::debug!(
@@ -685,7 +686,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
             match std::fs::read(&jp) {
                 Ok(bytes) => {
                     zip.start_file("state-journal.log", opts)?;
-                    zip.write_all(&bytes)?;
+                    let text = String::from_utf8_lossy(&bytes);
+                    zip.write_all(redact_bundle_text(&text).as_bytes())?;
                 }
                 Err(e) => {
                     tracing::debug!("bundle: could not read state journal: {e}");
@@ -2350,7 +2352,7 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
         );
     }
     println!();
-    println!("Wi-Fi password and SSID are not included. Safe to share.");
+    println!("Wi-Fi credentials, local addresses, and profile paths are redacted. Safe to share.");
     println!();
     println!("Report this bundle at: {issue_url}");
 

@@ -192,8 +192,9 @@ pub(super) async fn build_manifest(
         redaction_policy: vec![
             "Wi-Fi passwords are not included.",
             "SSID values are redacted from bundle text.",
-            "Key/value fields named password, pass, ssid, token, secret, authorization, api_key, or apikey are redacted.",
-            "Lengths, failure codes, timings, local IPs, device names, driver names, firmware IDs, and filesystem paths may be included for diagnosis.",
+            "Key/value fields named password, pass, ssid, token, secret, authorization, api_key, apikey, hostname, computername, username, user_name, or userprofile are redacted.",
+            "Private LAN IP addresses, MAC addresses, Windows user profile paths, hostnames, and usernames are redacted from bundle text.",
+            "Lengths, ports, failure codes, timings, device names, driver names, and firmware IDs may be included for diagnosis.",
             "Raw per-key keyboard traces require trace logging and are not enabled by default.",
             "Raw USB packet dumps are only captured when the Pico is deliberately switched into debug input mode.",
             "Retained debug packet logs are redacted by the same bundle filter before they are written into the ZIP.",
