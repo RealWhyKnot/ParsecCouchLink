@@ -7,6 +7,7 @@
 
 #include "gamepad_state.h"
 #include "usb_diag.h"
+#include "usb_packet_debug.h"
 
 #define XINPUT_IDLE_REPORT_INTERVAL_MS 8u
 
@@ -77,6 +78,7 @@ void xinput_task(void) {
     uint32_t wrote = tud_vendor_write(&rep, sizeof(rep));
     if (wrote == sizeof(rep)) {
         usb_diag_note_xinput_in_queued(wrote);
+        usb_packet_debug_note_in("xinput", (uint8_t const *)&rep, (uint16_t)sizeof(rep), changed);
         tud_vendor_write_flush();
         last_sent = rep;
         have_last_sent = true;

@@ -8,16 +8,20 @@
 #include "diag_log.h"
 
 #define USB_PACKET_DEBUG_MAX_BYTES 64u
+#define USB_PACKET_DEBUG_IDLE_SAMPLE_MS 1000u
 
 static uint32_t seq;
 static uint32_t dropped_bytes;
+static uint32_t suppressed_idle_in_reports;
+static uint32_t last_idle_in_sample_ms;
 
 static char hex_digit(uint8_t v) {
     v &= 0x0Fu;
     return (char)(v < 10u ? ('0' + v) : ('A' + (v - 10u)));
 }
 
-void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16_t len) {
+static void note_packet(const char *direction, const char *source, uint8_t const *buffer,
+                        uint16_t len, const char *reason, uint32_t suppressed) {
     if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
         return;
 
@@ -35,8 +39,32 @@ void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16
     }
     hex[capture_len * 2u] = 0;
 
-    diag_log_printf("usb-packet seq=%u t=%u dir=out src=%s len=%u captured=%u dropped=%u data=%s",
-                    (unsigned)seq++, (unsigned)to_ms_since_boot(get_absolute_time()),
+    diag_log_printf("usb-packet seq=%u t=%u dir=%s src=%s len=%u captured=%u dropped=%u "
+                    "suppressed=%u reason=%s data=%s",
+                    (unsigned)seq++, (unsigned)to_ms_since_boot(get_absolute_time()), direction,
                     source ? source : "unknown", (unsigned)len, (unsigned)capture_len,
-                    (unsigned)dropped_bytes, hex);
+                    (unsigned)dropped_bytes, (unsigned)suppressed, reason, hex);
+}
+
+void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16_t len) {
+    note_packet("out", source, buffer, len, "host-out", 0);
+}
+
+void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_t len,
+                              bool changed) {
+    if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
+        return;
+
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    if (!changed && last_idle_in_sample_ms != 0 &&
+        (uint32_t)(now - last_idle_in_sample_ms) < USB_PACKET_DEBUG_IDLE_SAMPLE_MS) {
+        suppressed_idle_in_reports++;
+        return;
+    }
+
+    uint32_t suppressed = suppressed_idle_in_reports;
+    suppressed_idle_in_reports = 0;
+    if (!changed)
+        last_idle_in_sample_ms = now;
+    note_packet("in", source, buffer, len, changed ? "changed" : "idle-sample", suppressed);
 }

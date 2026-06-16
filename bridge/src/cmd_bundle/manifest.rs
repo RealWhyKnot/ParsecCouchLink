@@ -142,7 +142,7 @@ pub(super) async fn build_manifest(
             "Setup-mode Pico boards are queried over USB CDC and WinUSB vendor diagnostics when available.",
             "BOOTSEL drives are inventoried when present.",
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
-            "Debug input mode uses the XInput USB shape and logs raw host-to-device USB OUT packets for adapter reverse engineering.",
+            "Debug input mode uses the XInput USB shape and logs raw USB IN/OUT packet samples for adapter reverse engineering.",
             "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
         ],
         redaction_policy: vec![
@@ -151,7 +151,7 @@ pub(super) async fn build_manifest(
             "Key/value fields named password, pass, ssid, token, secret, authorization, api_key, or apikey are redacted.",
             "Lengths, failure codes, timings, local IPs, device names, driver names, firmware IDs, and filesystem paths may be included for diagnosis.",
             "Raw per-key keyboard traces require trace logging and are not enabled by default.",
-            "Raw USB OUT packet dumps are only captured when the Pico is deliberately switched into debug input mode.",
+            "Raw USB packet dumps are only captured when the Pico is deliberately switched into debug input mode.",
             "Retained debug packet logs are redacted by the same bundle filter before they are written into the ZIP.",
         ],
         crash_files: crash_files.to_vec(),

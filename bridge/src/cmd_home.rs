@@ -862,7 +862,7 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
             "Xbox-compatible mode labelled for Dreamcast adapters",
         ),
         menu_item("Keyboard", "USB HID keyboard mode"),
-        menu_item("Debug", "XInput mode with raw USB OUT packet capture"),
+        menu_item("Debug", "XInput mode with raw USB packet capture"),
     ];
     match select("Pico input mode", &choices, 0).await? {
         0 => Ok(InputModeChoice::Auto),
@@ -1316,7 +1316,7 @@ async fn show_direct_commands() -> Result<()> {
     print_command("couchlink keyboard", "switch to USB keyboard mode");
     print_command(
         "couchlink debug-input",
-        "switch to XInput mode with raw USB OUT packet capture",
+        "switch to XInput mode with raw USB packet capture",
     );
     println!();
     println!("Pico recovery");

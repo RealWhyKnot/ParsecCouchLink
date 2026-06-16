@@ -42,3 +42,14 @@ add_executable(test_maple_proto
 target_include_directories(test_maple_proto PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 add_test(NAME maple_proto COMMAND test_maple_proto)
+
+add_executable(test_usb_packet_debug
+    test_usb_packet_debug.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/usb_packet_debug.c
+)
+target_include_directories(test_usb_packet_debug PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+
+add_test(NAME usb_packet_debug COMMAND test_usb_packet_debug)

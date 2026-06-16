@@ -105,7 +105,7 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to debug input mode and stream XInput while capturing raw USB OUT packets.
+    /// Switch a Pico to debug input mode and stream XInput while capturing raw USB packets.
     DebugInput {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
         #[arg(long = "pico")]

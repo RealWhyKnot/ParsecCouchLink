@@ -1023,7 +1023,7 @@ fn usb_packets_text_from_diag(uid: &str, diag_text: &str) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "# Raw USB OUT packet dump extracted from firmware diagnostics"
+        "# Raw USB packet dump extracted from firmware diagnostics"
     );
     let _ = writeln!(out, "# uid={uid}");
     let _ = writeln!(
@@ -1065,7 +1065,7 @@ fn aggregate_usb_packets(
     captures: &[PicoBundleCapture],
     retained_logs: &[RetainedDebugPacketLog],
 ) -> String {
-    let mut out = String::from("# Aggregate raw USB OUT packet dump\n\n");
+    let mut out = String::from("# Aggregate raw USB packet dump\n\n");
     let mut total = 0usize;
     for capture in captures {
         let count = capture.manifest.usb_packet_dump_count;
@@ -1100,7 +1100,7 @@ fn aggregate_usb_packets(
         }
     }
     if total == 0 {
-        out.push_str("No raw USB OUT packets were captured in this bundle.\n");
+        out.push_str("No raw USB packets were captured in this bundle.\n");
     }
     out
 }
@@ -1137,7 +1137,7 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     let total_packet_count = summary.usb_packet_dump_count + summary.retained_debug_packet_count;
     if total_packet_count > 0 {
         println!(
-            "  usb-packets.txt: captured {} raw USB OUT packet(s)",
+            "  usb-packets.txt: captured {} raw USB packet(s)",
             total_packet_count
         );
     } else {
@@ -1228,6 +1228,6 @@ mod tests {
         let out = aggregate_usb_packets(&[], &retained);
         assert!(out.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
         assert!(out.contains("usb-packet seq=4 dir=out data=010203"));
-        assert!(!out.contains("No raw USB OUT packets"));
+        assert!(!out.contains("No raw USB packets"));
     }
 }

@@ -241,12 +241,12 @@ mod tests {
 
     #[test]
     fn extracts_packet_lines_from_timestamped_diag() {
-        let text = "[  10] boot\n[  11] usb-packet seq=7 dir=out data=0102\nplain usb-packet seq=8 dir=out data=03\n";
+        let text = "[  10] boot\n[  11] usb-packet seq=7 dir=out data=0102\nplain usb-packet seq=8 dir=in data=03\n";
         assert_eq!(
             extract_usb_packet_lines(text),
             vec![
                 "usb-packet seq=7 dir=out data=0102".to_string(),
-                "usb-packet seq=8 dir=out data=03".to_string(),
+                "usb-packet seq=8 dir=in data=03".to_string(),
             ]
         );
     }
