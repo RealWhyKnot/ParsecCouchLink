@@ -99,6 +99,7 @@ add_executable(pico_bridge
     src/reset_reason.c
     src/usb_diag.c
     src/usb_descriptors.c
+    src/usb_packet_debug.c
     src/watchdog.c
     src/wifi.c
     src/xbone.c

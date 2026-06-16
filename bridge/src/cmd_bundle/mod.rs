@@ -53,6 +53,7 @@ pub struct BundleSummary {
     pub pico_usb_enumerated: bool,
     pub usb_diag_captured: bool,
     pub usb_diag_target_count: usize,
+    pub usb_packet_dump_count: usize,
     pub per_pico_capture_count: usize,
     pub host_snapshot_count: usize,
     pub diagnostic_cache_included: bool,
@@ -71,6 +72,7 @@ struct PicoBundleCapture {
     state_json: String,
     pico_diag_text: String,
     usb_diag_text: String,
+    usb_packets_text: String,
 }
 
 #[derive(Clone, Debug)]
@@ -196,6 +198,10 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     );
 
     let per_pico_captures = capture_per_pico(&mut capture_log).await;
+    let usb_packet_dump_count: usize = per_pico_captures
+        .iter()
+        .map(|capture| capture.manifest.usb_packet_dump_count)
+        .sum();
     let per_pico_manifest: Vec<ManifestPicoCapture> = per_pico_captures
         .iter()
         .map(|capture| capture.manifest.clone())
@@ -325,7 +331,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
         zip.start_file(format!("{base}/usb-diag.txt"), opts)?;
         zip.write_all(redact_bundle_text(&pico.usb_diag_text).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-packets.txt"), opts)?;
+        zip.write_all(redact_bundle_text(&pico.usb_packets_text).as_bytes())?;
     }
+
+    zip.start_file("usb-packets.txt", opts)?;
+    zip.write_all(redact_bundle_text(&aggregate_usb_packets(&per_pico_captures)).as_bytes())?;
 
     if let Some(text) = cache_current.as_ref() {
         zip.start_file("diagnostics/pico-state-current.json", opts)?;
@@ -461,9 +473,10 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.finish()?;
     tracing::info!(
-        "bundle: run finished out_path={} per_pico={} host_snapshots={} cache_included={}",
+        "bundle: run finished out_path={} per_pico={} usb_packets={} host_snapshots={} cache_included={}",
         out_path.display(),
         per_pico_captures.len(),
+        usb_packet_dump_count,
         host_snapshots.len(),
         diagnostic_cache_included,
     );
@@ -479,6 +492,7 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         pico_usb_enumerated,
         usb_diag_captured: usb_diag.captured,
         usb_diag_target_count: usb_diag.target_count,
+        usb_packet_dump_count,
         per_pico_capture_count: per_pico_captures.len(),
         host_snapshot_count: host_snapshots.len(),
         diagnostic_cache_included,
@@ -712,6 +726,7 @@ async fn capture_one_pico(
     let pico_state_status: String;
     let pico_diag_text: String;
     let usb_diag_text: String;
+    let usb_packets_text: String;
 
     let state_json = if let Some(target) = seed.target.as_ref() {
         state_captured = true;
@@ -796,6 +811,7 @@ async fn capture_one_pico(
         pico_state_status = target_pico_state_status;
         pico_diag_status = target_pico_diag_status;
         pico_diag_text = target_pico_diag_text;
+        usb_packets_text = usb_packets_text_from_diag(&seed.uid, &pico_diag_text);
         usb_diag_status = target_usb_diag_status;
         usb_diag_text = target_usb_diag_text;
         state_json_from_snapshot(&snapshot)
@@ -808,6 +824,7 @@ async fn capture_one_pico(
         pico_state_status = "offline_not_attempted".to_string();
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
+        usb_packets_text = offline_pico_text(&seed, "USB packet dump");
         state_json_from_snapshot(&snapshot)
     } else if let Some(cached) = seed.cached_state_json.as_ref() {
         state_captured = true;
@@ -816,6 +833,7 @@ async fn capture_one_pico(
         pico_state_status = "cache_only".to_string();
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
+        usb_packets_text = offline_pico_text(&seed, "USB packet dump");
         cached.clone()
     } else {
         state_captured = false;
@@ -824,8 +842,24 @@ async fn capture_one_pico(
         pico_state_status = "no_state".to_string();
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
+        usb_packets_text = offline_pico_text(&seed, "USB packet dump");
         "{}\n".to_string()
     };
+    let usb_packet_count = count_usb_packet_lines(&usb_packets_text);
+    let usb_packet_status = if usb_packet_count > 0 {
+        "captured"
+    } else if seed.target.is_some() {
+        "no_packets"
+    } else {
+        "not_attempted"
+    };
+    capture_log.record_duration(
+        format!("per_pico.{}.usb_packets", seed.uid),
+        0,
+        usb_packet_status,
+        usb_packets_text.len(),
+        format!("count={usb_packet_count}"),
+    );
 
     PicoBundleCapture {
         manifest: ManifestPicoCapture {
@@ -838,11 +872,14 @@ async fn capture_one_pico(
             pico_diag_status,
             usb_diag_status,
             pico_state_status,
+            usb_packet_dump_status: usb_packet_status.to_string(),
+            usb_packet_dump_count: usb_packet_count,
             cached_state_included: seed.cached_state_json.is_some(),
         },
         state_json,
         pico_diag_text,
         usb_diag_text,
+        usb_packets_text,
     }
 }
 
@@ -914,6 +951,68 @@ fn offline_pico_text(seed: &PicoCaptureSeed, artifact: &str) -> String {
     out
 }
 
+fn usb_packets_text_from_diag(uid: &str, diag_text: &str) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "# Raw USB OUT packet dump extracted from firmware diagnostics"
+    );
+    let _ = writeln!(out, "# uid={uid}");
+    let _ = writeln!(
+        out,
+        "# These lines are present only when the Pico is in debug input mode."
+    );
+    let _ = writeln!(out);
+    let mut count = 0usize;
+    for line in diag_text.lines() {
+        if let Some(idx) = line.find("usb-packet ") {
+            out.push_str(&line[idx..]);
+            out.push('\n');
+            count += 1;
+        }
+    }
+    if count == 0 {
+        let _ = writeln!(
+            out,
+            "No usb-packet lines were present. Switch the Pico to debug input mode, reproduce the adapter traffic, then run bundle again."
+        );
+    }
+    out
+}
+
+fn count_usb_packet_lines(text: &str) -> usize {
+    text.lines()
+        .filter(|line| line.starts_with("usb-packet "))
+        .count()
+}
+
+fn aggregate_usb_packets(captures: &[PicoBundleCapture]) -> String {
+    let mut out = String::from("# Aggregate raw USB OUT packet dump\n\n");
+    let mut total = 0usize;
+    for capture in captures {
+        let count = capture.manifest.usb_packet_dump_count;
+        let _ = writeln!(
+            out,
+            "## {} packets={} path={}/usb-packets.txt",
+            capture.manifest.uid, count, capture.manifest.path
+        );
+        if count > 0 {
+            for line in capture.usb_packets_text.lines() {
+                if line.starts_with("usb-packet ") {
+                    out.push_str(line);
+                    out.push('\n');
+                    total += 1;
+                }
+            }
+        }
+        out.push('\n');
+    }
+    if total == 0 {
+        out.push_str("No raw USB OUT packets were captured in this bundle.\n");
+    }
+    out
+}
+
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
     let out_path = output.unwrap_or_else(|| {
         let stamp = Local::now().format("%Y%m%d-%H%M%S");
@@ -942,6 +1041,14 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
         );
     } else {
         println!("  usb-diag.txt: not captured -- see the file for details");
+    }
+    if summary.usb_packet_dump_count > 0 {
+        println!(
+            "  usb-packets.txt: captured {} raw USB OUT packet(s)",
+            summary.usb_packet_dump_count
+        );
+    } else {
+        println!("  usb-packets.txt: no raw packets captured (debug input mode only)");
     }
     if summary.crash_file_count == 0 {
         println!("  crashes/: none");
@@ -993,12 +1100,20 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_path_component;
+    use super::{count_usb_packet_lines, sanitize_path_component, usb_packets_text_from_diag};
 
     #[test]
     fn pico_bundle_path_component_is_sanitized() {
         assert_eq!(sanitize_path_component("02E22DA9"), "02E22DA9");
         assert_eq!(sanitize_path_component("../02:E2\\2D/A9"), "02E22DA9");
         assert_eq!(sanitize_path_component(""), "unknown");
+    }
+
+    #[test]
+    fn extracts_usb_packet_lines_from_diag_log() {
+        let diag = "[      10] boot\n[      11] usb-packet seq=0 dir=out len=3 data=010203\n";
+        let out = usb_packets_text_from_diag("02E22DA9", diag);
+        assert!(out.contains("usb-packet seq=0 dir=out len=3 data=010203"));
+        assert_eq!(count_usb_packet_lines(&out), 1);
     }
 }

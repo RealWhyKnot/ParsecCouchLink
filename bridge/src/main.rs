@@ -104,6 +104,20 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
+    /// Switch a Pico to debug input mode and stream XInput while capturing raw USB OUT packets.
+    DebugInput {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
     /// Automatically select a gamepad USB mode accepted by the console adapter.
     Auto {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
@@ -452,6 +466,11 @@ fn main() {
                 all,
                 no_stream,
             }) => cmd_persona::run(protocol::Persona::Keyboard, picos, all, !no_stream).await,
+            Some(Command::DebugInput {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Debug, picos, all, !no_stream).await,
             Some(Command::Auto {
                 picos,
                 all,
@@ -770,6 +789,31 @@ mod tests {
                 assert!(no_stream);
             }
             other => panic!("expected auto command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn debug_input_command_parses_target_and_no_stream() {
+        let cli = Cli::try_parse_from([
+            "couchlink",
+            "debug-input",
+            "--pico",
+            "07D37EB6",
+            "--no-stream",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Some(Command::DebugInput {
+                picos,
+                all,
+                no_stream,
+            }) => {
+                assert_eq!(picos, vec!["07D37EB6"]);
+                assert!(!all);
+                assert!(no_stream);
+            }
+            other => panic!("expected debug-input command, got {other:?}"),
         }
     }
 

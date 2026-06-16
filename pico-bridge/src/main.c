@@ -197,6 +197,9 @@ static void run_mode_main_loop(void) {
     } else if (persona == RUN_PERSONA_MAPLE) {
         xinput_init();
         diag_log_msg("run: USB persona = XInput controller for Maple adapter");
+    } else if (persona == RUN_PERSONA_DEBUG) {
+        xinput_init();
+        diag_log_msg("run: USB persona = debug packet capture (XInput descriptor)");
     } else {
         xinput_init();
         diag_log_msg("run: USB persona = XInput controller");
@@ -363,6 +366,9 @@ int main(void) {
             break;
         case RUN_PERSONA_XBOXONE:
             persona_name = "Xbox One";
+            break;
+        case RUN_PERSONA_DEBUG:
+            persona_name = "debug packet capture";
             break;
         }
     }

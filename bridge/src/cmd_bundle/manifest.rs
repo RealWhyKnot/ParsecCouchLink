@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 2;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 3;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -22,6 +22,8 @@ pub(super) struct ManifestPicoCapture {
     pub pico_diag_status: String,
     pub usb_diag_status: String,
     pub pico_state_status: String,
+    pub usb_packet_dump_status: String,
+    pub usb_packet_dump_count: usize,
     pub cached_state_included: bool,
 }
 
@@ -132,6 +134,7 @@ pub(super) async fn build_manifest(
             "Setup-mode Pico boards are queried over USB CDC and WinUSB vendor diagnostics when available.",
             "BOOTSEL drives are inventoried when present.",
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
+            "Debug input mode uses the XInput USB shape and logs raw host-to-device USB OUT packets for adapter reverse engineering.",
         ],
         redaction_policy: vec![
             "Wi-Fi passwords are not included.",
@@ -139,6 +142,7 @@ pub(super) async fn build_manifest(
             "Key/value fields named password, pass, ssid, token, secret, authorization, api_key, or apikey are redacted.",
             "Lengths, failure codes, timings, local IPs, device names, driver names, firmware IDs, and filesystem paths may be included for diagnosis.",
             "Raw per-key keyboard traces require trace logging and are not enabled by default.",
+            "Raw USB OUT packet dumps are only captured when the Pico is deliberately switched into debug input mode.",
         ],
         crash_files: crash_files.to_vec(),
         setup_transcripts: setup_transcripts.to_vec(),
@@ -181,6 +185,8 @@ mod tests {
             pico_diag_status: "captured".to_string(),
             usb_diag_status: "captured".to_string(),
             pico_state_status: "captured".to_string(),
+            usb_packet_dump_status: "captured".to_string(),
+            usb_packet_dump_count: 2,
             cached_state_included: true,
         };
         let host = ManifestHostSnapshot {
@@ -221,6 +227,10 @@ mod tests {
         assert_eq!(json["app_log_retention_count"], logfile::LOG_FILE_RETENTION);
         assert_eq!(json["diagnostic_cache_included"], true);
         assert_eq!(json["per_pico_capture_outcomes"][0]["uid"], "02E22DA9");
+        assert_eq!(
+            json["per_pico_capture_outcomes"][0]["usb_packet_dump_count"],
+            2
+        );
         assert_eq!(json["host_snapshots"][0]["path"], "host/network-routes.txt");
         assert!(json["redaction_policy"]
             .as_array()

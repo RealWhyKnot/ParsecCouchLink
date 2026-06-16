@@ -187,6 +187,7 @@ pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> 
         protocol::Persona::Ps3 => "PS3 HID gamepad",
         protocol::Persona::Ps4 => "PS4 HID gamepad",
         protocol::Persona::XboxOne => "Xbox One XGIP",
+        protocol::Persona::Debug => "Debug XInput packet capture",
     };
     let mut out = String::new();
     let _ = writeln!(out, "  {}", usb_verdict(diag, device_label));

@@ -40,6 +40,7 @@
 #include "dinput_report.h"
 #include "hid_kbd.h"
 #include "usb_diag.h"
+#include "usb_packet_debug.h"
 #include "version.h"
 #include "xbone.h"
 #include "xinput.h"
@@ -622,6 +623,7 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
 void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
     (void)itf;
     usb_diag_note_xinput_out(buffer, bufsize);
+    usb_packet_debug_note_out("vendor", buffer, bufsize);
     if (boot_mode_run_persona() == RUN_PERSONA_XBOXONE)
         xbone_on_out(buffer, bufsize);
     // Discarded: rumble (msg 0x00, len 8) and LED (msg 0x01, len 3).
@@ -670,6 +672,10 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
     // so OUT-activity diagnostics still light up.
     if (report_type == HID_REPORT_TYPE_OUTPUT && bufsize >= 1) {
         usb_diag_note_xinput_out(buffer, bufsize);
+        usb_packet_debug_note_out("hid-output", buffer, bufsize);
+    }
+    if (report_type == HID_REPORT_TYPE_FEATURE && bufsize >= 1) {
+        usb_packet_debug_note_out("hid-feature", buffer, bufsize);
     }
     if (boot_mode_persona_uses_gamepad_hid(boot_mode_run_persona())) {
         dinput_set_report(report_id, report_type, buffer, bufsize);

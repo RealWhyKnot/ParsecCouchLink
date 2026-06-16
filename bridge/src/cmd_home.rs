@@ -862,13 +862,15 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
             "Xbox-compatible mode labelled for Dreamcast adapters",
         ),
         menu_item("Keyboard", "USB HID keyboard mode"),
+        menu_item("Debug", "XInput mode with raw USB OUT packet capture"),
     ];
     match select("Pico input mode", &choices, 0).await? {
         0 => Ok(InputModeChoice::Auto),
         1 => choose_xbox_input_mode().await,
         2 => choose_playstation_input_mode().await,
         3 => Ok(InputModeChoice::Persona(protocol::Persona::Maple)),
-        _ => Ok(InputModeChoice::Persona(protocol::Persona::Keyboard)),
+        4 => Ok(InputModeChoice::Persona(protocol::Persona::Keyboard)),
+        _ => Ok(InputModeChoice::Persona(protocol::Persona::Debug)),
     }
 }
 
@@ -1312,6 +1314,10 @@ async fn show_direct_commands() -> Result<()> {
         "switch to Dreamcast adapter-labelled XInput mode",
     );
     print_command("couchlink keyboard", "switch to USB keyboard mode");
+    print_command(
+        "couchlink debug-input",
+        "switch to XInput mode with raw USB OUT packet capture",
+    );
     println!();
     println!("Pico recovery");
     print_command(

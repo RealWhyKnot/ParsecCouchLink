@@ -29,11 +29,14 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
         return RUN_PERSONA_PS4;
     if (persona_byte == (uint8_t)RUN_PERSONA_XBOXONE)
         return RUN_PERSONA_XBOXONE;
+    if (persona_byte == (uint8_t)RUN_PERSONA_DEBUG)
+        return RUN_PERSONA_DEBUG;
     return RUN_PERSONA_XINPUT;
 }
 
 bool boot_mode_persona_uses_xinput_usb(run_persona_t persona) {
-    return persona == RUN_PERSONA_XINPUT || persona == RUN_PERSONA_MAPLE;
+    return persona == RUN_PERSONA_XINPUT || persona == RUN_PERSONA_MAPLE ||
+           persona == RUN_PERSONA_DEBUG;
 }
 
 bool boot_mode_persona_uses_gamepad_hid(run_persona_t persona) {

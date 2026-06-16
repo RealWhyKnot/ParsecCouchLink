@@ -157,12 +157,15 @@ pub enum Persona {
     Ps3,
     Ps4,
     XboxOne,
+    Debug,
 }
 
 impl Persona {
     /// Read the active persona from an ACK packet's flags byte.
     pub fn from_ack_flags(flags: u8) -> Self {
-        if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
+        if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
+            Persona::Debug
+        } else if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
             Persona::Keyboard
         } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
             Persona::XboxOne
@@ -187,6 +190,7 @@ impl Persona {
             Persona::Ps3 => 3,
             Persona::Ps4 => 4,
             Persona::XboxOne => 5,
+            Persona::Debug => 6,
         }
     }
 
@@ -198,6 +202,7 @@ impl Persona {
             Persona::Ps3 => "ps3",
             Persona::Ps4 => "ps4",
             Persona::XboxOne => "xboxone",
+            Persona::Debug => "debug",
         }
     }
 
@@ -209,6 +214,7 @@ impl Persona {
             Persona::Ps3 => "PS3 / DualShock 3",
             Persona::Ps4 => "PS4 / DualShock 4",
             Persona::XboxOne => "Xbox One",
+            Persona::Debug => "Debug packet capture",
         }
     }
 }
@@ -927,6 +933,7 @@ impl PicoStateDiag {
             3 => Some(Persona::Ps3),
             4 => Some(Persona::Ps4),
             5 => Some(Persona::XboxOne),
+            6 => Some(Persona::Debug),
             _ => None,
         }
     }
@@ -1343,6 +1350,7 @@ mod tests {
         }
         assert_eq!(buf[16], crc8(&buf[..16]));
         assert_eq!(encode_set_persona(0, Persona::Xinput)[4], 0);
+        assert_eq!(encode_set_persona(0, Persona::Debug)[4], 6);
         // Decode is lenient on unknown types; SET_PERSONA isn't a PacketKind.
         assert_eq!(
             Packet::decode(&buf),
@@ -1356,6 +1364,16 @@ mod tests {
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_LOG_CHUNK_SUPPORTED),
             Persona::Xinput
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_ALT_PERSONA),
+            Persona::Debug
+        );
+        assert_eq!(
+            Persona::from_ack_flags(
+                ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_ALT_PERSONA | ACK_FLAG_USB_DIAG_SUPPORTED
+            ),
+            Persona::Debug
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA),
@@ -1399,6 +1417,7 @@ mod tests {
         assert_eq!(Persona::Ps3.flash_byte(), 3);
         assert_eq!(Persona::Ps4.flash_byte(), 4);
         assert_eq!(Persona::XboxOne.flash_byte(), 5);
+        assert_eq!(Persona::Debug.flash_byte(), 6);
     }
 
     #[test]
@@ -1744,6 +1763,9 @@ mod tests {
         let back = PicoStateDiag::decode(&buf).unwrap();
         assert_eq!(back, diag);
         assert_eq!(back.persona(), Some(Persona::Maple));
+        let mut debug_diag = diag;
+        debug_diag.persona_byte = Persona::Debug.flash_byte();
+        assert_eq!(debug_diag.persona(), Some(Persona::Debug));
         let json = back.to_json_map();
         assert_eq!(json["malformed_udp_count"], serde_json::json!(42));
     }

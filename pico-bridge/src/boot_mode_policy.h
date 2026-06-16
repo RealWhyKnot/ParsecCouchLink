@@ -24,6 +24,7 @@ typedef enum {
     RUN_PERSONA_PS3 = 3,      // Sony DualShock 3 / PS3 HID gamepad
     RUN_PERSONA_PS4 = 4,      // Sony DualShock 4 / PS4 HID gamepad
     RUN_PERSONA_XBOXONE = 5,  // Xbox One-compatible XGIP gamepad
+    RUN_PERSONA_DEBUG = 6,    // XInput shape with raw host OUT packet capture
 } run_persona_t;
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);

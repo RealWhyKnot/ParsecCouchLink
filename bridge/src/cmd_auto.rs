@@ -393,6 +393,16 @@ mod tests {
                 Persona::Maple
             ]
         );
+        assert_eq!(
+            auto_candidates(Persona::Debug),
+            vec![
+                Persona::Xinput,
+                Persona::XboxOne,
+                Persona::Ps3,
+                Persona::Ps4,
+                Persona::Maple
+            ]
+        );
     }
 
     #[test]

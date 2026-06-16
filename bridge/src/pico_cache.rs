@@ -273,6 +273,7 @@ fn usb_verdict_label(diag: &protocol::UsbDiag, persona: protocol::Persona) -> &'
     } else if diag.xinput_out_seen() {
         match persona {
             protocol::Persona::Keyboard => "polling_with_keyboard_out",
+            protocol::Persona::Debug => "polling_with_debug_out",
             _ => "polling_with_out",
         }
     } else {

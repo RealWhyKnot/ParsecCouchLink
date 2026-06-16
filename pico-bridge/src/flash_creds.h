@@ -30,6 +30,7 @@
 #define FLASH_PERSONA_PS3 3      // Sony DualShock 3 / PS3 HID gamepad
 #define FLASH_PERSONA_PS4 4      // Sony DualShock 4 / PS4 HID gamepad
 #define FLASH_PERSONA_XBOXONE 5  // Xbox One-compatible XGIP gamepad
+#define FLASH_PERSONA_DEBUG 6    // XInput shape with raw host OUT packet capture
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;  // FLASH_CREDS_MAGIC

@@ -214,6 +214,8 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
                         ACK_FLAG_REBOOT_SETUP_SUPPORTED | ACK_FLAG_FULL_VERSION_SUPPORTED;
     if (boot_mode_run_persona() == RUN_PERSONA_KEYBOARD)
         ack_flags |= ACK_FLAG_KEYBOARD_PERSONA;
+    if (boot_mode_run_persona() == RUN_PERSONA_DEBUG)
+        ack_flags |= ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_ALT_PERSONA;
     if (boot_mode_run_persona() == RUN_PERSONA_MAPLE)
         ack_flags |= ACK_FLAG_MAPLE_PERSONA;
     if (boot_mode_run_persona() == RUN_PERSONA_PS3)
@@ -408,6 +410,8 @@ static uint8_t current_persona_byte(void) {
         return FLASH_PERSONA_PS4;
     case RUN_PERSONA_XBOXONE:
         return FLASH_PERSONA_XBOXONE;
+    case RUN_PERSONA_DEBUG:
+        return FLASH_PERSONA_DEBUG;
     case RUN_PERSONA_XINPUT:
     default:
         return FLASH_PERSONA_XINPUT;
@@ -569,6 +573,8 @@ static void apply_set_persona(uint8_t persona) {
         want = FLASH_PERSONA_PS4;
     else if (persona == FLASH_PERSONA_XBOXONE)
         want = FLASH_PERSONA_XBOXONE;
+    else if (persona == FLASH_PERSONA_DEBUG)
+        want = FLASH_PERSONA_DEBUG;
 
     flash_creds_t rec;
     if (!flash_creds_load(&rec)) {

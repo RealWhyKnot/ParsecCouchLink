@@ -20,7 +20,8 @@ _Static_assert((int)FLASH_PERSONA_XINPUT == (int)RUN_PERSONA_XINPUT &&
                    (int)FLASH_PERSONA_MAPLE == (int)RUN_PERSONA_MAPLE &&
                    (int)FLASH_PERSONA_PS3 == (int)RUN_PERSONA_PS3 &&
                    (int)FLASH_PERSONA_PS4 == (int)RUN_PERSONA_PS4 &&
-                   (int)FLASH_PERSONA_XBOXONE == (int)RUN_PERSONA_XBOXONE,
+                   (int)FLASH_PERSONA_XBOXONE == (int)RUN_PERSONA_XBOXONE &&
+                   (int)FLASH_PERSONA_DEBUG == (int)RUN_PERSONA_DEBUG,
                "flash persona byte values must match run_persona_t");
 
 static boot_mode_t current = BOOT_MODE_SETUP;
