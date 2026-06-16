@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Local;
+use serde::Serialize;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
@@ -43,7 +44,8 @@ use usb_packet_summary::{
     control_transfers_text_for_sources, control_transfers_text_for_text,
     hid_reports_text_for_sources, hid_reports_text_for_text, packet_timeline_text_for_sources,
     packet_timeline_text_for_text, records_jsonl_for_sources, records_jsonl_for_text,
-    summarize_sources, summarize_text, UsbPacketBundleSummary, UsbPacketSummarySource,
+    summarize_sources, summarize_text, UsbPacketBundleSummary, UsbPacketSummary,
+    UsbPacketSummarySource,
 };
 
 const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -269,6 +271,11 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         &retained_debug_packet_logs,
         &usb_packet_summary,
     );
+    let debug_capture_evidence_json = debug_capture_evidence_report_json(
+        &per_pico_captures,
+        &retained_debug_packet_logs,
+        &usb_packet_summary,
+    )?;
     capture_log.record_duration(
         "usb_packet_summary",
         0,
@@ -313,6 +320,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         "included",
         debug_capture_verdict.len(),
         debug_capture_status,
+    );
+    capture_log.record_duration(
+        "debug_capture_evidence",
+        0,
+        "included",
+        debug_capture_evidence_json.len(),
+        "json",
     );
 
     let host_snapshots = capture_host_snapshots().await;
@@ -508,6 +522,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.start_file("debug-capture-verdict.txt", opts)?;
     zip.write_all(redact_bundle_text(&debug_capture_verdict).as_bytes())?;
+
+    zip.start_file("debug-capture-evidence.json", opts)?;
+    zip.write_all(redact_bundle_text(&debug_capture_evidence_json).as_bytes())?;
 
     for log in &retained_debug_packet_logs {
         zip.start_file(format!("debug-packets/{}", log.name), opts)?;
@@ -1598,6 +1615,148 @@ fn debug_capture_verdict_text(
     out
 }
 
+#[derive(Serialize)]
+struct DebugCaptureEvidenceReport {
+    artifact_schema_version: u8,
+    overall_status: &'static str,
+    evidence_grade: &'static str,
+    adapter_reverse_engineering_gate: &'static str,
+    gate_reason: &'static str,
+    missing_evidence: Vec<&'static str>,
+    aggregate: UsbPacketSummary,
+    per_pico: Vec<DebugCaptureEvidencePico>,
+    retained_logs: Vec<DebugCaptureEvidenceRetainedLog>,
+    notes: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct DebugCaptureEvidencePico {
+    uid: String,
+    path: String,
+    peer: Option<String>,
+    live: bool,
+    source: String,
+    persona: Option<String>,
+    packet_status: String,
+    missing_evidence: Vec<&'static str>,
+    summary: UsbPacketSummary,
+}
+
+#[derive(Serialize)]
+struct DebugCaptureEvidenceRetainedLog {
+    name: String,
+    path: String,
+    missing_evidence: Vec<&'static str>,
+    summary: UsbPacketSummary,
+}
+
+fn debug_capture_evidence_report_json(
+    captures: &[PicoBundleCapture],
+    retained_logs: &[RetainedDebugPacketLog],
+    summary: &UsbPacketBundleSummary,
+) -> Result<String> {
+    let status = debug_capture_overall_status(summary, captures, retained_logs);
+    let evidence_grade = debug_capture_evidence_grade(summary);
+    let (gate, gate_reason) = debug_capture_gate(summary);
+    let debug_persona_captures = captures
+        .iter()
+        .filter(|capture| state_json_persona(&capture.state_json).as_deref() == Some("debug"))
+        .count();
+    let missing_evidence = debug_capture_missing_evidence_lines(
+        summary,
+        captures,
+        retained_logs,
+        debug_persona_captures,
+    );
+    let per_pico = captures
+        .iter()
+        .map(|capture| {
+            let persona = state_json_persona(&capture.state_json);
+            let source_summary = summarize_text(&capture.usb_packets_text);
+            DebugCaptureEvidencePico {
+                uid: capture.manifest.uid.clone(),
+                path: capture.manifest.path.clone(),
+                peer: capture.manifest.peer.clone(),
+                live: capture.manifest.live,
+                source: capture.manifest.source.clone(),
+                persona: persona.clone(),
+                packet_status: capture.manifest.usb_packet_dump_status.clone(),
+                missing_evidence: debug_capture_source_missing_evidence(
+                    &source_summary,
+                    persona.as_deref(),
+                    false,
+                ),
+                summary: source_summary,
+            }
+        })
+        .collect();
+    let retained_logs = retained_logs
+        .iter()
+        .map(|log| {
+            let source_summary = summarize_text(&log.text);
+            DebugCaptureEvidenceRetainedLog {
+                name: log.name.clone(),
+                path: format!("debug-packets/{}", log.name),
+                missing_evidence: debug_capture_source_missing_evidence(
+                    &source_summary,
+                    None,
+                    true,
+                ),
+                summary: source_summary,
+            }
+        })
+        .collect();
+    let report = DebugCaptureEvidenceReport {
+        artifact_schema_version: 1,
+        overall_status: status,
+        evidence_grade,
+        adapter_reverse_engineering_gate: gate,
+        gate_reason,
+        missing_evidence,
+        aggregate: summary.aggregate.clone(),
+        per_pico,
+        retained_logs,
+        notes: vec![
+            "This file is machine-readable evidence for debug input packet capture quality.",
+            "adapter_reverse_engineering_gate=pass requires raw debug input packet payload lines.",
+            "Per-source summary counts are calculated independently; aggregate sequence gaps are summed per source.",
+            "Raw packet dumps are only present when the Pico was intentionally switched into debug input mode.",
+        ],
+    };
+    Ok(serde_json::to_string_pretty(&report)?)
+}
+
+fn debug_capture_source_missing_evidence(
+    summary: &UsbPacketSummary,
+    persona: Option<&str>,
+    retained_log: bool,
+) -> Vec<&'static str> {
+    let mut lines = Vec::new();
+    if summary.packet_lines == 0 {
+        lines.push("raw USB packet payload lines from this source");
+    }
+    if summary.directions.get("setup").copied().unwrap_or(0) == 0
+        && summary.directions.get("control-in").copied().unwrap_or(0) == 0
+    {
+        lines.push("USB setup/control-IN traffic from this source");
+    }
+    if summary.directions.get("in").copied().unwrap_or(0) == 0
+        && summary.directions.get("out").copied().unwrap_or(0) == 0
+    {
+        lines.push("endpoint IN/OUT traffic from this source");
+    }
+    if !retained_log && persona != Some("debug") {
+        lines.push("current state proving persona=debug for this Pico");
+    }
+    if summary.packet_lines == 0 && summary.stats_lines == 0 && summary.harvest_lines == 0 {
+        lines.push("debug packet stats or harvest records from this source");
+    }
+    if lines.is_empty() {
+        lines.push("none");
+    }
+    lines
+}
+
 fn debug_capture_evidence_grade(summary: &UsbPacketBundleSummary) -> &'static str {
     if summary.aggregate.packet_lines > 0
         && (debug_summary_direction_count(summary, "setup") > 0
@@ -1816,9 +1975,10 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 mod tests {
     use super::{
         aggregate_usb_packets, count_usb_packet_harvest_lines, count_usb_packet_lines,
-        count_usb_packet_stats_lines, debug_capture_overall_status, debug_capture_verdict_text,
-        sanitize_path_component, usb_packets_text_from_debug_snapshot, usb_packets_text_from_diag,
-        PicoBundleCapture, RetainedDebugPacketLog,
+        count_usb_packet_stats_lines, debug_capture_evidence_report_json,
+        debug_capture_overall_status, debug_capture_verdict_text, sanitize_path_component,
+        usb_packets_text_from_debug_snapshot, usb_packets_text_from_diag, PicoBundleCapture,
+        RetainedDebugPacketLog,
     };
     use super::{summarize_sources, ManifestPicoCapture, UsbPacketSummarySource};
 
@@ -2002,6 +2162,67 @@ mod tests {
         assert!(text.contains("max_inter_packet_gap_ms=25"));
         assert!(text.contains("packet_time_regressions=0"));
         assert!(text.contains("usb-packet-timeline.txt"));
+    }
+
+    #[test]
+    fn debug_capture_evidence_json_reports_pass_gate() {
+        let capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"debug\"}\n",
+            "usb-packet seq=1 t=10 dir=setup bm=0x80 req=0x06 value=0x0100 index=0x0000 wlen=18 data=8006000100001200\nusb-packet seq=2 t=35 dir=out src=hid-output report_id=0x01 report_type=2 data=050607\n",
+        );
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: &capture.usb_packets_text,
+        }];
+        let summary = summarize_sources(&per_pico, &[]);
+        let json = debug_capture_evidence_report_json(&[capture], &[], &summary).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["artifact_schema_version"], 1);
+        assert_eq!(value["adapter_reverse_engineering_gate"], "pass");
+        assert_eq!(value["evidence_grade"], "complete");
+        assert_eq!(value["aggregate"]["packet_lines"], 2);
+        assert_eq!(value["aggregate"]["hid_report_lines"], 1);
+        assert_eq!(value["aggregate"]["max_inter_packet_gap_ms"], 25);
+        assert_eq!(value["per_pico"][0]["uid"], "02E22DA9");
+        assert_eq!(value["per_pico"][0]["persona"], "debug");
+        assert_eq!(value["per_pico"][0]["missing_evidence"][0], "none");
+    }
+
+    #[test]
+    fn debug_capture_evidence_json_reports_missing_payloads() {
+        let retained = vec![RetainedDebugPacketLog {
+            name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
+            text: "# harvest {\"status\":\"error\",\"duration_ms\":1200,\"chunk_complete\":false,\"error\":\"no log chunks received\"}\n"
+                .to_string(),
+        }];
+        let retained_sources = [UsbPacketSummarySource {
+            label: retained[0].name.clone(),
+            path: format!("debug-packets/{}", retained[0].name),
+            text: &retained[0].text,
+        }];
+        let summary = summarize_sources(&[], &retained_sources);
+        let json = debug_capture_evidence_report_json(&[], &retained, &summary).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["adapter_reverse_engineering_gate"], "fail");
+        assert_eq!(value["overall_status"], "harvest_attempted_no_packets");
+        assert_eq!(value["aggregate"]["harvest_lines"], 1);
+        assert!(value["missing_evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry == "raw USB packet payload lines from debug input mode"));
+        assert_eq!(
+            value["retained_logs"][0]["path"],
+            "debug-packets/usb-packets-20260615-214000-02E22DA9.log"
+        );
+        assert!(value["retained_logs"][0]["missing_evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry == "raw USB packet payload lines from this source"));
     }
 
     #[test]

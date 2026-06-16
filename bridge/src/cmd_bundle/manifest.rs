@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 12;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 13;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -79,6 +79,8 @@ pub(super) struct Manifest {
     usb_packet_timeline_path: &'static str,
     debug_capture_verdict_included: bool,
     debug_capture_verdict_path: &'static str,
+    debug_capture_evidence_included: bool,
+    debug_capture_evidence_path: &'static str,
     diagnostic_cache_included: bool,
     retained_debug_packet_logs: Vec<String>,
     per_pico_capture_outcomes: Vec<ManifestPicoCapture>,
@@ -156,6 +158,8 @@ pub(super) async fn build_manifest(
         usb_packet_timeline_path: "usb-packet-timeline.txt",
         debug_capture_verdict_included: true,
         debug_capture_verdict_path: "debug-capture-verdict.txt",
+        debug_capture_evidence_included: true,
+        debug_capture_evidence_path: "debug-capture-evidence.json",
         diagnostic_cache_included,
         retained_debug_packet_logs: retained_debug_packet_logs.to_vec(),
         per_pico_capture_outcomes: per_pico_capture_outcomes.to_vec(),
@@ -176,6 +180,7 @@ pub(super) async fn build_manifest(
             "usb-hid-reports.txt extracts HID report ids and report types from HID OUT/FEATURE payloads and HID GET_REPORT/SET_REPORT setup requests.",
             "usb-packet-timeline.txt extracts packet, stats, and harvest records in timestamp order with per-source timing deltas.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
+            "debug-capture-evidence.json exposes the same debug capture gate and per-source evidence counts in machine-readable form.",
         ],
         redaction_policy: vec![
             "Wi-Fi passwords are not included.",
@@ -296,6 +301,11 @@ mod tests {
         assert_eq!(
             json["debug_capture_verdict_path"],
             "debug-capture-verdict.txt"
+        );
+        assert_eq!(json["debug_capture_evidence_included"], true);
+        assert_eq!(
+            json["debug_capture_evidence_path"],
+            "debug-capture-evidence.json"
         );
         assert_eq!(json["per_pico_capture_outcomes"][0]["uid"], "02E22DA9");
         assert_eq!(
