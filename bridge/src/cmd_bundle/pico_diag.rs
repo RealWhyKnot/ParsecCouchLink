@@ -223,8 +223,9 @@ impl DiagOutcome {
                 &[
                     "Run `couchlink setup` to provision a Pico (flash + Wi-Fi).",
                     "Or, if a Pico is already running on your LAN, run \
-                     `couchlink doctor` -- if discovery succeeds it will be \
-                     recorded in config and the next bundle can probe it.",
+                     `couchlink bundle` from the bridge PC and choose \
+                     `Enter Pico IP manually` from the menu if broadcast \
+                     discovery is blocked.",
                 ],
                 &[],
             ),
@@ -288,7 +289,7 @@ impl DiagOutcome {
                      `couchlink setup`.",
                     "If you have multiple network adapters, make sure the bridge \
                      is allowed through Windows Firewall on the active profile. \
-                     `couchlink doctor` will surface a firewall mismatch.",
+                     `couchlink bundle` includes the firewall and network snapshot.",
                 ],
                 &[("error", reason)],
             ),

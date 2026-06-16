@@ -824,7 +824,7 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
                     Some(Ok(picos)) => apply_recovery_results(&mut runtime, &picos, options.quiet),
                     Some(Err(e)) if !options.quiet => {
                         println!("Recovery discovery failed: {e:#}");
-                        println!("  Check Wi-Fi, firewall, and router client isolation, then run `couchlink test discover --all`.");
+                        println!("  Check Wi-Fi, firewall, and router client isolation, then run `couchlink bundle` if it persists.");
                     }
                     Some(Err(_)) => {}
                     None => {}
@@ -1327,7 +1327,7 @@ fn print_status(routes: &mut [RouteRuntime]) {
         );
         if route.inbound_total == 0 && route.sent_total > 180 && !route.recovery_hint_printed {
             println!(
-                "    hint: no Pico reply yet. Confirm this Pico is powered, on the same Wi-Fi, and visible in `couchlink test discover --all`."
+                "    hint: no Pico reply yet. Confirm this Pico is powered and on the same Wi-Fi; run `couchlink bundle` if it stays unreachable."
             );
             route.recovery_hint_printed = true;
         } else if route.inbound_total > 0

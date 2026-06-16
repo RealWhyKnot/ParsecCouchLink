@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 19;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 20;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -175,6 +175,8 @@ pub(super) async fn build_manifest(
             "BOOTSEL drives are inventoried when present.",
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
             "Debug input mode uses the XInput USB shape and logs raw USB IN/OUT packet samples for adapter reverse engineering.",
+            "For each live Pico, bundle attempts an automatic debug input capture cycle: switch to debug mode, wait for USB polling, harvest GET_LOG, then restore the original persona.",
+            "If the automatic debug input cycle cannot complete, bundle-capture.txt records the failed step, duration, and reason.",
             "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
             "When bundle finds a live Pico already in debug input mode, it performs a bundle-time GET_LOG harvest and records the harvest health in that Pico's usb-packets.txt.",
             "Retained debug packet logs include per-harvest health records for GET_LOG duration, chunks, lost bytes, packet counts, and failures.",

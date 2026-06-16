@@ -30,6 +30,11 @@ static void cold_boot_without_credentials_enters_setup_mode(void) {
     assert(boot_mode_cold_boot_action(false) == BOOT_COLD_SETUP);
 }
 
+static void flash_update_matches_cold_boot_credential_policy(void) {
+    assert(boot_mode_flash_update_action(true) == BOOT_COLD_RUN);
+    assert(boot_mode_flash_update_action(false) == BOOT_COLD_SETUP);
+}
+
 static void persona_defaults_to_xinput_without_credentials(void) {
     // No credentials -> always XInput, whatever byte happens to be there.
     // The stored byte equals the run_persona_t value (asserted in boot_mode.c).
@@ -83,6 +88,7 @@ int main(void) {
     held_bootsel_after_threshold_keeps_saved_credentials();
     cold_boot_with_credentials_prefers_run_mode();
     cold_boot_without_credentials_enters_setup_mode();
+    flash_update_matches_cold_boot_credential_policy();
     persona_defaults_to_xinput_without_credentials();
     persona_reads_stored_byte_with_credentials();
     persona_unknown_byte_falls_back_to_xinput();

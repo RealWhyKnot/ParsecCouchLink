@@ -41,7 +41,7 @@ use clap::{Parser, Subcommand};
     version,
     about = "Parsec to retro-console bridge. Run with no arguments for the guided menu. \
              Run `couchlink setup` to walk through first-time setup. \
-             Run `couchlink doctor` to diagnose problems."
+             Run `couchlink bundle` to gather diagnostics."
 )]
 struct Cli {
     /// Verbosity. -v for debug, -vv for trace.
@@ -106,6 +106,7 @@ enum Command {
         no_stream: bool,
     },
     /// Switch a Pico to debug input mode and stream XInput while capturing raw USB packets.
+    #[command(hide = true)]
     DebugInput {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
         #[arg(long = "pico")]
@@ -268,6 +269,7 @@ enum Command {
     },
     /// Run every diagnostic check; report PASS/WARN/FAIL/SKIP with hints.
     /// Exit codes: 0 clean, 1 warnings only, 2 hard fail, 3 setup incomplete.
+    #[command(hide = true)]
     Doctor,
     /// Find a Pico in BOOTSEL mode and copy a UF2 onto it. With no --uf2,
     /// the matching couchlink-pico2w.uf2 / couchlink-picow.uf2 is picked
@@ -288,8 +290,10 @@ enum Command {
     /// Re-push Wi-Fi credentials to a Pico in setup mode via USB-CDC.
     ConfigureWifi,
     /// Recover Picos for streaming by checking Wi-Fi, setup USB, and BOOTSEL states.
+    #[command(hide = true)]
     Recover,
     /// Reboot a setup-mode USB Pico into BOOTSEL firmware mode.
+    #[command(hide = true)]
     Bootsel {
         /// Reboot every setup-mode USB Pico into BOOTSEL.
         #[arg(long)]
@@ -300,6 +304,7 @@ enum Command {
         ports: Vec<String>,
     },
     /// Guided Pico debug/recovery menu. Can also switch between Wi-Fi, USB debug, and BOOTSEL modes.
+    #[command(hide = true)]
     Debug {
         /// Show current Pico mode status and exit.
         #[arg(long)]
@@ -337,6 +342,7 @@ enum Command {
     ///
     /// Names: paths, xinput, startup, firewall, wifi-band, cdc, discover, usb
     /// (aliases: wifi = wifi-band, adapter = usb).
+    #[command(hide = true)]
     Test {
         which: String,
 
@@ -353,6 +359,7 @@ enum Command {
         ips: Vec<String>,
     },
     /// Run unattended Pico hardware bench scenarios.
+    #[command(hide = true)]
     Lab {
         /// Probe every visible Pico. This is also the default when no --pico selector is provided.
         #[arg(long)]
@@ -401,6 +408,7 @@ enum Command {
         result_file: Option<PathBuf>,
     },
     /// Print where logs live, or tail the active log file.
+    #[command(hide = true)]
     Logs {
         /// Tail the current log file instead of printing its path.
         #[arg(long)]
@@ -663,7 +671,40 @@ fn write_crash_file(info: &std::panic::PanicHookInfo<'_>) -> std::io::Result<()>
 
 #[cfg(test)]
 mod tests {
+    use clap::CommandFactory;
+
     use super::*;
+
+    #[test]
+    fn lower_level_diagnostic_commands_are_hidden_from_help() {
+        let mut command = Cli::command();
+        let help = command.render_long_help().to_string();
+
+        assert!(help_lists_command(&help, "bundle"));
+        for hidden in [
+            "debug-input",
+            "doctor",
+            "recover",
+            "bootsel",
+            "debug",
+            "test",
+            "lab",
+            "logs",
+        ] {
+            assert!(
+                !help_lists_command(&help, hidden),
+                "{hidden} should stay hidden from top-level help:\n{help}"
+            );
+        }
+    }
+
+    fn help_lists_command(help: &str, command: &str) -> bool {
+        let command_with_space = format!("{command} ");
+        help.lines().any(|line| {
+            let line = line.trim_start();
+            line == command || line.starts_with(&command_with_space)
+        })
+    }
 
     #[test]
     fn lab_command_parses_defaults_and_overrides() {

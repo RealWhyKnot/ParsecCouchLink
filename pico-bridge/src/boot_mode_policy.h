@@ -29,6 +29,7 @@ typedef enum {
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);
 boot_cold_action_t boot_mode_cold_boot_action(bool have_creds);
+boot_cold_action_t boot_mode_flash_update_action(bool have_creds);
 
 // Map a stored persona byte to the run persona. A missing record or any
 // unrecognised value falls back to the XInput persona, so a blank or

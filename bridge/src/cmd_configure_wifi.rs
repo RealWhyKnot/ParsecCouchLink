@@ -148,7 +148,7 @@ async fn handle_running_picos(mut picos: Vec<cmd_run::PicoTarget>) -> Result<Opt
                 .context(
                     "the Pico did not reappear as setup-mode USB. If this firmware is older, \
                      update it with the newest ZIP first; otherwise unplug/replug the Pico and \
-                     run `couchlink doctor`.",
+                     run `couchlink bundle`.",
                 )
         }
         _ => Ok(None),
@@ -193,8 +193,10 @@ async fn print_discovered_pico_ips(before: BTreeSet<u32>) -> Result<()> {
         let now = Instant::now();
         if now >= deadline {
             println!("No Pico replied yet.");
-            println!("Run `couchlink test discover --all` after the Pico has joined Wi-Fi.");
-            println!("If your router shows its IP, run `couchlink test discover --ip <ip>`.");
+            println!("If your router shows its IP, choose `Enter Pico IP manually` from the menu.");
+            println!(
+                "If it still fails, run `couchlink bundle` and attach the zip to a bug report."
+            );
             return Ok(());
         }
         if now >= next_beat {

@@ -71,8 +71,18 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
     }
 
     if (rr->reason == RESET_REASON_FLASH_UPDATE) {
-        diag_log_msg("boot: UF2 reflash detected -- forcing setup mode with creds retained");
-        current = BOOT_MODE_SETUP;
+        flash_creds_t rec;
+        bool have_creds = flash_creds_load(&rec);
+        if (boot_mode_flash_update_action(have_creds) == BOOT_COLD_RUN) {
+            diag_log_printf("boot: UF2 reflash detected with saved credentials (ssid_len=%u, "
+                            "gen=%u); entering run mode",
+                            (unsigned)rec.ssid_len, (unsigned)rec.generation);
+            current = BOOT_MODE_RUN;
+            run_persona = boot_mode_persona_from_flash(true, rec.usb_persona);
+        } else {
+            diag_log_msg("boot: UF2 reflash detected with no credentials; entering setup mode");
+            current = BOOT_MODE_SETUP;
+        }
         return current;
     }
 
@@ -95,8 +105,8 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
     bool have_creds = flash_creds_load(&rec);
 
     // Single instantaneous BOOTSEL sample -- no blocking delay. This
-    // intentionally runs after reset-reason handling so an RP2350 UF2
-    // reflash or firmware-driven reboot cannot be mistaken for a
+    // intentionally runs after reset-reason handling so a
+    // firmware-driven reboot cannot be mistaken for a
     // physical BOOTSEL hold. A provisioned cold boot still enters run
     // mode; saved credentials are the stable XInput path.
     bootsel_at_boot = read_bootsel_button();

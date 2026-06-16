@@ -46,22 +46,6 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
-pub async fn run_interactive() -> Result<()> {
-    let summary = run_checks().await?;
-    if !summary.setup_complete && summary.fails == 0 {
-        println!("(note: setup is not complete yet; use `Update Pico firmware`, then `Set up or change Wi-Fi`.)");
-    }
-    if summary.fails > 0 {
-        println!();
-        println!("Health check found a blocking problem.");
-        println!("Use `Create support bundle` if you need to send the details.");
-    } else if summary.warns > 0 {
-        println!();
-        println!("Health check finished with warnings. Warnings do not always block streaming.");
-    }
-    Ok(())
-}
-
 async fn run_checks() -> Result<DoctorSummary> {
     tracing::info!("doctor: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
     println!("couchlink doctor v{}", env!("CARGO_PKG_VERSION"));

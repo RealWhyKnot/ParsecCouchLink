@@ -469,7 +469,7 @@ fn print_lan_timeout_walkthrough() {
     println!("     during plug-in to wipe the saved creds, then re-run `couchlink setup`.");
     println!("  4. If you have multiple network adapters, make sure the bridge is allowed");
     println!("     through Windows Firewall on the active profile.");
-    println!("     `couchlink doctor` will surface a firewall mismatch.");
+    println!("     `couchlink bundle` includes the firewall and network snapshot.");
     println!("  5. Run `couchlink bundle` and attach the resulting zip to a bug report.");
 }
 

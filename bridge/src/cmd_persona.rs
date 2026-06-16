@@ -102,7 +102,7 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
         .collect();
     if !pending.is_empty() {
         println!(
-            "Note: {} did not confirm {} mode yet. Give it a moment and run `couchlink test discover --all`.",
+            "Note: {} did not confirm {} mode yet. Give it a moment, then run `couchlink bundle` if it still does not confirm.",
             pending.join(", "),
             desired.label()
         );

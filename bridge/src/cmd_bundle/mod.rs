@@ -27,7 +27,8 @@ use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
 use crate::{
-    cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache, pico_state, protocol,
+    cmd_persona, cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache, pico_mode,
+    pico_state, protocol,
 };
 
 use collect::{bundle_log_prefix, collect_crash_file_names, collect_setup_transcript_names};
@@ -50,6 +51,9 @@ use usb_packet_summary::{
 };
 
 const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
+const BUNDLE_DEBUG_PERSONA_WAIT: Duration = Duration::from_secs(60);
+const BUNDLE_DEBUG_USB_SETTLE: Duration = Duration::from_secs(3);
+const BUNDLE_RESTORE_PERSONA_WAIT: Duration = Duration::from_secs(60);
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
 /// callers get a typed answer without
@@ -105,6 +109,12 @@ struct PicoCaptureSeed {
 struct RetainedDebugPacketLog {
     name: String,
     text: String,
+}
+
+#[derive(Clone, Debug)]
+struct BundleUsbPacketCapture {
+    text: String,
+    debug_target: Option<cmd_run::PicoTarget>,
 }
 
 #[derive(Default)]
@@ -763,7 +773,7 @@ async fn capture_usb_diag_text() -> UsbDiagBundle {
                      Suggested next step:\n\
                      - Make sure the Pico is powered, has joined Wi-Fi, and is still plugged into the console adapter.\n\
                      - Run `couchlink.exe bundle` again immediately after the failure.\n\
-                     - If the Pico is on Wi-Fi but broadcast discovery is blocked, run `couchlink.exe doctor` once so the last-known IP is saved.\n\n\
+                     - If the Pico is on Wi-Fi but broadcast discovery is blocked, choose `Enter Pico IP manually` from the guided menu once, then run bundle again.\n\n\
                      Diagnostic details:\n\
                      error={e:#}\n"
                 ),
@@ -1065,8 +1075,15 @@ async fn capture_one_pico(
         pico_state_status = target_pico_state_status;
         pico_diag_status = target_pico_diag_status;
         pico_diag_text = target_pico_diag_text;
-        usb_packets_text =
+        let packet_capture =
             bundle_usb_packets_for_target(&seed.uid, target, &pico_diag_text, capture_log).await;
+        if let Some(debug_target) = packet_capture.debug_target.as_ref() {
+            snapshot =
+                pico_cache::PicoStateSnapshot::from_target("bundle-debug-capture", debug_target)
+                    .with_outcome("bundle: automatic debug input capture");
+            pico_cache::record(snapshot.clone());
+        }
+        usb_packets_text = packet_capture.text;
         usb_diag_status = target_usb_diag_status;
         usb_diag_text = target_usb_diag_text;
         state_json_from_snapshot(&snapshot)
@@ -1154,11 +1171,153 @@ async fn bundle_usb_packets_for_target(
     target: &cmd_run::PicoTarget,
     fallback_diag_text: &str,
     capture_log: &mut CaptureLog,
-) -> String {
-    if target.persona != protocol::Persona::Debug {
-        return usb_packets_text_from_diag(uid, fallback_diag_text);
+) -> BundleUsbPacketCapture {
+    if target.persona == protocol::Persona::Debug {
+        return BundleUsbPacketCapture {
+            text: harvest_debug_packets_for_target(uid, target, fallback_diag_text, capture_log)
+                .await,
+            debug_target: Some(target.clone()),
+        };
     }
 
+    let original_persona = target.persona;
+    let started = Instant::now();
+    let mut note = String::new();
+    match pico_mode::request_set_persona(target, protocol::Persona::Debug).await {
+        Ok(()) => {
+            capture_log.record(
+                format!("per_pico.{uid}.debug_cycle_request"),
+                started,
+                "sent",
+                1,
+                format!("from={} to=debug", original_persona.label()),
+            );
+        }
+        Err(e) => {
+            capture_log.record(
+                format!("per_pico.{uid}.debug_cycle_request"),
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
+            );
+            let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
+            let _ = writeln!(
+                text,
+                "# bundle-debug-cycle status=request_failed from={} error={}",
+                original_persona.label(),
+                sanitize_log_field(&format!("{e:#}"))
+            );
+            return BundleUsbPacketCapture {
+                text,
+                debug_target: None,
+            };
+        }
+    }
+
+    let started = Instant::now();
+    let matched = match cmd_persona::wait_for_persona(
+        &[target.info.unique_id_short],
+        protocol::Persona::Debug,
+        BUNDLE_DEBUG_PERSONA_WAIT,
+    )
+    .await
+    {
+        Ok(matched) => matched,
+        Err(e) => {
+            capture_log.record(
+                format!("per_pico.{uid}.debug_cycle_wait"),
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
+            );
+            let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
+            let _ = writeln!(
+                text,
+                "# bundle-debug-cycle status=wait_failed from={} error={}",
+                original_persona.label(),
+                sanitize_log_field(&format!("{e:#}"))
+            );
+            return BundleUsbPacketCapture {
+                text,
+                debug_target: None,
+            };
+        }
+    };
+    let observed = format_observed_personas(&matched);
+    let debug_target = matched
+        .iter()
+        .find(|pico| pico.persona == protocol::Persona::Debug)
+        .cloned();
+    capture_log.record(
+        format!("per_pico.{uid}.debug_cycle_wait"),
+        started,
+        if debug_target.is_some() {
+            "confirmed"
+        } else {
+            "not_confirmed"
+        },
+        matched.len(),
+        format!("observed={observed}"),
+    );
+
+    let Some(debug_target) = debug_target else {
+        if let Some(current) = matched.first() {
+            if current.persona != original_persona {
+                restore_persona_after_bundle(uid, current, original_persona, capture_log).await;
+            }
+        }
+        let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
+        let _ = writeln!(
+            text,
+            "# bundle-debug-cycle status=not_confirmed from={} observed={}",
+            original_persona.label(),
+            observed
+        );
+        return BundleUsbPacketCapture {
+            text,
+            debug_target: None,
+        };
+    };
+
+    capture_log.record_duration(
+        format!("per_pico.{uid}.debug_usb_settle"),
+        BUNDLE_DEBUG_USB_SETTLE.as_millis() as u64,
+        "sleep",
+        0,
+        "allow USB host to enumerate and poll debug input persona",
+    );
+    tokio::time::sleep(BUNDLE_DEBUG_USB_SETTLE).await;
+
+    let text =
+        harvest_debug_packets_for_target(uid, &debug_target, fallback_diag_text, capture_log).await;
+
+    if original_persona != protocol::Persona::Debug {
+        restore_persona_after_bundle(uid, &debug_target, original_persona, capture_log).await;
+        let _ = writeln!(
+            note,
+            "# bundle-debug-cycle restore_requested persona={}",
+            original_persona.label()
+        );
+    }
+
+    let mut text = text;
+    if !note.is_empty() {
+        text.push_str(&note);
+    }
+    BundleUsbPacketCapture {
+        text,
+        debug_target: Some(debug_target),
+    }
+}
+
+async fn harvest_debug_packets_for_target(
+    uid: &str,
+    target: &cmd_run::PicoTarget,
+    fallback_diag_text: &str,
+    capture_log: &mut CaptureLog,
+) -> String {
     let started = Instant::now();
     match debug_packets::capture_run_diag_log(target.peer, BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT)
         .await
@@ -1199,6 +1358,82 @@ async fn bundle_usb_packets_for_target(
             text
         }
     }
+}
+
+async fn restore_persona_after_bundle(
+    uid: &str,
+    target: &cmd_run::PicoTarget,
+    persona: protocol::Persona,
+    capture_log: &mut CaptureLog,
+) {
+    let started = Instant::now();
+    match pico_mode::request_set_persona(target, persona).await {
+        Ok(()) => capture_log.record(
+            format!("per_pico.{uid}.restore_persona_request"),
+            started,
+            "sent",
+            1,
+            format!("persona={}", persona.label()),
+        ),
+        Err(e) => {
+            capture_log.record(
+                format!("per_pico.{uid}.restore_persona_request"),
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
+            );
+            return;
+        }
+    }
+
+    let started = Instant::now();
+    match cmd_persona::wait_for_persona(
+        &[target.info.unique_id_short],
+        persona,
+        BUNDLE_RESTORE_PERSONA_WAIT,
+    )
+    .await
+    {
+        Ok(matched) => {
+            let restored = matched.iter().find(|pico| pico.persona == persona);
+            capture_log.record(
+                format!("per_pico.{uid}.restore_persona_wait"),
+                started,
+                if restored.is_some() {
+                    "confirmed"
+                } else {
+                    "not_confirmed"
+                },
+                matched.len(),
+                format!("observed={}", format_observed_personas(&matched)),
+            );
+            if let Some(restored) = restored {
+                pico_cache::record(
+                    pico_cache::PicoStateSnapshot::from_target("bundle-restore", restored)
+                        .with_outcome(format!("restored_{}", persona.label())),
+                );
+            }
+        }
+        Err(e) => capture_log.record(
+            format!("per_pico.{uid}.restore_persona_wait"),
+            started,
+            "error",
+            0,
+            format!("{e:#}"),
+        ),
+    }
+}
+
+fn format_observed_personas(targets: &[cmd_run::PicoTarget]) -> String {
+    if targets.is_empty() {
+        return "none".to_string();
+    }
+    targets
+        .iter()
+        .map(|target| format!("{}:{}", target.uid_hex(), target.persona.label()))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn saved_picos_from_config(cfg: &config::Config) -> Vec<config::PicoIdentity> {
@@ -1664,13 +1899,13 @@ fn debug_capture_verdict_text(
     out.push_str("next_steps=\n");
     if summary.aggregate.packet_lines == 0 {
         out.push_str(
-            "- Switch the target Pico to debug input mode, reproduce adapter traffic, then run bundle again.\n",
+            "- Run bundle again with the Pico powered and connected to the adapter; bundle switches to debug input mode and restores the original mode automatically.\n",
         );
         out.push_str(
-            "- Keep the bridge stream running while reproducing the issue so retained debug packet harvests can write debug-packets/*.log.\n",
+            "- If bundle-capture.txt shows debug_cycle_request, debug_cycle_wait, debug_packet_harvest, or GET_LOG failures, use that row's reason as the failure point.\n",
         );
         out.push_str(
-            "- If harvest_statuses shows error, check bundle-capture.txt and debug-packets/*.log for GET_LOG failures and timing.\n",
+            "- If retained debug-packets/*.log files are present, include the whole bundle; those files contain prior stream-time harvest evidence.\n",
         );
     } else {
         out.push_str(

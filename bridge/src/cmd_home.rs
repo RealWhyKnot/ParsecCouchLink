@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 
 use crate::tui::{confirm, input_text, press_enter, select};
 use crate::{
-    cdc, cmd_auto, cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_logs,
-    cmd_persona, cmd_run, cmd_setup, cmd_usb_diag, config, pico_mode, protocol, support, xinput,
+    cdc, cmd_auto, cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_persona,
+    cmd_run, cmd_setup, cmd_usb_diag, config, pico_mode, protocol, support, xinput,
 };
 
 const HOME_SCAN_SECONDS: u64 = 3;
@@ -1102,20 +1102,8 @@ async fn tools_menu() -> Result<()> {
                 "send 2.4 GHz Wi-Fi credentials over USB",
             ),
             menu_item(
-                "Run health check",
-                "check paths, controllers, firewall, Wi-Fi, Pico",
-            ),
-            menu_item(
-                "Pico debug and recovery",
-                "see mode status and switch Wi-Fi/USB/BOOTSEL",
-            ),
-            menu_item(
                 "Check Pico USB adapter",
                 "ask the Pico whether the console adapter accepted its input mode",
-            ),
-            menu_item(
-                "Auto recover for streaming",
-                "move setup-mode USB Pico back to Wi-Fi when possible",
             ),
             menu_item(
                 "Find Picos on Wi-Fi",
@@ -1129,8 +1117,6 @@ async fn tools_menu() -> Result<()> {
                 "Create support bundle",
                 "zip logs and diagnostics for a bug report",
             ),
-            menu_item("Show log folder", "print where logs are stored"),
-            menu_item("Follow live log", "tail the active log file"),
             menu_item(
                 "Command reference",
                 "copyable command lines for scripts and power users",
@@ -1149,32 +1135,19 @@ async fn tools_menu() -> Result<()> {
                 cmd_configure_wifi::run().await?;
             }
             3 => {
-                cmd_doctor::run_interactive().await?;
-                press_enter("Press Enter to return to Advanced.").await?;
-            }
-            4 => {
-                cmd_debug::run(cmd_debug::DebugOptions::default()).await?;
-            }
-            5 => {
                 cmd_usb_diag::run_interactive().await?;
                 press_enter("Press Enter to return to Advanced.").await?;
             }
-            6 => {
-                auto_recovery_tool().await?;
-                press_enter("Press Enter to return to Advanced.").await?;
-            }
-            7 => {
+            4 => {
                 pico_finder_tool().await?;
                 press_enter("Press Enter to return to Advanced.").await?;
             }
-            8 => {
+            5 => {
                 controller_tool().await?;
                 press_enter("Press Enter to return to Advanced.").await?;
             }
-            9 => cmd_bundle::run(None).await?,
-            10 => cmd_logs::run(false).await?,
-            11 => cmd_logs::run(true).await?,
-            12 => show_direct_commands().await?,
+            6 => cmd_bundle::run(None).await?,
+            7 => show_direct_commands().await?,
             _ => return Ok(()),
         }
     }
@@ -1193,9 +1166,11 @@ async fn quick_status_dashboard() -> Result<()> {
     println!();
     println!("Suggested next steps:");
     println!("  If a Pico appears on Wi-Fi, return to Basic and choose its streaming or USB adapter command.");
-    println!("  If a Pico appears in USB debug mode, choose `Set up or change Wi-Fi` or `Pico debug and recovery`.");
+    println!("  If a Pico appears in USB debug mode, choose `Set up or change Wi-Fi`.");
     println!("  If a Pico appears in BOOTSEL, choose `Firmware update`.");
-    println!("  If no Pico appears anywhere, check the cable, then use BOOTSEL firmware mode.");
+    println!(
+        "  If no Pico appears anywhere, check the cable, then choose `Create support bundle`."
+    );
     Ok(())
 }
 
@@ -1228,25 +1203,6 @@ async fn pico_finder_tool() -> Result<()> {
             _ => return Ok(()),
         }
     }
-}
-
-async fn auto_recovery_tool() -> Result<()> {
-    println!();
-    println!("Auto recover for streaming");
-    println!("CouchLink will scan Wi-Fi first, then recover setup-mode USB Picos that already have saved Wi-Fi.");
-    let picos = cmd_run::discover_picos_with_auto_recovery(Duration::from_secs(5), false).await?;
-    if picos.is_empty() {
-        println!("No Pico is ready for streaming yet.");
-        println!("Next step: use `Set up or change Wi-Fi` if a Pico is in USB debug mode, or `Firmware update` if it is in BOOTSEL.");
-    } else {
-        println!("Ready Pico board(s):");
-        for pico in picos {
-            println!("  {}", pico.detail_label());
-            println!("    manual IP: {}", pico.peer.ip());
-        }
-        println!("Next step: return to Basic and choose this Pico's streaming command.");
-    }
-    Ok(())
 }
 
 async fn controller_tool() -> Result<()> {
@@ -1314,33 +1270,8 @@ async fn show_direct_commands() -> Result<()> {
         "switch to Dreamcast adapter-labelled XInput mode",
     );
     print_command("couchlink keyboard", "switch to USB keyboard mode");
-    print_command(
-        "couchlink debug-input",
-        "switch to XInput mode with raw USB packet capture",
-    );
     println!();
-    println!("Pico recovery");
-    print_command(
-        "couchlink recover",
-        "auto-check Wi-Fi, setup USB, and BOOTSEL before streaming",
-    );
-    print_command("couchlink debug", "Pico USB/Wi-Fi recovery menu");
-    print_command(
-        "couchlink debug --status",
-        "show USB debug, Wi-Fi, and BOOTSEL state",
-    );
-    print_command(
-        "couchlink debug --to-usb-debug",
-        "switch a Wi-Fi Pico to USB debug mode",
-    );
-    print_command(
-        "couchlink debug --to-wifi --port COM3",
-        "switch USB debug mode back to Wi-Fi/input mode",
-    );
-    print_command(
-        "couchlink bootsel --port COM3",
-        "switch USB debug mode to BOOTSEL mode",
-    );
+    println!("Firmware update");
     print_command(
         "couchlink flash --from-usb --all",
         "no-button reflash for setup-mode Picos",
@@ -1348,29 +1279,7 @@ async fn show_direct_commands() -> Result<()> {
     print_command("couchlink flash --all", "flash every BOOTSEL drive");
     println!();
     println!("Diagnostics");
-    print_command(
-        "couchlink test discover --all",
-        "show every Pico answering on Wi-Fi",
-    );
-    print_command(
-        "couchlink test discover --ip 192.168.50.4",
-        "probe a Pico by manual IP",
-    );
-    print_command(
-        "couchlink test usb --all",
-        "check Pico USB host status over Wi-Fi",
-    );
-    print_command(
-        "couchlink test usb --ip 192.168.50.4",
-        "check one Pico by manual IP",
-    );
-    print_command(
-        "couchlink test cdc --all",
-        "show every setup-mode Pico over USB",
-    );
-    print_command("couchlink doctor", "run the full health check");
     print_command("couchlink bundle", "create a support bundle");
-    print_command("couchlink logs --tail", "follow the live log");
     println!();
     println!("Detected Pico UID examples:");
     match cmd_run::discover_picos(Duration::from_secs(3)).await {

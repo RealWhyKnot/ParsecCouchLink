@@ -12,6 +12,10 @@ boot_cold_action_t boot_mode_cold_boot_action(bool have_creds) {
     return have_creds ? BOOT_COLD_RUN : BOOT_COLD_SETUP;
 }
 
+boot_cold_action_t boot_mode_flash_update_action(bool have_creds) {
+    return boot_mode_cold_boot_action(have_creds);
+}
+
 run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte) {
     // The stored flash byte is the run_persona_t value itself
     // (FLASH_PERSONA_* == RUN_PERSONA_*, asserted in boot_mode.c), so no
