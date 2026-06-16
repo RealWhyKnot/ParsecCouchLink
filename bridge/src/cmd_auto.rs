@@ -16,9 +16,11 @@ pub(crate) const PLAYSTATION_FAMILY: &[Persona] = &[Persona::Ps3, Persona::Ps4];
 pub(crate) enum AutoScore {
     NoUsbTraffic = 0,
     EnumerationStarted = 1,
-    Configured = 2,
-    Polling = 3,
-    PollingWithOut = 4,
+    ConfiguredThenUnmounted = 2,
+    Suspended = 3,
+    Configured = 4,
+    Polling = 5,
+    PollingWithOut = 6,
 }
 
 #[derive(Clone, Debug)]
@@ -304,10 +306,19 @@ pub(crate) fn score_usb_diag(diag: &UsbDiag) -> AutoScore {
         AutoScore::Polling
     } else if diag.mounted() {
         AutoScore::Configured
-    } else if diag.device_desc_count > 0 || diag.config_desc_count > 0 {
-        AutoScore::EnumerationStarted
     } else {
-        AutoScore::NoUsbTraffic
+        match diag.configuration_state() {
+            crate::protocol::UsbConfigurationState::NoHostTraffic => AutoScore::NoUsbTraffic,
+            crate::protocol::UsbConfigurationState::EnumerationStarted => {
+                AutoScore::EnumerationStarted
+            }
+            crate::protocol::UsbConfigurationState::ConfiguredThenUnmounted
+            | crate::protocol::UsbConfigurationState::ConfiguredThenUnmountedWithoutCallback => {
+                AutoScore::ConfiguredThenUnmounted
+            }
+            crate::protocol::UsbConfigurationState::Suspended => AutoScore::Suspended,
+            crate::protocol::UsbConfigurationState::Configured => AutoScore::Configured,
+        }
     }
 }
 
@@ -319,6 +330,8 @@ fn score_label(score: AutoScore) -> &'static str {
     match score {
         AutoScore::NoUsbTraffic => "no USB host enumeration traffic",
         AutoScore::EnumerationStarted => "USB host started enumeration but did not configure",
+        AutoScore::ConfiguredThenUnmounted => "USB configured once, then was not mounted",
+        AutoScore::Suspended => "USB suspended",
         AutoScore::Configured => "USB configured but no input report accepted yet",
         AutoScore::Polling => "USB host accepted input reports",
         AutoScore::PollingWithOut => "USB host accepted input reports and sent OUT traffic",
@@ -434,6 +447,12 @@ mod tests {
         assert_eq!(
             score_usb_diag(&diag(false, false, false, true)),
             AutoScore::EnumerationStarted
+        );
+        let mut unmounted = diag(false, false, false, true);
+        unmounted.mount_count = 1;
+        assert_eq!(
+            score_usb_diag(&unmounted),
+            AutoScore::ConfiguredThenUnmounted
         );
         assert_eq!(
             score_usb_diag(&diag(true, false, false, true)),

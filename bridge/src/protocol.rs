@@ -112,6 +112,16 @@ pub const PICO_STATE_WIRE_SIZE: usize = 128;
 pub const PICO_STATE_V1_VERSION: u8 = 1;
 pub const PICO_STATE_VERSION: u8 = 2;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsbConfigurationState {
+    NoHostTraffic,
+    EnumerationStarted,
+    ConfiguredThenUnmounted,
+    ConfiguredThenUnmountedWithoutCallback,
+    Suspended,
+    Configured,
+}
+
 /// Set in a `TYPE_LOG_CHUNK` datagram's `flags` byte to mark the final
 /// chunk in the reply sequence.
 pub const LOG_CHUNK_FLAG_LAST: u8 = 1 << 0;
@@ -703,6 +713,26 @@ impl UsbDiag {
         self.xinput_in_blocked_not_mounted_count
             .saturating_add(self.xinput_in_blocked_not_ready_count)
             .saturating_add(self.xinput_in_blocked_short_write_count)
+    }
+
+    pub fn configuration_state(&self) -> UsbConfigurationState {
+        if self.mounted() {
+            return UsbConfigurationState::Configured;
+        }
+        if self.suspended() {
+            return UsbConfigurationState::Suspended;
+        }
+        if self.mount_count > 0 {
+            if self.umount_count == 0 {
+                return UsbConfigurationState::ConfiguredThenUnmountedWithoutCallback;
+            }
+            return UsbConfigurationState::ConfiguredThenUnmounted;
+        }
+        if self.device_desc_count > 0 || self.config_desc_count > 0 {
+            UsbConfigurationState::EnumerationStarted
+        } else {
+            UsbConfigurationState::NoHostTraffic
+        }
     }
 
     pub fn age_ms(&self, timestamp_ms: u32) -> Option<u32> {

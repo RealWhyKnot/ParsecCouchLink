@@ -282,13 +282,22 @@ fn warn_once(message: String) {
 }
 
 fn usb_verdict_label(diag: &protocol::UsbDiag, persona: protocol::Persona) -> &'static str {
-    if !diag.mounted() {
-        if diag.device_desc_count > 0 || diag.config_desc_count > 0 {
-            "enumeration_started_not_configured"
-        } else {
-            "no_usb_host_traffic"
+    match diag.configuration_state() {
+        protocol::UsbConfigurationState::NoHostTraffic => return "no_usb_host_traffic",
+        protocol::UsbConfigurationState::EnumerationStarted => {
+            return "enumeration_started_not_configured"
         }
-    } else if !diag.xinput_report_sent() {
+        protocol::UsbConfigurationState::ConfiguredThenUnmounted => {
+            return "configured_then_unmounted"
+        }
+        protocol::UsbConfigurationState::ConfiguredThenUnmountedWithoutCallback => {
+            return "configured_then_unmounted_without_callback"
+        }
+        protocol::UsbConfigurationState::Suspended => return "configured_suspended",
+        protocol::UsbConfigurationState::Configured => {}
+    }
+
+    if !diag.xinput_report_sent() {
         match diag.last_in_blocked_reason {
             protocol::USB_DIAG_IN_BLOCKED_NOT_MOUNTED => "configured_report_blocked_not_mounted",
             protocol::USB_DIAG_IN_BLOCKED_NOT_READY => "configured_report_blocked_not_ready",
@@ -328,5 +337,63 @@ mod tests {
         assert!(json.contains("cached_offline_identity"));
         assert!(!json.to_ascii_lowercase().contains("password"));
         assert!(!json.to_ascii_lowercase().contains("ssid"));
+    }
+
+    fn usb_diag(mounted: bool, desc: bool) -> protocol::UsbDiag {
+        protocol::UsbDiag {
+            seq: 1,
+            flags: 0,
+            version: protocol::USB_DIAG_VERSION,
+            usb_flags: if mounted {
+                protocol::USB_DIAG_FLAG_MOUNTED
+            } else {
+                0
+            },
+            activity_flags: 0,
+            last_out_len: 0,
+            now_ms: 10_000,
+            last_bridge_packet_ms: 0,
+            mount_count: if mounted { 1 } else { 0 },
+            umount_count: 0,
+            suspend_count: 0,
+            resume_count: 0,
+            device_desc_count: if desc { 1 } else { 0 },
+            config_desc_count: if desc { 1 } else { 0 },
+            xinput_in_queued_count: 0,
+            xinput_in_sent_count: 0,
+            xinput_out_count: 0,
+            xinput_in_blocked_not_mounted_count: 0,
+            xinput_in_blocked_not_ready_count: 0,
+            xinput_in_blocked_short_write_count: 0,
+            xinput_in_idle_suppressed_count: 0,
+            last_mount_ms: 9000,
+            last_umount_ms: 0,
+            last_in_queued_ms: 0,
+            last_in_sent_ms: 0,
+            last_out_ms: 0,
+            last_in_blocked_ms: 0,
+            last_in_blocked_reason: 0,
+            last_in_blocked_want: 0,
+            last_in_blocked_got: 0,
+            last_out_byte0: 0,
+            last_out_byte1: 0,
+        }
+    }
+
+    #[test]
+    fn usb_verdict_label_keeps_dropped_after_mount_distinct() {
+        let mut diag = usb_diag(false, true);
+        diag.mount_count = 1;
+
+        assert_eq!(
+            usb_verdict_label(&diag, protocol::Persona::Ps3),
+            "configured_then_unmounted_without_callback"
+        );
+
+        diag.umount_count = 1;
+        assert_eq!(
+            usb_verdict_label(&diag, protocol::Persona::Ps3),
+            "configured_then_unmounted"
+        );
     }
 }

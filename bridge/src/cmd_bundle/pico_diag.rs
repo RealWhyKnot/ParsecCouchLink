@@ -380,16 +380,41 @@ pub(super) async fn capture_pico_diag() -> DiagOutcome {
         return udp_result;
     }
 
-    // All three paths failed. Prefer the CDC outcome for diagnostic
-    // specificity (it has step / elapsed / rx_bytes detail); the vendor
-    // and UDP outcomes get logged but not surfaced in the manifest.
     tracing::warn!(
         "bundle: all three diag paths failed (cdc={}, vendor={}, udp={})",
         cdc_result.discriminant_str(),
         vendor_result.discriminant_str(),
         udp_result.discriminant_str()
     );
-    cdc_result
+    choose_failed_diag_outcome(cdc_result, vendor_result, udp_result)
+}
+
+fn choose_failed_diag_outcome(
+    cdc_result: DiagOutcome,
+    vendor_result: DiagOutcome,
+    udp_result: DiagOutcome,
+) -> DiagOutcome {
+    let mut best = cdc_result;
+    for candidate in [vendor_result, udp_result] {
+        if failure_rank(&candidate) > failure_rank(&best) {
+            best = candidate;
+        }
+    }
+    best
+}
+
+fn failure_rank(outcome: &DiagOutcome) -> u8 {
+    match outcome {
+        DiagOutcome::Captured { .. } | DiagOutcome::Empty { .. } => 100,
+        DiagOutcome::SetupProbeFailed { .. }
+        | DiagOutcome::VendorTransferFailed { .. }
+        | DiagOutcome::UdpProbeFailed { .. } => 60,
+        DiagOutcome::SetupOpenFailed { .. } | DiagOutcome::VendorOpenFailed { .. } => 50,
+        DiagOutcome::UdpUnsupported { .. } => 45,
+        DiagOutcome::UdpDiscoveryFailed { .. } => 40,
+        DiagOutcome::NoLastPicoInConfig => 20,
+        DiagOutcome::NoSetupPort | DiagOutcome::VendorNotFound => 10,
+    }
 }
 
 pub(super) async fn capture_run_udp_for_target(pico: &cmd_run::PicoTarget) -> DiagOutcome {
@@ -972,5 +997,55 @@ mod tests {
         assert!(DiagOutcome::UdpUnsupported { peer: make_peer() }
             .source_str()
             .is_none());
+    }
+
+    #[test]
+    fn failed_diag_selection_surfaces_udp_last_known_failure() {
+        let selected = choose_failed_diag_outcome(
+            DiagOutcome::NoSetupPort,
+            DiagOutcome::VendorNotFound,
+            DiagOutcome::UdpDiscoveryFailed {
+                reason: "broadcast: no ack; unicast: no ack".into(),
+            },
+        );
+
+        assert_eq!(selected.discriminant_str(), "udp_discovery_failed");
+        let stub = selected.stub_text();
+        assert!(
+            stub.contains("run-mode UDP probe"),
+            "wrong stub selected: {stub}"
+        );
+    }
+
+    #[test]
+    fn failed_diag_selection_keeps_setup_probe_detail() {
+        let selected = choose_failed_diag_outcome(
+            DiagOutcome::SetupProbeFailed {
+                port: "COM3".into(),
+                step: "read",
+                elapsed_ms: 3012,
+                bytes_received: 0,
+                rx_first_32_hex: "none".into(),
+                error: "timed out".into(),
+            },
+            DiagOutcome::VendorNotFound,
+            DiagOutcome::UdpDiscoveryFailed {
+                reason: "no ack".into(),
+            },
+        );
+
+        assert_eq!(selected.discriminant_str(), "setup_probe_failed");
+        assert!(selected.stub_text().contains("port: COM3"));
+    }
+
+    #[test]
+    fn failed_diag_selection_distinguishes_no_known_run_mode_pico() {
+        let selected = choose_failed_diag_outcome(
+            DiagOutcome::NoSetupPort,
+            DiagOutcome::VendorNotFound,
+            DiagOutcome::NoLastPicoInConfig,
+        );
+
+        assert_eq!(selected.discriminant_str(), "no_last_pico_in_config");
     }
 }

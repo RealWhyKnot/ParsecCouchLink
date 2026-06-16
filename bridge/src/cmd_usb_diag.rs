@@ -194,11 +194,7 @@ pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> 
     let _ = writeln!(
         out,
         "  USB: {}{}  mounts={} unmounts={} suspends={} resumes={}",
-        if diag.mounted() {
-            "configured"
-        } else {
-            "not configured"
-        },
+        usb_state_label(diag),
         if diag.suspended() { " / suspended" } else { "" },
         diag.mount_count,
         diag.umount_count,
@@ -252,13 +248,28 @@ pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> 
 }
 
 fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str) -> String {
-    if !diag.mounted() {
-        if diag.device_desc_count > 0 || diag.config_desc_count > 0 {
-            format!("FAIL  USB host started enumeration but did not configure the {device_label} device.")
-        } else {
-            "FAIL  Pico sees no USB host enumeration traffic.".to_string()
+    match diag.configuration_state() {
+        protocol::UsbConfigurationState::NoHostTraffic => {
+            return "FAIL  Pico sees no USB host enumeration traffic.".to_string();
         }
-    } else if !diag.xinput_report_sent() {
+        protocol::UsbConfigurationState::EnumerationStarted => {
+            return format!("FAIL  USB host started enumeration but did not configure the {device_label} device.");
+        }
+        protocol::UsbConfigurationState::ConfiguredThenUnmountedWithoutCallback => {
+            return format!("FAIL  USB configured the {device_label} device once, then current state is not mounted and no unmount callback was recorded.");
+        }
+        protocol::UsbConfigurationState::ConfiguredThenUnmounted => {
+            return format!("FAIL  USB configured the {device_label} device once, then the host disconnected or reset it.");
+        }
+        protocol::UsbConfigurationState::Suspended => {
+            return format!(
+                "WARN  USB is suspended; the host has not resumed the {device_label} device."
+            );
+        }
+        protocol::UsbConfigurationState::Configured => {}
+    }
+
+    if !diag.xinput_report_sent() {
         if diag.in_blocked_total() > 0 && diag.last_in_blocked_reason != 0 {
             format!(
                 "WARN  USB is configured, but the latest {device_label} report was blocked: {} (want={} got={}).",
@@ -275,6 +286,19 @@ fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str) -> String {
         format!("PASS  USB host is polling and has sent {device_label} OUT traffic.")
     } else {
         format!("PASS  USB host is polling the {device_label} endpoint. No OUT traffic seen yet.")
+    }
+}
+
+fn usb_state_label(diag: &protocol::UsbDiag) -> &'static str {
+    match diag.configuration_state() {
+        protocol::UsbConfigurationState::Configured => "configured",
+        protocol::UsbConfigurationState::Suspended => "suspended",
+        protocol::UsbConfigurationState::ConfiguredThenUnmounted
+        | protocol::UsbConfigurationState::ConfiguredThenUnmountedWithoutCallback => {
+            "not mounted now (configured earlier)"
+        }
+        protocol::UsbConfigurationState::EnumerationStarted
+        | protocol::UsbConfigurationState::NoHostTraffic => "not configured",
     }
 }
 
@@ -356,6 +380,32 @@ mod tests {
         assert!(usb_verdict(&diag(true, false, false, true), "XInput").starts_with("WARN"));
         assert!(usb_verdict(&diag(true, true, false, true), "XInput").starts_with("PASS"));
         assert!(usb_verdict(&diag(true, true, true, true), "XInput").contains("OUT traffic"));
+    }
+
+    #[test]
+    fn verdict_distinguishes_configured_then_unmounted() {
+        let mut d = diag(false, false, false, true);
+        d.mount_count = 1;
+        d.umount_count = 0;
+
+        let verdict = usb_verdict(&d, "PS3 HID gamepad");
+        assert!(
+            verdict.contains("configured the PS3 HID gamepad device once"),
+            "wrong verdict: {verdict}"
+        );
+        assert!(
+            verdict.contains("no unmount callback"),
+            "missing callback clue: {verdict}"
+        );
+        assert!(
+            !verdict.contains("did not configure"),
+            "kept old verdict: {verdict}"
+        );
+        let text = format_usb_diag(&d, protocol::Persona::Ps3);
+        assert!(
+            text.contains("USB: not mounted now (configured earlier)"),
+            "wrong USB state: {text}"
+        );
     }
 
     #[test]
