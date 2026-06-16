@@ -1,6 +1,7 @@
 #include "usb_packet_debug.h"
 
 #include <stddef.h>
+#include <string.h>
 
 #include "pico/stdlib.h"
 
@@ -9,15 +10,48 @@
 
 #define USB_PACKET_DEBUG_MAX_BYTES 64u
 #define USB_PACKET_DEBUG_IDLE_SAMPLE_MS 1000u
+#define USB_PACKET_DEBUG_STATS_EVERY_PACKETS 64u
 
 static uint32_t seq;
 static uint32_t dropped_bytes;
 static uint32_t suppressed_idle_in_reports;
+static uint32_t total_suppressed_idle_in_reports;
 static uint32_t last_idle_in_sample_ms;
+static uint32_t total_packet_lines;
+static uint32_t in_packet_lines;
+static uint32_t out_packet_lines;
+static uint32_t setup_packet_lines;
+static uint32_t control_in_packet_lines;
 
 static char hex_digit(uint8_t v) {
     v &= 0x0Fu;
     return (char)(v < 10u ? ('0' + v) : ('A' + (v - 10u)));
+}
+
+static void count_direction(const char *direction) {
+    total_packet_lines++;
+    if (strcmp(direction, "in") == 0) {
+        in_packet_lines++;
+    } else if (strcmp(direction, "out") == 0) {
+        out_packet_lines++;
+    } else if (strcmp(direction, "setup") == 0) {
+        setup_packet_lines++;
+    } else if (strcmp(direction, "control-in") == 0) {
+        control_in_packet_lines++;
+    }
+}
+
+static void maybe_log_stats(uint32_t now_ms) {
+    if (total_packet_lines != 1u &&
+        (total_packet_lines % USB_PACKET_DEBUG_STATS_EVERY_PACKETS) != 0u) {
+        return;
+    }
+    diag_log_printf("usb-packet-stats t=%u total=%u in=%u out=%u setup=%u control_in=%u "
+                    "truncated_bytes=%u idle_in_suppressed=%u",
+                    (unsigned)now_ms, (unsigned)total_packet_lines, (unsigned)in_packet_lines,
+                    (unsigned)out_packet_lines, (unsigned)setup_packet_lines,
+                    (unsigned)control_in_packet_lines, (unsigned)dropped_bytes,
+                    (unsigned)total_suppressed_idle_in_reports);
 }
 
 static void note_packet(const char *direction, const char *source, uint8_t const *buffer,
@@ -39,11 +73,14 @@ static void note_packet(const char *direction, const char *source, uint8_t const
     }
     hex[capture_len * 2u] = 0;
 
+    uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    count_direction(direction);
     diag_log_printf("usb-packet seq=%u t=%u dir=%s src=%s len=%u captured=%u dropped=%u "
                     "suppressed=%u reason=%s data=%s",
-                    (unsigned)seq++, (unsigned)to_ms_since_boot(get_absolute_time()), direction,
-                    source ? source : "unknown", (unsigned)len, (unsigned)capture_len,
-                    (unsigned)dropped_bytes, (unsigned)suppressed, reason, hex);
+                    (unsigned)seq++, (unsigned)now_ms, direction, source ? source : "unknown",
+                    (unsigned)len, (unsigned)capture_len, (unsigned)dropped_bytes,
+                    (unsigned)suppressed, reason, hex);
+    maybe_log_stats(now_ms);
 }
 
 void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16_t len) {
@@ -59,6 +96,7 @@ void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_
     if (!changed && last_idle_in_sample_ms != 0 &&
         (uint32_t)(now - last_idle_in_sample_ms) < USB_PACKET_DEBUG_IDLE_SAMPLE_MS) {
         suppressed_idle_in_reports++;
+        total_suppressed_idle_in_reports++;
         return;
     }
 

@@ -914,8 +914,11 @@ async fn capture_one_pico(
         "{}\n".to_string()
     };
     let usb_packet_count = count_usb_packet_lines(&usb_packets_text);
+    let usb_packet_stats_count = count_usb_packet_stats_lines(&usb_packets_text);
     let usb_packet_status = if usb_packet_count > 0 {
         "captured"
+    } else if usb_packet_stats_count > 0 {
+        "stats_only"
     } else if seed.target.is_some() {
         "no_packets"
     } else {
@@ -926,7 +929,7 @@ async fn capture_one_pico(
         0,
         usb_packet_status,
         usb_packets_text.len(),
-        format!("count={usb_packet_count}"),
+        format!("count={usb_packet_count}; stats={usb_packet_stats_count}"),
     );
 
     PicoBundleCapture {
@@ -1033,7 +1036,7 @@ fn usb_packets_text_from_diag(uid: &str, diag_text: &str) -> String {
     let _ = writeln!(out);
     let mut count = 0usize;
     for line in diag_text.lines() {
-        if let Some(idx) = line.find("usb-packet ") {
+        if let Some(idx) = usb_packet_line_index(line) {
             out.push_str(&line[idx..]);
             out.push('\n');
             count += 1;
@@ -1054,6 +1057,17 @@ fn count_usb_packet_lines(text: &str) -> usize {
         .count()
 }
 
+fn count_usb_packet_stats_lines(text: &str) -> usize {
+    text.lines()
+        .filter(|line| line.starts_with("usb-packet-stats "))
+        .count()
+}
+
+fn usb_packet_line_index(line: &str) -> Option<usize> {
+    line.find("usb-packet ")
+        .or_else(|| line.find("usb-packet-stats "))
+}
+
 fn count_retained_debug_packet_lines(logs: &[RetainedDebugPacketLog]) -> usize {
     logs.iter()
         .flat_map(|log| log.text.lines())
@@ -1066,7 +1080,8 @@ fn aggregate_usb_packets(
     retained_logs: &[RetainedDebugPacketLog],
 ) -> String {
     let mut out = String::from("# Aggregate raw USB packet dump\n\n");
-    let mut total = 0usize;
+    let mut raw_total = 0usize;
+    let mut diagnostic_total = 0usize;
     for capture in captures {
         let count = capture.manifest.usb_packet_dump_count;
         let _ = writeln!(
@@ -1074,12 +1089,13 @@ fn aggregate_usb_packets(
             "## {} packets={} path={}/usb-packets.txt",
             capture.manifest.uid, count, capture.manifest.path
         );
-        if count > 0 {
-            for line in capture.usb_packets_text.lines() {
+        for line in capture.usb_packets_text.lines() {
+            if is_usb_packet_diagnostic_line(line) {
+                out.push_str(line);
+                out.push('\n');
+                diagnostic_total += 1;
                 if line.starts_with("usb-packet ") {
-                    out.push_str(line);
-                    out.push('\n');
-                    total += 1;
+                    raw_total += 1;
                 }
             }
         }
@@ -1090,19 +1106,30 @@ fn aggregate_usb_packets(
         for log in retained_logs {
             let _ = writeln!(out, "### debug-packets/{}", log.name);
             for line in log.text.lines() {
-                if line.starts_with("usb-packet ") {
+                if is_usb_packet_diagnostic_line(line) {
                     out.push_str(line);
                     out.push('\n');
-                    total += 1;
+                    diagnostic_total += 1;
+                    if line.starts_with("usb-packet ") {
+                        raw_total += 1;
+                    }
                 }
             }
             out.push('\n');
         }
     }
-    if total == 0 {
+    if diagnostic_total == 0 {
         out.push_str("No raw USB packets were captured in this bundle.\n");
+    } else if raw_total == 0 {
+        out.push_str(
+            "No raw USB packet payload lines were captured, but packet stats were present.\n",
+        );
     }
     out
+}
+
+fn is_usb_packet_diagnostic_line(line: &str) -> bool {
+    line.starts_with("usb-packet ") || line.starts_with("usb-packet-stats ")
 }
 
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
@@ -1200,8 +1227,8 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_usb_packets, count_usb_packet_lines, sanitize_path_component,
-        usb_packets_text_from_diag, RetainedDebugPacketLog,
+        aggregate_usb_packets, count_usb_packet_lines, count_usb_packet_stats_lines,
+        sanitize_path_component, usb_packets_text_from_diag, RetainedDebugPacketLog,
     };
 
     #[test]
@@ -1213,21 +1240,24 @@ mod tests {
 
     #[test]
     fn extracts_usb_packet_lines_from_diag_log() {
-        let diag = "[      10] boot\n[      11] usb-packet seq=0 dir=out len=3 data=010203\n";
+        let diag = "[      10] boot\n[      11] usb-packet seq=0 dir=out len=3 data=010203\n[      12] usb-packet-stats total=64 in=10 out=54\n";
         let out = usb_packets_text_from_diag("02E22DA9", diag);
         assert!(out.contains("usb-packet seq=0 dir=out len=3 data=010203"));
+        assert!(out.contains("usb-packet-stats total=64 in=10 out=54"));
         assert_eq!(count_usb_packet_lines(&out), 1);
+        assert_eq!(count_usb_packet_stats_lines(&out), 1);
     }
 
     #[test]
     fn aggregate_usb_packets_includes_retained_host_logs() {
         let retained = vec![RetainedDebugPacketLog {
             name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
-            text: "# header\nusb-packet seq=4 dir=out data=010203\n".to_string(),
+            text: "# header\nusb-packet seq=4 dir=out data=010203\nusb-packet-stats total=64 in=10 out=54\n".to_string(),
         }];
         let out = aggregate_usb_packets(&[], &retained);
         assert!(out.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
         assert!(out.contains("usb-packet seq=4 dir=out data=010203"));
+        assert!(out.contains("usb-packet-stats total=64 in=10 out=54"));
         assert!(!out.contains("No raw USB packets"));
     }
 }

@@ -129,7 +129,11 @@ fn prune_packet_files_in(dir: &Path, keep: usize) {
 pub(crate) fn extract_usb_packet_lines(diag_text: &str) -> Vec<String> {
     diag_text
         .lines()
-        .filter_map(|line| line.find("usb-packet ").map(|idx| line[idx..].to_string()))
+        .filter_map(|line| {
+            line.find("usb-packet ")
+                .or_else(|| line.find("usb-packet-stats "))
+                .map(|idx| line[idx..].to_string())
+        })
         .collect()
 }
 
@@ -241,13 +245,14 @@ mod tests {
 
     #[test]
     fn extracts_packet_lines_from_timestamped_diag() {
-        let text = "[  10] boot\n[  11] usb-packet seq=7 dir=out data=0102\nplain usb-packet seq=8 dir=in data=03\n[  12] usb-packet seq=9 dir=setup data=C020000000000040\n";
+        let text = "[  10] boot\n[  11] usb-packet seq=7 dir=out data=0102\nplain usb-packet seq=8 dir=in data=03\n[  12] usb-packet seq=9 dir=setup data=C020000000000040\n[  13] usb-packet-stats total=64 in=10 out=50\n";
         assert_eq!(
             extract_usb_packet_lines(text),
             vec![
                 "usb-packet seq=7 dir=out data=0102".to_string(),
                 "usb-packet seq=8 dir=in data=03".to_string(),
                 "usb-packet seq=9 dir=setup data=C020000000000040".to_string(),
+                "usb-packet-stats total=64 in=10 out=50".to_string(),
             ]
         );
     }
