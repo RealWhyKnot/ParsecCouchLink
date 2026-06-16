@@ -15,6 +15,7 @@
 
 static uint32_t seq;
 static uint32_t dropped_bytes;
+static uint32_t truncated_packet_lines;
 static uint32_t suppressed_idle_in_reports;
 static uint32_t total_suppressed_idle_in_reports;
 static uint32_t last_idle_in_sample_ms;
@@ -48,11 +49,11 @@ static void maybe_log_stats(uint32_t now_ms) {
         return;
     }
     diag_log_printf("usb-packet-stats t=%u total=%u in=%u out=%u setup=%u control_in=%u "
-                    "truncated_bytes=%u idle_in_suppressed=%u",
+                    "truncated_bytes=%u truncated_packets=%u idle_in_suppressed=%u",
                     (unsigned)now_ms, (unsigned)total_packet_lines, (unsigned)in_packet_lines,
                     (unsigned)out_packet_lines, (unsigned)setup_packet_lines,
                     (unsigned)control_in_packet_lines, (unsigned)dropped_bytes,
-                    (unsigned)total_suppressed_idle_in_reports);
+                    (unsigned)truncated_packet_lines, (unsigned)total_suppressed_idle_in_reports);
 }
 
 static void note_packet_extra(const char *direction, const char *source, uint8_t const *buffer,
@@ -62,8 +63,11 @@ static void note_packet_extra(const char *direction, const char *source, uint8_t
         return;
 
     uint16_t capture_len = len;
+    uint16_t truncated_len = 0;
     if (capture_len > USB_PACKET_DEBUG_MAX_BYTES) {
-        dropped_bytes += (uint32_t)(capture_len - USB_PACKET_DEBUG_MAX_BYTES);
+        truncated_len = (uint16_t)(capture_len - USB_PACKET_DEBUG_MAX_BYTES);
+        dropped_bytes += (uint32_t)truncated_len;
+        truncated_packet_lines++;
         capture_len = USB_PACKET_DEBUG_MAX_BYTES;
     }
 
@@ -77,11 +81,12 @@ static void note_packet_extra(const char *direction, const char *source, uint8_t
 
     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
     count_direction(direction);
-    diag_log_printf("usb-packet seq=%u t=%u dir=%s src=%s len=%u captured=%u dropped=%u "
-                    "suppressed=%u reason=%s %sdata=%s",
-                    (unsigned)seq++, (unsigned)now_ms, direction, source ? source : "unknown",
-                    (unsigned)len, (unsigned)capture_len, (unsigned)dropped_bytes,
-                    (unsigned)suppressed, reason, extra_fields ? extra_fields : "", hex);
+    diag_log_printf(
+        "usb-packet seq=%u t=%u dir=%s src=%s len=%u captured=%u truncated=%u dropped=%u "
+        "suppressed=%u reason=%s %sdata=%s",
+        (unsigned)seq++, (unsigned)now_ms, direction, source ? source : "unknown", (unsigned)len,
+        (unsigned)capture_len, (unsigned)truncated_len, (unsigned)dropped_bytes,
+        (unsigned)suppressed, reason, extra_fields ? extra_fields : "", hex);
     maybe_log_stats(now_ms);
 }
 

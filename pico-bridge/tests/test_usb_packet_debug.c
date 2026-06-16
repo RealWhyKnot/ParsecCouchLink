@@ -76,10 +76,12 @@ static void debug_out_packet_logs_hex_payload(void) {
     require_log_contains("dir=out");
     require_log_contains("src=vendor");
     require_log_contains("reason=host-out");
+    require_log_contains("truncated=0");
     require_log_contains("data=0102A0");
     require_log_contains("usb-packet-stats");
     require_log_contains("total=1");
     require_log_contains("out=1");
+    require_log_contains("truncated_packets=0");
 }
 
 static void debug_in_packets_keep_changed_and_summarize_idle_suppression(void) {
@@ -173,6 +175,21 @@ static void debug_hid_out_report_logs_report_metadata(void) {
     require_log_contains("data=050607");
 }
 
+static void debug_packet_logs_per_packet_truncation(void) {
+    uint8_t data[70];
+    for (unsigned i = 0; i < sizeof(data); i++)
+        data[i] = (uint8_t)i;
+
+    fake_ms = 1240;
+    reset_log();
+    usb_packet_debug_note_out("vendor", data, sizeof(data));
+    assert(line_count == 1);
+    require_log_contains("len=70");
+    require_log_contains("captured=64");
+    require_log_contains("truncated=6");
+    require_log_contains("dropped=6");
+}
+
 static void debug_packet_stats_repeat_periodically(void) {
     uint8_t data[] = {0x55};
     reset_log();
@@ -186,6 +203,7 @@ static void debug_packet_stats_repeat_periodically(void) {
     require_log_contains("out=57");
     require_log_contains("setup=3");
     require_log_contains("control_in=1");
+    require_log_contains("truncated_packets=1");
     require_log_contains("idle_in_suppressed=1");
 }
 
@@ -197,6 +215,7 @@ int main(void) {
     debug_control_in_logs_reply_payload();
     debug_hid_control_requests_log_setup_metadata();
     debug_hid_out_report_logs_report_metadata();
+    debug_packet_logs_per_packet_truncation();
     debug_packet_stats_repeat_periodically();
     puts("usb_packet_debug tests passed");
     return 0;

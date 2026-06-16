@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 13;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 14;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -180,7 +180,7 @@ pub(super) async fn build_manifest(
             "usb-hid-reports.txt extracts HID report ids and report types from HID OUT/FEATURE payloads and HID GET_REPORT/SET_REPORT setup requests.",
             "usb-packet-timeline.txt extracts packet, stats, and harvest records in timestamp order with per-source timing deltas.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
-            "debug-capture-evidence.json exposes the same debug capture gate and per-source evidence counts in machine-readable form.",
+            "debug-capture-evidence.json exposes the same debug capture gate, lossiness, and per-source evidence counts in machine-readable form.",
         ],
         redaction_policy: vec![
             "Wi-Fi passwords are not included.",

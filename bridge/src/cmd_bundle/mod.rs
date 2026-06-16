@@ -1421,6 +1421,7 @@ fn debug_capture_verdict_text(
 ) -> String {
     let status = debug_capture_overall_status(summary, captures, retained_logs);
     let evidence_grade = debug_capture_evidence_grade(summary);
+    let capture_quality = debug_capture_quality(summary);
     let (gate, gate_reason) = debug_capture_gate(summary);
     let endpoint_in_lines = debug_summary_direction_count(summary, "in");
     let endpoint_out_lines = debug_summary_direction_count(summary, "out");
@@ -1434,6 +1435,7 @@ fn debug_capture_verdict_text(
     let mut out = String::from("Debug input packet capture verdict\n\n");
     let _ = writeln!(out, "overall_status={status}");
     let _ = writeln!(out, "evidence_grade={evidence_grade}");
+    let _ = writeln!(out, "capture_quality={capture_quality}");
     let _ = writeln!(out, "adapter_reverse_engineering_gate={gate}");
     let _ = writeln!(out, "gate_reason={gate_reason}");
     let _ = writeln!(out, "raw_packet_lines={}", summary.aggregate.packet_lines);
@@ -1474,6 +1476,31 @@ fn debug_capture_verdict_text(
         "max_harvest_diag_bytes={}",
         summary.aggregate.max_harvest_diag_bytes.unwrap_or(0)
     );
+    let _ = writeln!(
+        out,
+        "truncated_packet_lines={}",
+        summary.aggregate.truncated_packet_lines
+    );
+    let _ = writeln!(
+        out,
+        "max_packet_truncated_bytes={}",
+        summary.aggregate.max_packet_truncated_bytes.unwrap_or(0)
+    );
+    let _ = writeln!(
+        out,
+        "max_stats_truncated_packets={}",
+        summary.aggregate.max_stats_truncated_packets.unwrap_or(0)
+    );
+    let _ = writeln!(
+        out,
+        "max_stats_truncated_bytes={}",
+        summary.aggregate.max_stats_truncated_bytes.unwrap_or(0)
+    );
+    let _ = writeln!(
+        out,
+        "max_harvest_lost_bytes={}",
+        summary.aggregate.max_harvest_lost_bytes.unwrap_or(0)
+    );
     let _ = writeln!(out, "endpoint_in_lines={endpoint_in_lines}");
     let _ = writeln!(out, "endpoint_out_lines={endpoint_out_lines}");
     let _ = writeln!(out, "setup_lines={setup_lines}");
@@ -1501,6 +1528,7 @@ fn debug_capture_verdict_text(
 
     out.push_str("minimum_evidence=\n");
     out.push_str("- raw_packet_lines > 0 is required before this bundle is enough for adapter reverse engineering.\n");
+    out.push_str("- capture_quality=lossless_observed means bundled packet payloads and harvest chunks did not report truncation or ring loss.\n");
     out.push_str("- setup_lines or control_in_lines > 0 is preferred for enumeration/control-transfer failures.\n");
     out.push_str("- hid_report_lines > 0 is useful for HID-class adapter report analysis.\n");
     out.push_str(
@@ -1560,6 +1588,11 @@ fn debug_capture_verdict_text(
         out.push_str(
             "- Use usb-packets.jsonl for scripts, usb-packet-timeline.txt for timing, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, and harvest health totals.\n",
         );
+        if debug_capture_has_loss(summary) {
+            out.push_str(
+                "- Reproduce with debug input mode running longer before bundle if capture_quality is lossy; truncated packet payloads or lost diag-ring bytes may hide adapter details.\n",
+            );
+        }
     }
     let _ = writeln!(out);
 
@@ -1597,7 +1630,7 @@ fn debug_capture_verdict_text(
             let log_summary = summarize_text(&log.text);
             let _ = writeln!(
                 out,
-                "- path=debug-packets/{} raw_packets={} stats={} hid_reports={} max_gap_ms={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_diag_bytes={}",
+                "- path=debug-packets/{} raw_packets={} stats={} hid_reports={} max_gap_ms={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_lost_bytes={} truncated_packets={} max_packet_truncated_bytes={} max_diag_bytes={}",
                 log.name,
                 log_summary.packet_lines,
                 log_summary.stats_lines,
@@ -1607,6 +1640,9 @@ fn debug_capture_verdict_text(
                 format_count_map(&log_summary.harvest_statuses),
                 format_count_map(&log_summary.harvest_chunk_statuses),
                 log_summary.max_harvest_missing_chunks.unwrap_or(0),
+                log_summary.max_harvest_lost_bytes.unwrap_or(0),
+                log_summary.truncated_packet_lines,
+                log_summary.max_packet_truncated_bytes.unwrap_or(0),
                 log_summary.max_harvest_diag_bytes.unwrap_or(0)
             );
         }
@@ -1620,6 +1656,7 @@ struct DebugCaptureEvidenceReport {
     artifact_schema_version: u8,
     overall_status: &'static str,
     evidence_grade: &'static str,
+    capture_quality: &'static str,
     adapter_reverse_engineering_gate: &'static str,
     gate_reason: &'static str,
     missing_evidence: Vec<&'static str>,
@@ -1657,6 +1694,7 @@ fn debug_capture_evidence_report_json(
 ) -> Result<String> {
     let status = debug_capture_overall_status(summary, captures, retained_logs);
     let evidence_grade = debug_capture_evidence_grade(summary);
+    let capture_quality = debug_capture_quality(summary);
     let (gate, gate_reason) = debug_capture_gate(summary);
     let debug_persona_captures = captures
         .iter()
@@ -1707,9 +1745,10 @@ fn debug_capture_evidence_report_json(
         })
         .collect();
     let report = DebugCaptureEvidenceReport {
-        artifact_schema_version: 1,
+        artifact_schema_version: 2,
         overall_status: status,
         evidence_grade,
+        capture_quality,
         adapter_reverse_engineering_gate: gate,
         gate_reason,
         missing_evidence,
@@ -1719,6 +1758,7 @@ fn debug_capture_evidence_report_json(
         notes: vec![
             "This file is machine-readable evidence for debug input packet capture quality.",
             "adapter_reverse_engineering_gate=pass requires raw debug input packet payload lines.",
+            "capture_quality is lossy when packet payloads are truncated or GET_LOG harvests report lost bytes or missing chunks.",
             "Per-source summary counts are calculated independently; aggregate sequence gaps are summed per source.",
             "Raw packet dumps are only present when the Pico was intentionally switched into debug input mode.",
         ],
@@ -1751,6 +1791,9 @@ fn debug_capture_source_missing_evidence(
     if summary.packet_lines == 0 && summary.stats_lines == 0 && summary.harvest_lines == 0 {
         lines.push("debug packet stats or harvest records from this source");
     }
+    if debug_capture_summary_has_loss(summary) {
+        lines.push("lossless packet payload and harvest capture from this source");
+    }
     if lines.is_empty() {
         lines.push("none");
     }
@@ -1776,7 +1819,14 @@ fn debug_capture_evidence_grade(summary: &UsbPacketBundleSummary) -> &'static st
 
 fn debug_capture_gate(summary: &UsbPacketBundleSummary) -> (&'static str, &'static str) {
     if summary.aggregate.packet_lines > 0 {
-        ("pass", "raw debug input packet payload lines are present")
+        if debug_capture_has_loss(summary) {
+            (
+                "pass",
+                "raw debug input packet payload lines are present, but capture is lossy",
+            )
+        } else {
+            ("pass", "raw debug input packet payload lines are present")
+        }
     } else {
         ("fail", "raw debug input packet payload lines are missing")
     }
@@ -1811,6 +1861,9 @@ fn debug_capture_missing_evidence_lines(
     {
         lines.push("retained host harvest logs proving stream-time capture ran");
     }
+    if debug_capture_has_loss(summary) {
+        lines.push("lossless packet payload and harvest capture");
+    }
     if captures.is_empty() && retained_logs.is_empty() {
         lines.push("live, cached, or retained Pico evidence");
     }
@@ -1827,6 +1880,29 @@ fn debug_summary_direction_count(summary: &UsbPacketBundleSummary, direction: &s
         .get(direction)
         .copied()
         .unwrap_or(0)
+}
+
+fn debug_capture_quality(summary: &UsbPacketBundleSummary) -> &'static str {
+    if summary.aggregate.packet_lines == 0 {
+        "no_packet_payloads"
+    } else if debug_capture_has_loss(summary) {
+        "lossy"
+    } else {
+        "lossless_observed"
+    }
+}
+
+fn debug_capture_has_loss(summary: &UsbPacketBundleSummary) -> bool {
+    debug_capture_summary_has_loss(&summary.aggregate)
+}
+
+fn debug_capture_summary_has_loss(summary: &UsbPacketSummary) -> bool {
+    summary.truncated_packet_lines > 0
+        || summary.max_packet_truncated_bytes.unwrap_or(0) > 0
+        || summary.max_stats_truncated_packets.unwrap_or(0) > 0
+        || summary.max_stats_truncated_bytes.unwrap_or(0) > 0
+        || summary.max_harvest_lost_bytes.unwrap_or(0) > 0
+        || summary.max_harvest_missing_chunks.unwrap_or(0) > 0
 }
 
 fn debug_capture_overall_status(
@@ -2091,6 +2167,7 @@ mod tests {
         let text = debug_capture_verdict_text(&[capture], &[], &summary);
         assert!(text.contains("overall_status=raw_packets_captured"));
         assert!(text.contains("evidence_grade=usable_raw_packets"));
+        assert!(text.contains("capture_quality=lossless_observed"));
         assert!(text.contains("adapter_reverse_engineering_gate=pass"));
         assert!(text.contains("endpoint_out_lines=1"));
         assert!(text.contains("debug_persona_captures=1"));
@@ -2116,6 +2193,7 @@ mod tests {
         let summary = summarize_sources(&per_pico, &[]);
         let text = debug_capture_verdict_text(&[capture], &[], &summary);
         assert!(text.contains("evidence_grade=complete"));
+        assert!(text.contains("capture_quality=lossless_observed"));
         assert!(text.contains("adapter_reverse_engineering_gate=pass"));
         assert!(text.contains("setup_lines=1"));
         assert!(text.contains("endpoint_out_lines=1"));
@@ -2180,15 +2258,53 @@ mod tests {
         let summary = summarize_sources(&per_pico, &[]);
         let json = debug_capture_evidence_report_json(&[capture], &[], &summary).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["artifact_schema_version"], 1);
+        assert_eq!(value["artifact_schema_version"], 2);
         assert_eq!(value["adapter_reverse_engineering_gate"], "pass");
         assert_eq!(value["evidence_grade"], "complete");
+        assert_eq!(value["capture_quality"], "lossless_observed");
         assert_eq!(value["aggregate"]["packet_lines"], 2);
         assert_eq!(value["aggregate"]["hid_report_lines"], 1);
         assert_eq!(value["aggregate"]["max_inter_packet_gap_ms"], 25);
         assert_eq!(value["per_pico"][0]["uid"], "02E22DA9");
         assert_eq!(value["per_pico"][0]["persona"], "debug");
         assert_eq!(value["per_pico"][0]["missing_evidence"][0], "none");
+    }
+
+    #[test]
+    fn debug_capture_evidence_marks_lossy_packet_capture() {
+        let capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"debug\"}\n",
+            "usb-packet seq=1 t=10 dir=out len=70 captured=64 truncated=6 dropped=6 reason=host-out data=000102\nusb-packet-stats t=11 total=1 out=1 truncated_bytes=6 truncated_packets=1 idle_in_suppressed=0\n# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":2,\"expected_chunks\":3,\"missing_chunk_count\":1,\"got_last\":true,\"chunk_complete\":false,\"lost_bytes\":8,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":1,\"raw_packet_lines\":1,\"stats_lines\":1,\"new_lines\":1,\"duplicate_lines\":0,\"total_packet_lines\":1}\n",
+        );
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: &capture.usb_packets_text,
+        }];
+        let summary = summarize_sources(&per_pico, &[]);
+        let text = debug_capture_verdict_text(std::slice::from_ref(&capture), &[], &summary);
+        assert!(text.contains("capture_quality=lossy"));
+        assert!(text.contains(
+            "gate_reason=raw debug input packet payload lines are present, but capture is lossy"
+        ));
+        assert!(text.contains("truncated_packet_lines=1"));
+        assert!(text.contains("max_packet_truncated_bytes=6"));
+        assert!(text.contains("max_harvest_lost_bytes=8"));
+        assert!(text.contains("- lossless packet payload and harvest capture"));
+
+        let json = debug_capture_evidence_report_json(&[capture], &[], &summary).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["capture_quality"], "lossy");
+        assert_eq!(value["aggregate"]["truncated_packet_lines"], 1);
+        assert_eq!(value["aggregate"]["max_packet_truncated_bytes"], 6);
+        assert_eq!(value["aggregate"]["max_harvest_lost_bytes"], 8);
+        assert!(value["missing_evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry == "lossless packet payload and harvest capture"));
     }
 
     #[test]

@@ -28,11 +28,14 @@ pub(super) struct UsbPacketSummary {
     pub out_of_order_sequence_lines: u64,
     pub max_reported_packet_len: Option<u64>,
     pub max_captured_len: Option<u64>,
+    pub truncated_packet_lines: u64,
+    pub max_packet_truncated_bytes: Option<u64>,
     pub max_truncated_bytes: Option<u64>,
     pub max_suppressed_idle_reports: Option<u64>,
     pub last_stats_total_packets: Option<u64>,
     pub max_stats_total_packets: Option<u64>,
     pub max_stats_truncated_bytes: Option<u64>,
+    pub max_stats_truncated_packets: Option<u64>,
     pub max_stats_idle_in_suppressed: Option<u64>,
     pub stats_direction_max: BTreeMap<String, u64>,
     pub first_packet_t_ms: Option<u64>,
@@ -95,6 +98,7 @@ pub(super) enum UsbPacketRecord {
         setup: Option<u64>,
         control_in: Option<u64>,
         truncated_bytes: Option<u64>,
+        truncated_packets: Option<u64>,
         idle_in_suppressed: Option<u64>,
         raw_line: String,
     },
@@ -137,6 +141,7 @@ pub(super) struct UsbPacketRecordPacket {
     reason: Option<String>,
     reported_len: Option<u64>,
     captured_len: Option<u64>,
+    packet_truncated_bytes: Option<u64>,
     truncated_bytes_total: Option<u64>,
     suppressed_idle_reports: Option<u64>,
     setup_bm_request_type: Option<u64>,
@@ -389,7 +394,7 @@ pub(super) fn summarize_sources(
         .collect();
 
     UsbPacketBundleSummary {
-        artifact_schema_version: 4,
+        artifact_schema_version: 5,
         aggregate,
         per_pico,
         retained_logs,
@@ -398,6 +403,7 @@ pub(super) fn summarize_sources(
             "Aggregate sequence gaps are summed per source; sequence numbers are not compared across different Pico/log sources.",
             "Packet timing fields are derived from firmware t= milliseconds and gap calculations are per source.",
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
+            "Packet summaries separate per-packet truncation from cumulative firmware truncated_bytes so lossy captures are visible.",
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
             "Packet records decode USB setup direction, type, recipient, standard/class requests, descriptor types, and known CouchLink vendor requests.",
             "Packet records expose HID report id/type metadata from HID OUT/FEATURE lines and HID GET_REPORT/SET_REPORT setup requests.",
@@ -436,6 +442,7 @@ fn record_from_line(
             reason: cloned_field(fields.get("reason")),
             reported_len: parsed_u64(fields.get("len")),
             captured_len: parsed_u64(fields.get("captured")),
+            packet_truncated_bytes: parsed_u64(fields.get("truncated")),
             truncated_bytes_total: parsed_u64(fields.get("dropped")),
             suppressed_idle_reports: parsed_u64(fields.get("suppressed")),
             setup_bm_request_type: parsed_u64(fields.get("bm")),
@@ -486,6 +493,7 @@ fn record_from_line(
             setup: parsed_u64(fields.get("setup")),
             control_in: parsed_u64(fields.get("control_in")),
             truncated_bytes: parsed_u64(fields.get("truncated_bytes")),
+            truncated_packets: parsed_u64(fields.get("truncated_packets")),
             idle_in_suppressed: parsed_u64(fields.get("idle_in_suppressed")),
             raw_line: line.to_string(),
         });
@@ -576,7 +584,7 @@ fn packet_timeline_row(
         let t_ms = parsed_u64(fields.get("t"));
         let dt_ms = timeline_delta(t_ms, previous_t_ms);
         return Some(format!(
-            "packet line={} seq={} t={} dt_ms={} dir={} src={} reason={} len={} captured={} dropped={} suppressed={} data={}",
+            "packet line={} seq={} t={} dt_ms={} dir={} src={} reason={} len={} captured={} truncated={} dropped={} suppressed={} data={}",
             line_number,
             display_field(fields.get("seq")),
             display_field(fields.get("t")),
@@ -586,6 +594,7 @@ fn packet_timeline_row(
             display_field(fields.get("reason")),
             display_field(fields.get("len")),
             display_field(fields.get("captured")),
+            display_field(fields.get("truncated")),
             display_field(fields.get("dropped")),
             display_field(fields.get("suppressed")),
             display_field(fields.get("data")),
@@ -596,7 +605,7 @@ fn packet_timeline_row(
         let t_ms = parsed_u64(fields.get("t"));
         let dt_ms = timeline_delta(t_ms, previous_t_ms);
         return Some(format!(
-            "stats line={} t={} dt_ms={} total={} in={} out={} setup={} control_in={} truncated_bytes={} idle_in_suppressed={}",
+            "stats line={} t={} dt_ms={} total={} in={} out={} setup={} control_in={} truncated_bytes={} truncated_packets={} idle_in_suppressed={}",
             line_number,
             display_field(fields.get("t")),
             dt_ms,
@@ -606,6 +615,7 @@ fn packet_timeline_row(
             display_field(fields.get("setup")),
             display_field(fields.get("control_in")),
             display_field(fields.get("truncated_bytes")),
+            display_field(fields.get("truncated_packets")),
             display_field(fields.get("idle_in_suppressed")),
         ));
     }
@@ -1162,6 +1172,21 @@ impl UsbPacketSummary {
             &mut self.max_captured_len,
             parsed_u64(fields.get("captured")),
         );
+        if let Some(truncated) = parsed_u64(fields.get("truncated")) {
+            if truncated > 0 {
+                self.truncated_packet_lines += 1;
+            }
+            max_assign(&mut self.max_packet_truncated_bytes, Some(truncated));
+        } else if let (Some(reported), Some(captured)) = (
+            parsed_u64(fields.get("len")),
+            parsed_u64(fields.get("captured")),
+        ) {
+            let truncated = reported.saturating_sub(captured);
+            if truncated > 0 {
+                self.truncated_packet_lines += 1;
+                max_assign(&mut self.max_packet_truncated_bytes, Some(truncated));
+            }
+        }
         max_assign(
             &mut self.max_truncated_bytes,
             parsed_u64(fields.get("dropped")),
@@ -1227,6 +1252,10 @@ impl UsbPacketSummary {
         max_assign(
             &mut self.max_stats_truncated_bytes,
             parsed_u64(fields.get("truncated_bytes")),
+        );
+        max_assign(
+            &mut self.max_stats_truncated_packets,
+            parsed_u64(fields.get("truncated_packets")),
         );
         max_assign(
             &mut self.max_stats_idle_in_suppressed,
@@ -1341,6 +1370,11 @@ impl UsbPacketSummary {
             other.max_reported_packet_len,
         );
         max_assign(&mut self.max_captured_len, other.max_captured_len);
+        self.truncated_packet_lines += other.truncated_packet_lines;
+        max_assign(
+            &mut self.max_packet_truncated_bytes,
+            other.max_packet_truncated_bytes,
+        );
         max_assign(&mut self.max_truncated_bytes, other.max_truncated_bytes);
         max_assign(
             &mut self.max_suppressed_idle_reports,
@@ -1356,6 +1390,10 @@ impl UsbPacketSummary {
         max_assign(
             &mut self.max_stats_truncated_bytes,
             other.max_stats_truncated_bytes,
+        );
+        max_assign(
+            &mut self.max_stats_truncated_packets,
+            other.max_stats_truncated_packets,
         );
         max_assign(
             &mut self.max_stats_idle_in_suppressed,
@@ -1526,8 +1564,8 @@ mod tests {
 usb-packet seq=1 t=10 dir=out src=vendor len=3 captured=3 dropped=0 suppressed=0 reason=host-out data=010203
 usb-packet seq=3 t=11 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=2 reason=changed data=00
 usb-packet seq=3 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=0 reason=changed data=00
-usb-packet seq=2 t=13 dir=setup src=vendor-control len=8 captured=8 dropped=4 suppressed=0 reason=control-setup data=C0
-usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4 idle_in_suppressed=9
+usb-packet seq=2 t=13 dir=setup src=vendor-control len=10 captured=8 truncated=2 dropped=4 suppressed=0 reason=control-setup data=C0
+usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4 truncated_packets=1 idle_in_suppressed=9
 ";
         let summary = summarize_text(text);
         assert_eq!(summary.packet_lines, 4);
@@ -1544,9 +1582,12 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         assert_eq!(summary.out_of_order_sequence_lines, 1);
         assert_eq!(summary.max_reported_packet_len, Some(20));
         assert_eq!(summary.max_captured_len, Some(20));
+        assert_eq!(summary.truncated_packet_lines, 1);
+        assert_eq!(summary.max_packet_truncated_bytes, Some(2));
         assert_eq!(summary.max_truncated_bytes, Some(4));
         assert_eq!(summary.max_suppressed_idle_reports, Some(2));
         assert_eq!(summary.last_stats_total_packets, Some(64));
+        assert_eq!(summary.max_stats_truncated_packets, Some(1));
         assert_eq!(summary.max_stats_idle_in_suppressed, Some(9));
         assert_eq!(summary.stats_direction_max["setup"], 1);
         assert_eq!(summary.first_packet_t_ms, Some(10));
@@ -1597,10 +1638,10 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         let retained = [UsbPacketSummarySource {
             label: "usb-packets.log".to_string(),
             path: "debug-packets/usb-packets.log".to_string(),
-            text: "usb-packet-stats total=64 out=2 truncated_bytes=0 idle_in_suppressed=0\n",
+            text: "usb-packet-stats total=64 out=2 truncated_bytes=0 truncated_packets=0 idle_in_suppressed=0\n",
         }];
         let summary = summarize_sources(&per_pico, &retained);
-        assert_eq!(summary.artifact_schema_version, 4);
+        assert_eq!(summary.artifact_schema_version, 5);
         assert_eq!(summary.aggregate.packet_lines, 2);
         assert_eq!(summary.aggregate.stats_lines, 1);
         assert_eq!(summary.aggregate.missing_sequence_numbers, 1);
@@ -1614,17 +1655,20 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
     #[test]
     fn packet_timeline_keeps_packets_stats_harvest_and_deltas() {
         let text = "\
-usb-packet seq=7 t=10 dir=out src=vendor len=3 captured=3 dropped=0 suppressed=0 reason=host-out data=010203
+usb-packet seq=7 t=10 dir=out src=vendor len=3 captured=3 truncated=0 dropped=0 suppressed=0 reason=host-out data=010203
 usb-packet seq=8 t=15 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup data=C020
-usb-packet-stats t=40 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
+usb-packet-stats t=40 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9
 # harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_complete\":true,\"packet_lines\":8,\"raw_packet_lines\":6,\"new_lines\":2}
 usb-packet seq=9 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=0 reason=changed data=00
 ";
         let out = packet_timeline_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
         assert!(out.contains("# USB packet timeline"));
         assert!(out.contains("packet line=1 seq=7 t=10 dt_ms=- dir=out src=vendor"));
+        assert!(out.contains("truncated=0 dropped=0 suppressed=0"));
         assert!(out.contains("packet line=2 seq=8 t=15 dt_ms=5 dir=setup"));
-        assert!(out.contains("stats line=3 t=40 dt_ms=25 total=64"));
+        assert!(out.contains(
+            "stats line=3 t=40 dt_ms=25 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9"
+        ));
         assert!(out.contains("harvest line=4 at=2026-06-15T22:30:00-05:00 status=ok duration_ms=14 chunk_complete=true packet_lines=8 raw_packet_lines=6 new_lines=2 error=-"));
         assert!(out.contains("packet line=5 seq=9 t=12 dt_ms=regression dir=in"));
 
@@ -1658,7 +1702,7 @@ usb-packet seq=7 t=10 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-
 usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
 usb-packet seq=9 t=12 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
 usb-packet seq=10 t=13 dir=setup src=standard-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0x80 req=0x06 value=0x0301 index=0x0409 wlen=255 data=800601030904FF00
-usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
+usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9
 ";
         let out =
             control_transfers_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
@@ -1755,10 +1799,10 @@ usb-packet seq=3 t=12 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 r
     #[test]
     fn records_jsonl_normalizes_packet_and_stats_lines() {
         let text = "\
-usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
+usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 truncated=0 dropped=0 suppressed=0 reason=control-reply data=12010002
 usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
-usb-packet seq=9 t=12 dir=out src=hid-output len=3 captured=3 dropped=0 suppressed=0 reason=host-out report_id=0x01 report_type=2 data=050607
-usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
+usb-packet seq=9 t=12 dir=out src=hid-output len=3 captured=3 truncated=0 dropped=0 suppressed=0 reason=host-out report_id=0x01 report_type=2 data=050607
+usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9
 # harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":3,\"missing_chunk_count\":0,\"duplicate_chunk_count\":1,\"got_last\":true,\"chunk_complete\":true,\"lost_bytes\":4,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
 ";
         let jsonl =
@@ -1773,6 +1817,7 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[0]["line_number"], 1);
         assert_eq!(records[0]["seq"], 7);
         assert_eq!(records[0]["direction"], "control-in");
+        assert_eq!(records[0]["packet_truncated_bytes"], 0);
         assert_eq!(records[0]["control_payload_kind"], "usb_descriptor");
         assert_eq!(records[0]["control_descriptor_type"], "device");
         assert_eq!(
@@ -1804,6 +1849,7 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[3]["kind"], "stats");
         assert_eq!(records[3]["total"], 64);
         assert_eq!(records[3]["in"], 4);
+        assert_eq!(records[3]["truncated_packets"], 1);
         assert_eq!(records[3]["idle_in_suppressed"], 9);
         assert_eq!(records[4]["kind"], "harvest");
         assert_eq!(records[4]["status"], "ok");
