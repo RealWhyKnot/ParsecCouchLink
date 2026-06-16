@@ -1274,6 +1274,26 @@ fn debug_capture_verdict_text(
     let _ = writeln!(out, "raw_packet_lines={}", summary.aggregate.packet_lines);
     let _ = writeln!(out, "packet_stats_lines={}", summary.aggregate.stats_lines);
     let _ = writeln!(out, "harvest_lines={}", summary.aggregate.harvest_lines);
+    let _ = writeln!(
+        out,
+        "harvest_chunk_statuses={}",
+        format_count_map(&summary.aggregate.harvest_chunk_statuses)
+    );
+    let _ = writeln!(
+        out,
+        "max_harvest_missing_chunks={}",
+        summary.aggregate.max_harvest_missing_chunks.unwrap_or(0)
+    );
+    let _ = writeln!(
+        out,
+        "max_harvest_duplicate_chunks={}",
+        summary.aggregate.max_harvest_duplicate_chunks.unwrap_or(0)
+    );
+    let _ = writeln!(
+        out,
+        "max_harvest_diag_bytes={}",
+        summary.aggregate.max_harvest_diag_bytes.unwrap_or(0)
+    );
     let _ = writeln!(out, "endpoint_in_lines={endpoint_in_lines}");
     let _ = writeln!(out, "endpoint_out_lines={endpoint_out_lines}");
     let _ = writeln!(out, "setup_lines={setup_lines}");
@@ -1385,12 +1405,15 @@ fn debug_capture_verdict_text(
             let log_summary = summarize_text(&log.text);
             let _ = writeln!(
                 out,
-                "- path=debug-packets/{} raw_packets={} stats={} harvest_lines={} harvest_statuses={}",
+                "- path=debug-packets/{} raw_packets={} stats={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_diag_bytes={}",
                 log.name,
                 log_summary.packet_lines,
                 log_summary.stats_lines,
                 log_summary.harvest_lines,
-                format_count_map(&log_summary.harvest_statuses)
+                format_count_map(&log_summary.harvest_statuses),
+                format_count_map(&log_summary.harvest_chunk_statuses),
+                log_summary.max_harvest_missing_chunks.unwrap_or(0),
+                log_summary.max_harvest_diag_bytes.unwrap_or(0)
             );
         }
     }
@@ -1656,7 +1679,7 @@ mod tests {
     fn aggregate_usb_packets_explains_harvest_without_payloads() {
         let retained = vec![RetainedDebugPacketLog {
             name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
-            text: "# harvest {\"status\":\"error\",\"duration_ms\":1200,\"error\":\"no log chunks received\"}\n"
+            text: "# harvest {\"status\":\"error\",\"duration_ms\":1200,\"missing_chunk_count\":2,\"duplicate_chunk_count\":1,\"diag_bytes\":64,\"chunk_complete\":false,\"error\":\"no log chunks received\"}\n"
                 .to_string(),
         }];
         let out = aggregate_usb_packets(&[], &retained);
@@ -1724,7 +1747,7 @@ mod tests {
     fn debug_capture_verdict_identifies_harvest_without_packets() {
         let retained = vec![RetainedDebugPacketLog {
             name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
-            text: "# harvest {\"status\":\"error\",\"duration_ms\":1200,\"error\":\"no log chunks received\"}\n"
+            text: "# harvest {\"status\":\"error\",\"duration_ms\":1200,\"missing_chunk_count\":2,\"duplicate_chunk_count\":1,\"diag_bytes\":64,\"chunk_complete\":false,\"error\":\"no log chunks received\"}\n"
                 .to_string(),
         }];
         let retained_sources = [UsbPacketSummarySource {
@@ -1743,6 +1766,10 @@ mod tests {
         assert!(text.contains("evidence_grade=partial_no_payloads"));
         assert!(text.contains("adapter_reverse_engineering_gate=fail"));
         assert!(text.contains("gate_reason=raw debug input packet payload lines are missing"));
+        assert!(text.contains("harvest_chunk_statuses=incomplete:1"));
+        assert!(text.contains("max_harvest_missing_chunks=2"));
+        assert!(text.contains("max_harvest_duplicate_chunks=1"));
+        assert!(text.contains("max_harvest_diag_bytes=64"));
         assert!(text.contains("- raw USB packet payload lines from debug input mode"));
         assert!(text.contains("harvest_statuses=error:1"));
         assert!(text.contains("GET_LOG failures"));

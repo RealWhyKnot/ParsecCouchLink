@@ -40,8 +40,17 @@ pub(super) struct UsbPacketSummary {
     pub max_harvest_duration_ms: Option<u64>,
     pub max_harvest_lost_bytes: Option<u64>,
     pub max_harvest_chunk_count: Option<u64>,
+    pub max_harvest_expected_chunks: Option<u64>,
+    pub max_harvest_missing_chunks: Option<u64>,
+    pub max_harvest_duplicate_chunks: Option<u64>,
+    pub max_harvest_diag_bytes: Option<u64>,
+    pub max_harvest_diag_lines: Option<u64>,
     pub max_harvest_packet_lines: Option<u64>,
+    pub max_harvest_raw_packet_lines: Option<u64>,
+    pub max_harvest_stats_lines: Option<u64>,
     pub max_harvest_new_lines: Option<u64>,
+    pub max_harvest_duplicate_lines: Option<u64>,
+    pub harvest_chunk_statuses: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -87,9 +96,19 @@ pub(super) enum UsbPacketRecord {
         status: Option<String>,
         duration_ms: Option<u64>,
         chunk_count: Option<u64>,
+        expected_chunks: Option<u64>,
+        missing_chunk_count: Option<u64>,
+        duplicate_chunk_count: Option<u64>,
+        got_last: Option<bool>,
+        chunk_complete: Option<bool>,
         lost_bytes: Option<u64>,
+        diag_bytes: Option<u64>,
+        diag_lines: Option<u64>,
         packet_lines: Option<u64>,
+        raw_packet_lines: Option<u64>,
+        stats_lines: Option<u64>,
         new_lines: Option<u64>,
+        duplicate_lines: Option<u64>,
         total_packet_lines: Option<u64>,
         error: Option<String>,
         raw_line: String,
@@ -253,7 +272,7 @@ pub(super) fn summarize_sources(
         .collect();
 
     UsbPacketBundleSummary {
-        artifact_schema_version: 3,
+        artifact_schema_version: 4,
         aggregate,
         per_pico,
         retained_logs,
@@ -264,6 +283,7 @@ pub(super) fn summarize_sources(
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
             "Packet records decode USB setup direction, type, recipient, standard/class requests, descriptor types, and known CouchLink vendor requests.",
             "Control-IN packet records identify descriptor replies, MS OS descriptor payloads, and setup-mode diag-log payloads when the captured bytes are sufficient.",
+            "Harvest metadata records GET_LOG chunk completeness, missing/duplicate chunks, returned diag bytes, and duplicate packet lines.",
         ],
     }
 }
@@ -362,15 +382,45 @@ fn record_from_line(
             chunk_count: value
                 .as_ref()
                 .and_then(|value| json_u64(value, "chunk_count")),
+            expected_chunks: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "expected_chunks")),
+            missing_chunk_count: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "missing_chunk_count")),
+            duplicate_chunk_count: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "duplicate_chunk_count")),
+            got_last: value
+                .as_ref()
+                .and_then(|value| json_bool(value, "got_last")),
+            chunk_complete: value
+                .as_ref()
+                .and_then(|value| json_bool(value, "chunk_complete")),
             lost_bytes: value
                 .as_ref()
                 .and_then(|value| json_u64(value, "lost_bytes")),
+            diag_bytes: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "diag_bytes")),
+            diag_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "diag_lines")),
             packet_lines: value
                 .as_ref()
                 .and_then(|value| json_u64(value, "packet_lines")),
+            raw_packet_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "raw_packet_lines")),
+            stats_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "stats_lines")),
             new_lines: value
                 .as_ref()
                 .and_then(|value| json_u64(value, "new_lines")),
+            duplicate_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "duplicate_lines")),
             total_packet_lines: value
                 .as_ref()
                 .and_then(|value| json_u64(value, "total_packet_lines")),
@@ -836,13 +886,55 @@ impl UsbPacketSummary {
             json_u64(&value, "chunk_count"),
         );
         max_assign(
+            &mut self.max_harvest_expected_chunks,
+            json_u64(&value, "expected_chunks"),
+        );
+        max_assign(
+            &mut self.max_harvest_missing_chunks,
+            json_u64(&value, "missing_chunk_count"),
+        );
+        max_assign(
+            &mut self.max_harvest_duplicate_chunks,
+            json_u64(&value, "duplicate_chunk_count"),
+        );
+        max_assign(
+            &mut self.max_harvest_diag_bytes,
+            json_u64(&value, "diag_bytes"),
+        );
+        max_assign(
+            &mut self.max_harvest_diag_lines,
+            json_u64(&value, "diag_lines"),
+        );
+        max_assign(
             &mut self.max_harvest_packet_lines,
             json_u64(&value, "packet_lines"),
+        );
+        max_assign(
+            &mut self.max_harvest_raw_packet_lines,
+            json_u64(&value, "raw_packet_lines"),
+        );
+        max_assign(
+            &mut self.max_harvest_stats_lines,
+            json_u64(&value, "stats_lines"),
         );
         max_assign(
             &mut self.max_harvest_new_lines,
             json_u64(&value, "new_lines"),
         );
+        max_assign(
+            &mut self.max_harvest_duplicate_lines,
+            json_u64(&value, "duplicate_lines"),
+        );
+        if let Some(chunk_complete) = json_bool(&value, "chunk_complete") {
+            bump(
+                &mut self.harvest_chunk_statuses,
+                if chunk_complete {
+                    "complete"
+                } else {
+                    "incomplete"
+                },
+            );
+        }
     }
 
     fn merge_from(&mut self, other: &UsbPacketSummary) {
@@ -908,10 +1000,46 @@ impl UsbPacketSummary {
             other.max_harvest_chunk_count,
         );
         max_assign(
+            &mut self.max_harvest_expected_chunks,
+            other.max_harvest_expected_chunks,
+        );
+        max_assign(
+            &mut self.max_harvest_missing_chunks,
+            other.max_harvest_missing_chunks,
+        );
+        max_assign(
+            &mut self.max_harvest_duplicate_chunks,
+            other.max_harvest_duplicate_chunks,
+        );
+        max_assign(
+            &mut self.max_harvest_diag_bytes,
+            other.max_harvest_diag_bytes,
+        );
+        max_assign(
+            &mut self.max_harvest_diag_lines,
+            other.max_harvest_diag_lines,
+        );
+        max_assign(
             &mut self.max_harvest_packet_lines,
             other.max_harvest_packet_lines,
         );
+        max_assign(
+            &mut self.max_harvest_raw_packet_lines,
+            other.max_harvest_raw_packet_lines,
+        );
+        max_assign(
+            &mut self.max_harvest_stats_lines,
+            other.max_harvest_stats_lines,
+        );
         max_assign(&mut self.max_harvest_new_lines, other.max_harvest_new_lines);
+        max_assign(
+            &mut self.max_harvest_duplicate_lines,
+            other.max_harvest_duplicate_lines,
+        );
+        merge_counts(
+            &mut self.harvest_chunk_statuses,
+            &other.harvest_chunk_statuses,
+        );
     }
 }
 
@@ -955,6 +1083,17 @@ fn json_u64(value: &Value, key: &str) -> Option<u64> {
     value
         .as_u64()
         .or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()))
+}
+
+fn json_bool(value: &Value, key: &str) -> Option<bool> {
+    let value = value.get(key)?;
+    value.as_bool().or_else(|| {
+        value.as_str().and_then(|value| match value {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        })
+    })
 }
 
 fn bump(map: &mut BTreeMap<String, u64>, key: &str) {
@@ -1022,7 +1161,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
     #[test]
     fn summary_counts_harvest_health() {
         let text = "\
-# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"lost_bytes\":4,\"packet_lines\":8,\"new_lines\":2,\"total_packet_lines\":12}
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":4,\"missing_chunk_count\":1,\"duplicate_chunk_count\":2,\"got_last\":true,\"chunk_complete\":false,\"lost_bytes\":4,\"diag_bytes\":256,\"diag_lines\":12,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
 # harvest {\"at\":\"2026-06-15T22:30:01-05:00\",\"status\":\"error\",\"duration_ms\":1200,\"error\":\"no log chunks received\"}
 # harvest not-json
 ";
@@ -1034,8 +1173,17 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         assert_eq!(summary.max_harvest_duration_ms, Some(1200));
         assert_eq!(summary.max_harvest_lost_bytes, Some(4));
         assert_eq!(summary.max_harvest_chunk_count, Some(3));
+        assert_eq!(summary.max_harvest_expected_chunks, Some(4));
+        assert_eq!(summary.max_harvest_missing_chunks, Some(1));
+        assert_eq!(summary.max_harvest_duplicate_chunks, Some(2));
+        assert_eq!(summary.max_harvest_diag_bytes, Some(256));
+        assert_eq!(summary.max_harvest_diag_lines, Some(12));
         assert_eq!(summary.max_harvest_packet_lines, Some(8));
+        assert_eq!(summary.max_harvest_raw_packet_lines, Some(6));
+        assert_eq!(summary.max_harvest_stats_lines, Some(2));
         assert_eq!(summary.max_harvest_new_lines, Some(2));
+        assert_eq!(summary.max_harvest_duplicate_lines, Some(6));
+        assert_eq!(summary.harvest_chunk_statuses["incomplete"], 1);
     }
 
     #[test]
@@ -1051,7 +1199,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
             text: "usb-packet-stats total=64 out=2 truncated_bytes=0 idle_in_suppressed=0\n",
         }];
         let summary = summarize_sources(&per_pico, &retained);
-        assert_eq!(summary.artifact_schema_version, 3);
+        assert_eq!(summary.artifact_schema_version, 4);
         assert_eq!(summary.aggregate.packet_lines, 2);
         assert_eq!(summary.aggregate.stats_lines, 1);
         assert_eq!(summary.aggregate.missing_sequence_numbers, 1);
@@ -1121,7 +1269,7 @@ usb-packet seq=3 t=12 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 r
 usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
 usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
 usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
-# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"lost_bytes\":4,\"packet_lines\":8,\"new_lines\":2,\"total_packet_lines\":12}
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":3,\"missing_chunk_count\":0,\"duplicate_chunk_count\":1,\"got_last\":true,\"chunk_complete\":true,\"lost_bytes\":4,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
 ";
         let jsonl =
             records_jsonl_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text).unwrap();
@@ -1166,9 +1314,19 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[3]["status"], "ok");
         assert_eq!(records[3]["duration_ms"], 14);
         assert_eq!(records[3]["chunk_count"], 3);
+        assert_eq!(records[3]["expected_chunks"], 3);
+        assert_eq!(records[3]["missing_chunk_count"], 0);
+        assert_eq!(records[3]["duplicate_chunk_count"], 1);
+        assert_eq!(records[3]["got_last"], true);
+        assert_eq!(records[3]["chunk_complete"], true);
         assert_eq!(records[3]["lost_bytes"], 4);
+        assert_eq!(records[3]["diag_bytes"], 512);
+        assert_eq!(records[3]["diag_lines"], 20);
         assert_eq!(records[3]["packet_lines"], 8);
+        assert_eq!(records[3]["raw_packet_lines"], 6);
+        assert_eq!(records[3]["stats_lines"], 2);
         assert_eq!(records[3]["new_lines"], 2);
+        assert_eq!(records[3]["duplicate_lines"], 6);
         assert_eq!(records[3]["total_packet_lines"], 12);
     }
 }

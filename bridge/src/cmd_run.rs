@@ -883,8 +883,9 @@ struct DebugPacketHarvestResult {
 #[derive(Clone, Debug)]
 struct DebugPacketHarvestOk {
     lines: Vec<String>,
-    lost_bytes: u32,
-    chunk_count: usize,
+    raw_packet_lines: usize,
+    stats_lines: usize,
+    snapshot: debug_packets::DiagLogSnapshot,
 }
 
 fn ensure_debug_packet_sinks(
@@ -973,11 +974,21 @@ async fn collect_debug_packet_harvests(targets: Vec<PicoTarget>) -> Vec<DebugPac
             match debug_packets::capture_run_diag_log(target.peer, DEBUG_PACKET_HARVEST_TIMEOUT)
                 .await
             {
-                Ok(snapshot) => Ok(DebugPacketHarvestOk {
-                    lines: debug_packets::extract_usb_packet_lines(&snapshot.text),
-                    lost_bytes: snapshot.lost_bytes,
-                    chunk_count: snapshot.chunk_count,
-                }),
+                Ok(snapshot) => {
+                    let lines = debug_packets::extract_usb_packet_lines(&snapshot.text);
+                    Ok(DebugPacketHarvestOk {
+                        raw_packet_lines: lines
+                            .iter()
+                            .filter(|line| line.starts_with("usb-packet "))
+                            .count(),
+                        stats_lines: lines
+                            .iter()
+                            .filter(|line| line.starts_with("usb-packet-stats "))
+                            .count(),
+                        lines,
+                        snapshot,
+                    })
+                }
                 Err(e) => Err(format!("{e:#}")),
             };
         out.push(DebugPacketHarvestResult {
@@ -1015,13 +1026,19 @@ fn apply_debug_packet_harvests(
                         continue;
                     }
                 };
-                if let Err(e) = sink.append_harvest_ok(
+                let harvest_record = debug_packets::HarvestOkRecord {
                     duration_ms,
-                    ok.chunk_count,
-                    ok.lost_bytes,
-                    ok.lines.len(),
-                    written,
-                ) {
+                    snapshot: ok.snapshot,
+                    packet_lines: ok.lines.len(),
+                    raw_packet_lines: ok.raw_packet_lines,
+                    stats_lines: ok.stats_lines,
+                    new_lines: written,
+                };
+                let lost_bytes = harvest_record.snapshot.lost_bytes;
+                let chunk_count = harvest_record.snapshot.chunk_count;
+                let missing_chunk_count = harvest_record.snapshot.missing_chunks.len();
+                let duplicate_chunk_count = harvest_record.snapshot.duplicate_chunk_count;
+                if let Err(e) = sink.append_harvest_ok(harvest_record) {
                     tracing::warn!(
                         "debug-packets: harvest metadata write failed for {}: {e:#}",
                         result.target.short_label()
@@ -1033,23 +1050,32 @@ fn apply_debug_packet_harvests(
                     "debug-packets: harvest {} duration_ms={} chunks={} lost={} packets={} new={} total={}",
                     result.target.short_label(),
                     duration_ms,
-                    ok.chunk_count,
-                    ok.lost_bytes,
+                    chunk_count,
+                    lost_bytes,
                     ok.lines.len(),
                     written,
                     sink.total_written()
                 );
-                if written > 0 || ok.lost_bytes > 0 {
+                if missing_chunk_count > 0 || duplicate_chunk_count > 0 {
+                    tracing::debug!(
+                        "debug-packets: harvest {} chunk health missing={} duplicate={}",
+                        result.target.short_label(),
+                        missing_chunk_count,
+                        duplicate_chunk_count
+                    );
+                }
+                if written > 0 || lost_bytes > 0 || missing_chunk_count > 0 {
                     pico_cache::record(
                         pico_cache::PicoStateSnapshot::from_target(
                             "debug-packet-harvest",
                             &result.target,
                         )
                         .with_outcome(format!(
-                            "new_packets={written}; total_packets={}; lost_bytes={}; chunks={}",
+                            "new_packets={written}; total_packets={}; lost_bytes={}; chunks={}; missing_chunks={}",
                             sink.total_written(),
-                            ok.lost_bytes,
-                            ok.chunk_count
+                            lost_bytes,
+                            chunk_count,
+                            missing_chunk_count
                         )),
                     );
                 }

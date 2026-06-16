@@ -18,6 +18,22 @@ pub(crate) struct DiagLogSnapshot {
     pub text: String,
     pub lost_bytes: u32,
     pub chunk_count: usize,
+    pub expected_chunks: Option<u8>,
+    pub missing_chunks: Vec<u8>,
+    pub duplicate_chunk_count: usize,
+    pub got_last: bool,
+    pub byte_count: usize,
+    pub line_count: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct HarvestOkRecord {
+    pub duration_ms: u64,
+    pub snapshot: DiagLogSnapshot,
+    pub packet_lines: usize,
+    pub raw_packet_lines: usize,
+    pub stats_lines: usize,
+    pub new_lines: usize,
 }
 
 pub(crate) struct DebugPacketSink {
@@ -85,22 +101,35 @@ impl DebugPacketSink {
         Ok(written)
     }
 
-    pub(crate) fn append_harvest_ok(
-        &mut self,
-        duration_ms: u64,
-        chunk_count: usize,
-        lost_bytes: u32,
-        packet_lines: usize,
-        new_lines: usize,
-    ) -> Result<()> {
+    pub(crate) fn append_harvest_ok(&mut self, record: HarvestOkRecord) -> Result<()> {
+        let missing_chunk_count = record.snapshot.missing_chunks.len();
+        let duplicate_lines = record.packet_lines.saturating_sub(record.new_lines);
+        let chunk_complete = record.snapshot.got_last
+            && record
+                .snapshot
+                .expected_chunks
+                .map(|expected| usize::from(expected) == record.snapshot.chunk_count)
+                .unwrap_or(false)
+            && record.snapshot.missing_chunks.is_empty();
         self.append_harvest_record(json!({
             "at": Local::now().to_rfc3339(),
             "status": "ok",
-            "duration_ms": duration_ms,
-            "chunk_count": chunk_count,
-            "lost_bytes": lost_bytes,
-            "packet_lines": packet_lines,
-            "new_lines": new_lines,
+            "duration_ms": record.duration_ms,
+            "chunk_count": record.snapshot.chunk_count,
+            "expected_chunks": record.snapshot.expected_chunks,
+            "missing_chunk_count": missing_chunk_count,
+            "missing_chunks": record.snapshot.missing_chunks,
+            "duplicate_chunk_count": record.snapshot.duplicate_chunk_count,
+            "got_last": record.snapshot.got_last,
+            "chunk_complete": chunk_complete,
+            "lost_bytes": record.snapshot.lost_bytes,
+            "diag_bytes": record.snapshot.byte_count,
+            "diag_lines": record.snapshot.line_count,
+            "packet_lines": record.packet_lines,
+            "raw_packet_lines": record.raw_packet_lines,
+            "stats_lines": record.stats_lines,
+            "new_lines": record.new_lines,
+            "duplicate_lines": duplicate_lines,
             "total_packet_lines": self.total_written,
         }))
     }
@@ -189,6 +218,7 @@ pub(crate) async fn capture_run_diag_log(
 
     let mut chunks: BTreeMap<u8, protocol::LogChunk> = BTreeMap::new();
     let mut got_last = false;
+    let mut duplicate_chunk_count = 0usize;
     let mut buf = [0u8; 1024];
     let deadline = started + timeout;
     while !got_last {
@@ -205,7 +235,9 @@ pub(crate) async fn capture_run_diag_log(
                 match protocol::LogChunk::decode(&buf[..n]) {
                     Ok(chunk) => {
                         got_last = got_last || chunk.is_last();
-                        chunks.insert(chunk.chunk_index, chunk);
+                        if chunks.insert(chunk.chunk_index, chunk).is_some() {
+                            duplicate_chunk_count += 1;
+                        }
                     }
                     Err(e) => {
                         tracing::debug!("debug-packets: malformed log chunk from {from}: {e}");
@@ -224,16 +256,44 @@ pub(crate) async fn capture_run_diag_log(
         );
     }
 
+    Ok(assemble_diag_log_snapshot(
+        chunks,
+        got_last,
+        duplicate_chunk_count,
+    ))
+}
+
+fn assemble_diag_log_snapshot(
+    chunks: BTreeMap<u8, protocol::LogChunk>,
+    got_last: bool,
+    duplicate_chunk_count: usize,
+) -> DiagLogSnapshot {
     let lost_bytes = chunks.get(&0).map(|chunk| chunk.lost_bytes).unwrap_or(0);
+    let expected_chunks = chunks.get(&0).map(|chunk| chunk.total_chunks);
+    let missing_chunks = expected_chunks
+        .map(|expected| {
+            (0..expected)
+                .filter(|index| !chunks.contains_key(index))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let mut bytes = Vec::new();
     for chunk in chunks.values() {
         bytes.extend_from_slice(&chunk.payload);
     }
-    Ok(DiagLogSnapshot {
-        text: String::from_utf8_lossy(&bytes).into_owned(),
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let line_count = text.lines().count();
+    DiagLogSnapshot {
+        text,
         lost_bytes,
         chunk_count: chunks.len(),
-    })
+        expected_chunks,
+        missing_chunks,
+        duplicate_chunk_count,
+        got_last,
+        byte_count: bytes.len(),
+        line_count,
+    }
 }
 
 fn is_packet_file(path: &Path) -> bool {
@@ -323,7 +383,25 @@ mod tests {
         let mut sink = DebugPacketSink::create_in(&root, "02E22DA9", peer()).unwrap();
         sink.append_lines(&["usb-packet seq=1 dir=in data=00".to_string()])
             .unwrap();
-        sink.append_harvest_ok(14, 3, 4, 8, 1).unwrap();
+        sink.append_harvest_ok(HarvestOkRecord {
+            duration_ms: 14,
+            snapshot: DiagLogSnapshot {
+                text: "usb-packet seq=1 dir=in data=00\nusb-packet-stats total=1\n".to_string(),
+                lost_bytes: 4,
+                chunk_count: 3,
+                expected_chunks: Some(4),
+                missing_chunks: vec![2],
+                duplicate_chunk_count: 1,
+                got_last: true,
+                byte_count: 58,
+                line_count: 2,
+            },
+            packet_lines: 8,
+            raw_packet_lines: 6,
+            stats_lines: 2,
+            new_lines: 1,
+        })
+        .unwrap();
         sink.append_harvest_error(1200, "no log chunks received\nretry later")
             .unwrap();
         drop(sink);
@@ -338,14 +416,60 @@ mod tests {
         assert_eq!(harvest[0]["status"], "ok");
         assert_eq!(harvest[0]["duration_ms"], 14);
         assert_eq!(harvest[0]["chunk_count"], 3);
+        assert_eq!(harvest[0]["expected_chunks"], 4);
+        assert_eq!(harvest[0]["missing_chunk_count"], 1);
+        assert_eq!(harvest[0]["missing_chunks"][0], 2);
+        assert_eq!(harvest[0]["duplicate_chunk_count"], 1);
+        assert_eq!(harvest[0]["got_last"], true);
+        assert_eq!(harvest[0]["chunk_complete"], false);
         assert_eq!(harvest[0]["lost_bytes"], 4);
+        assert_eq!(harvest[0]["diag_bytes"], 58);
+        assert_eq!(harvest[0]["diag_lines"], 2);
         assert_eq!(harvest[0]["packet_lines"], 8);
+        assert_eq!(harvest[0]["raw_packet_lines"], 6);
+        assert_eq!(harvest[0]["stats_lines"], 2);
         assert_eq!(harvest[0]["new_lines"], 1);
+        assert_eq!(harvest[0]["duplicate_lines"], 7);
         assert_eq!(harvest[0]["total_packet_lines"], 1);
         assert_eq!(harvest[1]["status"], "error");
         assert_eq!(harvest[1]["duration_ms"], 1200);
         assert_eq!(harvest[1]["error"], "no log chunks received\nretry later");
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_records_missing_and_duplicate_log_chunks() {
+        let mut chunks = BTreeMap::new();
+        chunks.insert(
+            0,
+            protocol::LogChunk {
+                chunk_index: 0,
+                flags: 0,
+                total_chunks: 3,
+                lost_bytes: 9,
+                payload: b"first\n".to_vec(),
+            },
+        );
+        chunks.insert(
+            2,
+            protocol::LogChunk {
+                chunk_index: 2,
+                flags: protocol::LOG_CHUNK_FLAG_LAST,
+                total_chunks: 0,
+                lost_bytes: 0,
+                payload: b"third\n".to_vec(),
+            },
+        );
+        let snapshot = assemble_diag_log_snapshot(chunks, true, 1);
+        assert_eq!(snapshot.text, "first\nthird\n");
+        assert_eq!(snapshot.lost_bytes, 9);
+        assert_eq!(snapshot.chunk_count, 2);
+        assert_eq!(snapshot.expected_chunks, Some(3));
+        assert_eq!(snapshot.missing_chunks, vec![1]);
+        assert_eq!(snapshot.duplicate_chunk_count, 1);
+        assert!(snapshot.got_last);
+        assert_eq!(snapshot.byte_count, 12);
+        assert_eq!(snapshot.line_count, 2);
     }
 
     #[test]
