@@ -44,6 +44,7 @@
 #include "usb_packet_debug.h"
 #include "version.h"
 #include "xbone.h"
+#include "xgip_constants.h"
 #include "xinput.h"
 
 // bcdDevice is keyed by Windows usbflags / driver-binding cache. It is
@@ -157,14 +158,14 @@ static const tusb_desc_device_t desc_device_xboxone = {
     .bLength = sizeof(tusb_desc_device_t),
     .bDescriptorType = TUSB_DESC_DEVICE,
     .bcdUSB = 0x0200,
-    .bDeviceClass = 0xFF,
-    .bDeviceSubClass = 0xFF,
-    .bDeviceProtocol = 0xFF,
+    .bDeviceClass = XGIP_DEVICE_CLASS,
+    .bDeviceSubClass = XGIP_DEVICE_SUBCLASS,
+    .bDeviceProtocol = XGIP_DEVICE_PROTOCOL,
     .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
 
     .idVendor = 0x0E6F, // PDP Xbox One-compatible controller
     .idProduct = 0x02A4,
-    .bcdDevice = 0x0101,
+    .bcdDevice = BCD_DEVICE_VERSION,
 
     .iManufacturer = 0x01,
     .iProduct = 0x02,
@@ -561,9 +562,6 @@ static const char *const string_desc_arr_xboxone[] = {
     [STRID_SERIAL] = serial_str,
 };
 
-#define MS_OS_10_STRING_INDEX 0xEE
-#define XGIP_MS_VENDOR_REQ_CODE 0x20
-
 static uint16_t string_buf[127]; // descriptor type + length prefix + up to 126 chars
 
 uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
@@ -582,7 +580,7 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     }
 
     if (boot_mode_current() == BOOT_MODE_RUN && boot_mode_run_persona() == RUN_PERSONA_XBOXONE &&
-        index == MS_OS_10_STRING_INDEX) {
+        index == XGIP_MS_OS_STRING_INDEX) {
         string_buf[0] = (TUSB_DESC_STRING << 8) | 18;
         string_buf[1] = 'M';
         string_buf[2] = 'S';
@@ -809,8 +807,8 @@ static const ms_os_10_compatible_id_single_t desc_xgip_compatible_id = {
     .total_sections = 1,
     .reserved = {0},
     .first_interface_number = 0,
-    .reserved2 = 0x01,
-    .compatible_id = {'X', 'G', 'I', 'P', '1', '0', 0, 0},
+    .reserved2 = XGIP_NUM_INTERFACES_WITHOUT_AUDIO,
+    .compatible_id = XGIP_COMPATIBLE_ID_BYTES,
     .sub_compatible_id = {0},
     .reserved3 = {0},
 };

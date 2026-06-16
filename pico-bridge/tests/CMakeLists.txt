@@ -64,3 +64,10 @@ target_include_directories(test_usb_diag PRIVATE
 )
 
 add_test(NAME usb_diag COMMAND test_usb_diag)
+
+add_executable(test_xgip_constants
+    test_xgip_constants.c
+)
+target_include_directories(test_xgip_constants PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+add_test(NAME xgip_constants COMMAND test_xgip_constants)
