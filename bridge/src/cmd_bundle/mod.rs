@@ -37,7 +37,10 @@ use usb_enum::{
     capture_usb_devices, capture_windows_usb_events, classify_pico_enum, parent_only_stub_text,
     vendor_not_found_stub_text, PicoEnumState,
 };
-use usb_packet_summary::{summarize_sources, summarize_text, UsbPacketSummarySource};
+use usb_packet_summary::{
+    records_jsonl_for_sources, records_jsonl_for_text, summarize_sources, summarize_text,
+    UsbPacketSummarySource,
+};
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
 /// callers get a typed answer without
@@ -241,6 +244,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         .collect();
     let usb_packet_summary = summarize_sources(&per_pico_packet_sources, &retained_packet_sources);
     let usb_packet_summary_json = serde_json::to_string_pretty(&usb_packet_summary)?;
+    let usb_packet_records_jsonl =
+        records_jsonl_for_sources(&per_pico_packet_sources, &retained_packet_sources)?;
     capture_log.record_duration(
         "usb_packet_summary",
         0,
@@ -250,6 +255,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
             "raw_packets={}; stats={}",
             usb_packet_summary.aggregate.packet_lines, usb_packet_summary.aggregate.stats_lines
         ),
+    );
+    capture_log.record_duration(
+        "usb_packet_records",
+        0,
+        "included",
+        usb_packet_records_jsonl.len(),
+        "jsonl",
     );
 
     let host_snapshots = capture_host_snapshots().await;
@@ -385,6 +397,14 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         zip.start_file(format!("{base}/usb-packets-summary.json"), opts)?;
         let summary_json = serde_json::to_string_pretty(&summarize_text(&pico.usb_packets_text))?;
         zip.write_all(redact_bundle_text(&summary_json).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-packets.jsonl"), opts)?;
+        let records_jsonl = records_jsonl_for_text(
+            &pico.manifest.uid,
+            &format!("{base}/usb-packets.txt"),
+            &pico.usb_packets_text,
+        )?;
+        zip.write_all(redact_bundle_text(&records_jsonl).as_bytes())?;
     }
 
     zip.start_file("usb-packets.txt", opts)?;
@@ -398,6 +418,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.start_file("usb-packets-summary.json", opts)?;
     zip.write_all(redact_bundle_text(&usb_packet_summary_json).as_bytes())?;
+
+    zip.start_file("usb-packets.jsonl", opts)?;
+    zip.write_all(redact_bundle_text(&usb_packet_records_jsonl).as_bytes())?;
 
     for log in &retained_debug_packet_logs {
         zip.start_file(format!("debug-packets/{}", log.name), opts)?;

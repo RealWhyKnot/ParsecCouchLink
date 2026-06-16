@@ -50,6 +50,42 @@ pub(super) struct UsbPacketBundleSummary {
     pub notes: Vec<&'static str>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(super) enum UsbPacketRecord {
+    Packet {
+        source_label: String,
+        source_path: String,
+        line_number: u64,
+        seq: Option<u64>,
+        t_ms: Option<u64>,
+        direction: Option<String>,
+        source: Option<String>,
+        reason: Option<String>,
+        reported_len: Option<u64>,
+        captured_len: Option<u64>,
+        truncated_bytes_total: Option<u64>,
+        suppressed_idle_reports: Option<u64>,
+        data_hex: Option<String>,
+        raw_line: String,
+    },
+    Stats {
+        source_label: String,
+        source_path: String,
+        line_number: u64,
+        t_ms: Option<u64>,
+        total: Option<u64>,
+        #[serde(rename = "in")]
+        in_count: Option<u64>,
+        out: Option<u64>,
+        setup: Option<u64>,
+        control_in: Option<u64>,
+        truncated_bytes: Option<u64>,
+        idle_in_suppressed: Option<u64>,
+        raw_line: String,
+    },
+}
+
 pub(super) fn summarize_text(text: &str) -> UsbPacketSummary {
     let mut summary = UsbPacketSummary::default();
     let mut seen_sequences = BTreeSet::new();
@@ -62,6 +98,34 @@ pub(super) fn summarize_text(text: &str) -> UsbPacketSummary {
         }
     }
     summary
+}
+
+pub(super) fn records_jsonl_for_text(
+    label: &str,
+    path: &str,
+    text: &str,
+) -> Result<String, serde_json::Error> {
+    let mut out = String::new();
+    for record in records_for_text(label, path, text) {
+        out.push_str(&serde_json::to_string(&record)?);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+pub(super) fn records_jsonl_for_sources(
+    per_pico: &[UsbPacketSummarySource<'_>],
+    retained_logs: &[UsbPacketSummarySource<'_>],
+) -> Result<String, serde_json::Error> {
+    let mut out = String::new();
+    for source in per_pico.iter().chain(retained_logs.iter()) {
+        out.push_str(&records_jsonl_for_text(
+            &source.label,
+            &source.path,
+            source.text,
+        )?);
+    }
+    Ok(out)
 }
 
 pub(super) fn summarize_sources(
@@ -105,6 +169,58 @@ pub(super) fn summarize_sources(
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
         ],
     }
+}
+
+fn records_for_text(label: &str, path: &str, text: &str) -> Vec<UsbPacketRecord> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(index, line)| record_from_line(label, path, (index + 1) as u64, line))
+        .collect()
+}
+
+fn record_from_line(
+    label: &str,
+    path: &str,
+    line_number: u64,
+    line: &str,
+) -> Option<UsbPacketRecord> {
+    if line.starts_with("usb-packet ") {
+        let fields = fields(line);
+        return Some(UsbPacketRecord::Packet {
+            source_label: label.to_string(),
+            source_path: path.to_string(),
+            line_number,
+            seq: parsed_u64(fields.get("seq")),
+            t_ms: parsed_u64(fields.get("t")),
+            direction: cloned_field(fields.get("dir")),
+            source: cloned_field(fields.get("src")),
+            reason: cloned_field(fields.get("reason")),
+            reported_len: parsed_u64(fields.get("len")),
+            captured_len: parsed_u64(fields.get("captured")),
+            truncated_bytes_total: parsed_u64(fields.get("dropped")),
+            suppressed_idle_reports: parsed_u64(fields.get("suppressed")),
+            data_hex: cloned_field(fields.get("data")),
+            raw_line: line.to_string(),
+        });
+    }
+    if line.starts_with("usb-packet-stats ") {
+        let fields = fields(line);
+        return Some(UsbPacketRecord::Stats {
+            source_label: label.to_string(),
+            source_path: path.to_string(),
+            line_number,
+            t_ms: parsed_u64(fields.get("t")),
+            total: parsed_u64(fields.get("total")),
+            in_count: parsed_u64(fields.get("in")),
+            out: parsed_u64(fields.get("out")),
+            setup: parsed_u64(fields.get("setup")),
+            control_in: parsed_u64(fields.get("control_in")),
+            truncated_bytes: parsed_u64(fields.get("truncated_bytes")),
+            idle_in_suppressed: parsed_u64(fields.get("idle_in_suppressed")),
+            raw_line: line.to_string(),
+        });
+    }
+    None
 }
 
 impl UsbPacketSummary {
@@ -250,6 +366,10 @@ fn parsed_u64(value: Option<&&str>) -> Option<u64> {
     value.and_then(|value| value.parse::<u64>().ok())
 }
 
+fn cloned_field(value: Option<&&str>) -> Option<String> {
+    value.map(|value| (*value).to_string())
+}
+
 fn bump(map: &mut BTreeMap<String, u64>, key: &str) {
     *map.entry(key.to_string()).or_default() += 1;
 }
@@ -332,5 +452,30 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
             summary.retained_logs[0].summary.last_stats_total_packets,
             Some(64)
         );
+    }
+
+    #[test]
+    fn records_jsonl_normalizes_packet_and_stats_lines() {
+        let text = "\
+usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
+usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
+";
+        let jsonl =
+            records_jsonl_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text).unwrap();
+        let records: Vec<serde_json::Value> = jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["kind"], "packet");
+        assert_eq!(records[0]["source_label"], "02E22DA9");
+        assert_eq!(records[0]["line_number"], 1);
+        assert_eq!(records[0]["seq"], 7);
+        assert_eq!(records[0]["direction"], "control-in");
+        assert_eq!(records[0]["data_hex"], "12010002");
+        assert_eq!(records[1]["kind"], "stats");
+        assert_eq!(records[1]["total"], 64);
+        assert_eq!(records[1]["in"], 4);
+        assert_eq!(records[1]["idle_in_suppressed"], 9);
     }
 }
