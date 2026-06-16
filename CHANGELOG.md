@@ -4,7 +4,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Fixed
+- **setup:** Recover provisioned picos at wifi provisioning (c23bf39)
+- **firmware:** Bind xbox one persona as xgip (41c3ece)
 
 ---
 
