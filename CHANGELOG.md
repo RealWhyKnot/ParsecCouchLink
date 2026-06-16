@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.15.1-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.15.1-beta) -- 2026-06-16
+
 ### Added
 - **dinput:** Add 8BitDo Pro 2 persona (64c5d2e)
 - **maple:** Add Dreamcast output persona (afcbf01)
