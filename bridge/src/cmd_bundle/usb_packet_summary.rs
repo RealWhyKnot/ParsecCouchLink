@@ -120,6 +120,9 @@ pub(super) enum UsbPacketRecord {
         line_number: u64,
         t_ms: Option<u64>,
         event: Option<String>,
+        source: Option<String>,
+        len: Option<u64>,
+        bytes: Option<u64>,
         remote_wakeup: Option<u64>,
         raw_line: String,
     },
@@ -462,7 +465,7 @@ pub(super) fn summarize_sources(
         .collect();
 
     UsbPacketBundleSummary {
-        artifact_schema_version: 7,
+        artifact_schema_version: 8,
         aggregate,
         per_pico,
         retained_logs,
@@ -471,7 +474,7 @@ pub(super) fn summarize_sources(
             "Aggregate sequence gaps are summed per source; sequence numbers are not compared across different Pico/log sources.",
             "Packet and lifecycle event timing fields are derived from firmware t= milliseconds and gap calculations are per source.",
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
-            "Lifecycle event lines record low-noise USB mount, unmount, suspend, and resume callbacks from debug input firmware.",
+            "Lifecycle event lines record low-noise USB mount, unmount, suspend, resume, first host OUT, and first accepted IN callbacks from debug input firmware.",
             "Packet summaries separate per-packet truncation from cumulative firmware truncated_bytes so lossy captures are visible.",
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
             "Setup/control summary maps expose observed enumeration requests, descriptor requests, known vendor probes, and control payload replies.",
@@ -576,6 +579,9 @@ fn record_from_line(
             line_number,
             t_ms: parsed_u64(fields.get("t")),
             event: cloned_field(fields.get("event")),
+            source: cloned_field(fields.get("src")),
+            len: parsed_u64(fields.get("len")),
+            bytes: parsed_u64(fields.get("bytes")),
             remote_wakeup: parsed_u64(fields.get("remote_wakeup")),
             raw_line: line.to_string(),
         });
@@ -709,11 +715,14 @@ fn packet_timeline_row(
         let t_ms = parsed_u64(fields.get("t"));
         let dt_ms = timeline_delta(t_ms, previous_t_ms);
         return Some(format!(
-            "event line={} t={} dt_ms={} event={} remote_wakeup={}",
+            "event line={} t={} dt_ms={} event={} src={} len={} bytes={} remote_wakeup={}",
             line_number,
             display_field(fields.get("t")),
             dt_ms,
             display_field(fields.get("event")),
+            display_field(fields.get("src")),
+            display_field(fields.get("len")),
+            display_field(fields.get("bytes")),
             display_field(fields.get("remote_wakeup")),
         ));
     }
@@ -1239,6 +1248,8 @@ struct UsbEnumerationAnalysis {
     unmount_events: u64,
     suspend_events: u64,
     resume_events: u64,
+    first_host_out_events: u64,
+    first_in_accepted_events: u64,
     events: BTreeMap<String, u64>,
     setup_lines: u64,
     control_in_lines: u64,
@@ -1315,6 +1326,8 @@ impl UsbEnumerationAnalysis {
             "unmount" => self.unmount_events += 1,
             "suspend" => self.suspend_events += 1,
             "resume" => self.resume_events += 1,
+            "first-host-out" => self.first_host_out_events += 1,
+            "first-in-accepted" => self.first_in_accepted_events += 1,
             _ => {}
         }
     }
@@ -1476,6 +1489,17 @@ fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysi
     let _ = std::fmt::Write::write_fmt(
         out,
         format_args!("resume_events={}\n", analysis.resume_events),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("first_host_out_events={}\n", analysis.first_host_out_events),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "first_in_accepted_events={}\n",
+            analysis.first_in_accepted_events
+        ),
     );
     let _ = std::fmt::Write::write_fmt(
         out,
@@ -1657,7 +1681,9 @@ fn write_bool(out: &mut String, key: &str, value: bool) {
 
 fn enumeration_verdict(analysis: &UsbEnumerationAnalysis) -> &'static str {
     if analysis.packet_lines == 0 {
-        if analysis.mount_events > 0 {
+        if analysis.first_host_out_events > 0 || analysis.first_in_accepted_events > 0 {
+            "runtime_usb_events_no_raw_packets"
+        } else if analysis.mount_events > 0 {
             "mounted_no_raw_packets"
         } else if analysis.event_lines > 0 {
             "usb_lifecycle_events_only_no_raw_packets"
@@ -1668,6 +1694,8 @@ fn enumeration_verdict(analysis: &UsbEnumerationAnalysis) -> &'static str {
         }
     } else if analysis.endpoint_in_lines > 0 || analysis.endpoint_out_lines > 0 {
         "endpoint_traffic_observed"
+    } else if analysis.first_host_out_events > 0 || analysis.first_in_accepted_events > 0 {
+        "runtime_usb_events_no_endpoint_packets"
     } else if analysis.mount_events > 0 {
         "mounted_no_endpoint_traffic"
     } else if analysis.set_configuration_requests > 0 {
@@ -2269,7 +2297,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
             text: "usb-event t=22 event=mount\nusb-packet-stats total=64 out=2 truncated_bytes=0 truncated_packets=0 idle_in_suppressed=0\n",
         }];
         let summary = summarize_sources(&per_pico, &retained);
-        assert_eq!(summary.artifact_schema_version, 7);
+        assert_eq!(summary.artifact_schema_version, 8);
         assert_eq!(summary.aggregate.packet_lines, 2);
         assert_eq!(summary.aggregate.event_lines, 1);
         assert_eq!(summary.aggregate.stats_lines, 1);
@@ -2297,7 +2325,8 @@ usb-packet seq=9 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=
         assert!(out.contains("packet line=1 seq=7 t=10 dt_ms=- dir=out src=vendor"));
         assert!(out.contains("truncated=0 dropped=0 suppressed=0"));
         assert!(out.contains("packet line=2 seq=8 t=15 dt_ms=5 dir=setup"));
-        assert!(out.contains("event line=3 t=18 dt_ms=3 event=mount remote_wakeup=-"));
+        assert!(out
+            .contains("event line=3 t=18 dt_ms=3 event=mount src=- len=- bytes=- remote_wakeup=-"));
         assert!(out.contains(
             "stats line=4 t=40 dt_ms=22 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9"
         ));
@@ -2389,8 +2418,26 @@ usb-event t=19 event=mount
         assert!(out.contains("event_lines=2"));
         assert!(out.contains("mount_events=1"));
         assert!(out.contains("suspend_events=1"));
+        assert!(out.contains("first_host_out_events=0"));
+        assert!(out.contains("first_in_accepted_events=0"));
         assert!(out.contains("events=mount:1;suspend:1"));
         assert!(out.contains("device_descriptor_request=no"));
+    }
+
+    #[test]
+    fn enumeration_analysis_distinguishes_runtime_events_without_packets() {
+        let text = "\
+usb-event t=30 event=first-in-accepted src=xinput bytes=20
+usb-event t=31 event=first-host-out src=vendor len=3
+";
+        let out =
+            enumeration_analysis_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("verdict=runtime_usb_events_no_raw_packets"));
+        assert!(out.contains("packet_lines=0"));
+        assert!(out.contains("event_lines=2"));
+        assert!(out.contains("first_host_out_events=1"));
+        assert!(out.contains("first_in_accepted_events=1"));
+        assert!(out.contains("events=first-host-out:1;first-in-accepted:1"));
     }
 
     #[test]
@@ -2575,8 +2622,10 @@ usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 truncate
 usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
 usb-packet seq=9 t=12 dir=out src=hid-output len=3 captured=3 truncated=0 dropped=0 suppressed=0 reason=host-out report_id=0x01 report_type=2 data=050607
 usb-event t=13 event=suspend remote_wakeup=1
+usb-event t=14 event=first-in-accepted src=xinput bytes=20
+usb-event t=15 event=first-host-out src=vendor len=3
 usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9
-# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":3,\"missing_chunk_count\":0,\"duplicate_chunk_count\":1,\"got_last\":true,\"chunk_complete\":true,\"lost_bytes\":4,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"event_lines\":1,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":3,\"missing_chunk_count\":0,\"duplicate_chunk_count\":1,\"got_last\":true,\"chunk_complete\":true,\"lost_bytes\":4,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"event_lines\":3,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
 ";
         let jsonl =
             records_jsonl_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text).unwrap();
@@ -2584,7 +2633,7 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(records.len(), 6);
+        assert_eq!(records.len(), 8);
         assert_eq!(records[0]["kind"], "packet");
         assert_eq!(records[0]["source_label"], "02E22DA9");
         assert_eq!(records[0]["line_number"], 1);
@@ -2623,29 +2672,39 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[3]["t_ms"], 13);
         assert_eq!(records[3]["event"], "suspend");
         assert_eq!(records[3]["remote_wakeup"], 1);
-        assert_eq!(records[4]["kind"], "stats");
-        assert_eq!(records[4]["total"], 64);
-        assert_eq!(records[4]["in"], 4);
-        assert_eq!(records[4]["truncated_packets"], 1);
-        assert_eq!(records[4]["idle_in_suppressed"], 9);
-        assert_eq!(records[5]["kind"], "harvest");
-        assert_eq!(records[5]["status"], "ok");
-        assert_eq!(records[5]["duration_ms"], 14);
-        assert_eq!(records[5]["chunk_count"], 3);
-        assert_eq!(records[5]["expected_chunks"], 3);
-        assert_eq!(records[5]["missing_chunk_count"], 0);
-        assert_eq!(records[5]["duplicate_chunk_count"], 1);
-        assert_eq!(records[5]["got_last"], true);
-        assert_eq!(records[5]["chunk_complete"], true);
-        assert_eq!(records[5]["lost_bytes"], 4);
-        assert_eq!(records[5]["diag_bytes"], 512);
-        assert_eq!(records[5]["diag_lines"], 20);
-        assert_eq!(records[5]["packet_lines"], 8);
-        assert_eq!(records[5]["raw_packet_lines"], 6);
-        assert_eq!(records[5]["stats_lines"], 2);
-        assert_eq!(records[5]["event_lines"], 1);
-        assert_eq!(records[5]["new_lines"], 2);
-        assert_eq!(records[5]["duplicate_lines"], 6);
-        assert_eq!(records[5]["total_packet_lines"], 12);
+        assert_eq!(records[4]["kind"], "event");
+        assert_eq!(records[4]["event"], "first-in-accepted");
+        assert_eq!(records[4]["source"], "xinput");
+        assert!(records[4]["len"].is_null());
+        assert_eq!(records[4]["bytes"], 20);
+        assert_eq!(records[5]["kind"], "event");
+        assert_eq!(records[5]["event"], "first-host-out");
+        assert_eq!(records[5]["source"], "vendor");
+        assert_eq!(records[5]["len"], 3);
+        assert!(records[5]["bytes"].is_null());
+        assert_eq!(records[6]["kind"], "stats");
+        assert_eq!(records[6]["total"], 64);
+        assert_eq!(records[6]["in"], 4);
+        assert_eq!(records[6]["truncated_packets"], 1);
+        assert_eq!(records[6]["idle_in_suppressed"], 9);
+        assert_eq!(records[7]["kind"], "harvest");
+        assert_eq!(records[7]["status"], "ok");
+        assert_eq!(records[7]["duration_ms"], 14);
+        assert_eq!(records[7]["chunk_count"], 3);
+        assert_eq!(records[7]["expected_chunks"], 3);
+        assert_eq!(records[7]["missing_chunk_count"], 0);
+        assert_eq!(records[7]["duplicate_chunk_count"], 1);
+        assert_eq!(records[7]["got_last"], true);
+        assert_eq!(records[7]["chunk_complete"], true);
+        assert_eq!(records[7]["lost_bytes"], 4);
+        assert_eq!(records[7]["diag_bytes"], 512);
+        assert_eq!(records[7]["diag_lines"], 20);
+        assert_eq!(records[7]["packet_lines"], 8);
+        assert_eq!(records[7]["raw_packet_lines"], 6);
+        assert_eq!(records[7]["stats_lines"], 2);
+        assert_eq!(records[7]["event_lines"], 3);
+        assert_eq!(records[7]["new_lines"], 2);
+        assert_eq!(records[7]["duplicate_lines"], 6);
+        assert_eq!(records[7]["total_packet_lines"], 12);
     }
 }

@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 18;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 19;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -182,8 +182,8 @@ pub(super) async fn build_manifest(
             "usb-packets.jsonl normalizes each packet/event/stat line for reverse-engineering tools, including decoded USB setup and HID report metadata where present.",
             "usb-control-transfers.txt extracts setup and control-IN traffic into a compact transcript with decoded setup request names.",
             "usb-hid-reports.txt extracts HID report ids and report types from HID OUT/FEATURE payloads and HID GET_REPORT/SET_REPORT setup requests.",
-            "usb-packet-timeline.txt extracts packet, lifecycle event, stats, and harvest records in timestamp order with per-source timing deltas.",
-            "usb-enumeration-analysis.txt turns packet and lifecycle captures into a phase checklist for descriptor fetches, USB identity, mount state, configuration, vendor probes, HID reports, and endpoint traffic.",
+            "usb-packet-timeline.txt extracts packet, lifecycle/first-traffic event, stats, and harvest records in timestamp order with per-source timing deltas.",
+            "usb-enumeration-analysis.txt turns packet and lifecycle captures into a phase checklist for descriptor fetches, USB identity, mount state, first accepted IN/OUT traffic, configuration, vendor probes, HID reports, and endpoint traffic.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
             "debug-capture-evidence.json exposes the same debug capture gate, lossiness, and per-source evidence counts in machine-readable form.",
         ],

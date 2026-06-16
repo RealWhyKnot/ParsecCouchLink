@@ -665,6 +665,7 @@ void tud_vendor_rx_cb(uint8_t itf, uint8_t const *buffer, uint16_t bufsize) {
 void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes) {
     (void)itf;
     usb_diag_note_xinput_in_sent(sent_bytes);
+    usb_packet_debug_note_in_accepted("xinput", sent_bytes);
 }
 
 // -------- HID glue (keyboard and PlayStation HID personas) -------------
@@ -719,6 +720,7 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
     (void)instance;
     (void)report;
     usb_diag_note_xinput_in_sent(len);
+    usb_packet_debug_note_in_accepted("hid", len);
 }
 
 // -------- diag vendor-class glue (setup mode only) ---------------------

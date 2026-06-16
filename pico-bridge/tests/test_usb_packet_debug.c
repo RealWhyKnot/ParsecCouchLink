@@ -63,6 +63,7 @@ static void normal_persona_does_not_log_packets(void) {
     usb_packet_debug_note_hid_get_report(2, 0xEF, 3, 64);
     usb_packet_debug_note_hid_set_report(2, 0x01, 2, sizeof(data));
     usb_packet_debug_note_out_report("hid-output", 0x01, 2, data, sizeof(data));
+    usb_packet_debug_note_in_accepted("xinput", sizeof(data));
     usb_packet_debug_note_event("mount", "");
     assert(line_count == 0);
     current_persona = RUN_PERSONA_DEBUG;
@@ -73,7 +74,8 @@ static void debug_out_packet_logs_hex_payload(void) {
     fake_ms = 10;
     reset_log();
     usb_packet_debug_note_out("vendor", data, sizeof(data));
-    assert(line_count == 2);
+    assert(line_count == 3);
+    require_log_contains("usb-event t=10 event=first-host-out src=vendor len=3");
     require_log_contains("dir=out");
     require_log_contains("src=vendor");
     require_log_contains("reason=host-out");
@@ -111,6 +113,17 @@ static void debug_in_packets_keep_changed_and_summarize_idle_suppression(void) {
     assert(line_count == 3);
     require_log_contains("reason=idle-sample");
     require_log_contains("suppressed=1");
+}
+
+static void debug_in_accepted_logs_once(void) {
+    fake_ms = 1110;
+    reset_log();
+    usb_packet_debug_note_in_accepted("xinput", 0);
+    assert(line_count == 0);
+    usb_packet_debug_note_in_accepted("xinput", 20);
+    usb_packet_debug_note_in_accepted("xinput", 20);
+    assert(line_count == 1);
+    require_log_contains("usb-event t=1110 event=first-in-accepted src=xinput bytes=20");
 }
 
 static void debug_control_setup_logs_wire_bytes(void) {
@@ -223,6 +236,7 @@ int main(void) {
     normal_persona_does_not_log_packets();
     debug_out_packet_logs_hex_payload();
     debug_in_packets_keep_changed_and_summarize_idle_suppression();
+    debug_in_accepted_logs_once();
     debug_control_setup_logs_wire_bytes();
     debug_control_in_logs_reply_payload();
     debug_hid_control_requests_log_setup_metadata();

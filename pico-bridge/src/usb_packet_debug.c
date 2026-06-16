@@ -24,6 +24,17 @@ static uint32_t in_packet_lines;
 static uint32_t out_packet_lines;
 static uint32_t setup_packet_lines;
 static uint32_t control_in_packet_lines;
+static bool logged_first_host_out;
+static bool logged_first_in_accepted;
+
+static void note_event_at(uint32_t now_ms, const char *event, const char *fields) {
+    if (fields && fields[0]) {
+        diag_log_printf("usb-event t=%u event=%s %s", (unsigned)now_ms, event ? event : "unknown",
+                        fields);
+    } else {
+        diag_log_printf("usb-event t=%u event=%s", (unsigned)now_ms, event ? event : "unknown");
+    }
+}
 
 static char hex_digit(uint8_t v) {
     v &= 0x0Fu;
@@ -80,6 +91,13 @@ static void note_packet_extra(const char *direction, const char *source, uint8_t
     hex[capture_len * 2u] = 0;
 
     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    if (strcmp(direction, "out") == 0 && !logged_first_host_out) {
+        logged_first_host_out = true;
+        char fields[64];
+        snprintf(fields, sizeof(fields), "src=%s len=%u", source ? source : "unknown",
+                 (unsigned)len);
+        note_event_at(now_ms, "first-host-out", fields);
+    }
     count_direction(direction);
     diag_log_printf(
         "usb-packet seq=%u t=%u dir=%s src=%s len=%u captured=%u truncated=%u dropped=%u "
@@ -127,6 +145,18 @@ void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_
     note_packet("in", source, buffer, len, changed ? "changed" : "idle-sample", suppressed);
 }
 
+void usb_packet_debug_note_in_accepted(const char *source, uint32_t bytes) {
+    if (bytes == 0 || boot_mode_run_persona() != RUN_PERSONA_DEBUG || logged_first_in_accepted)
+        return;
+
+    logged_first_in_accepted = true;
+    uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    char fields[64];
+    snprintf(fields, sizeof(fields), "src=%s bytes=%u", source ? source : "unknown",
+             (unsigned)bytes);
+    note_event_at(now_ms, "first-in-accepted", fields);
+}
+
 void usb_packet_debug_note_setup(const char *source, uint8_t bm_request_type, uint8_t b_request,
                                  uint16_t w_value, uint16_t w_index, uint16_t w_length) {
     uint8_t setup[8] = {
@@ -167,10 +197,5 @@ void usb_packet_debug_note_event(const char *event, const char *fields) {
         return;
 
     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
-    if (fields && fields[0]) {
-        diag_log_printf("usb-event t=%u event=%s %s", (unsigned)now_ms, event ? event : "unknown",
-                        fields);
-    } else {
-        diag_log_printf("usb-event t=%u event=%s", (unsigned)now_ms, event ? event : "unknown");
-    }
+    note_event_at(now_ms, event, fields);
 }
