@@ -885,6 +885,7 @@ struct DebugPacketHarvestOk {
     lines: Vec<String>,
     raw_packet_lines: usize,
     stats_lines: usize,
+    event_lines: usize,
     snapshot: debug_packets::DiagLogSnapshot,
 }
 
@@ -985,6 +986,10 @@ async fn collect_debug_packet_harvests(targets: Vec<PicoTarget>) -> Vec<DebugPac
                             .iter()
                             .filter(|line| line.starts_with("usb-packet-stats "))
                             .count(),
+                        event_lines: lines
+                            .iter()
+                            .filter(|line| line.starts_with("usb-event "))
+                            .count(),
                         lines,
                         snapshot,
                     })
@@ -1032,6 +1037,7 @@ fn apply_debug_packet_harvests(
                     packet_lines: ok.lines.len(),
                     raw_packet_lines: ok.raw_packet_lines,
                     stats_lines: ok.stats_lines,
+                    event_lines: ok.event_lines,
                     new_lines: written,
                 };
                 let lost_bytes = harvest_record.snapshot.lost_bytes;

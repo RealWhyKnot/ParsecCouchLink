@@ -16,6 +16,8 @@ pub(super) struct UsbPacketSummarySource<'a> {
 pub(super) struct UsbPacketSummary {
     pub packet_lines: u64,
     pub stats_lines: u64,
+    pub event_lines: u64,
+    pub events: BTreeMap<String, u64>,
     pub directions: BTreeMap<String, u64>,
     pub sources: BTreeMap<String, u64>,
     pub reasons: BTreeMap<String, u64>,
@@ -67,6 +69,7 @@ pub(super) struct UsbPacketSummary {
     pub max_harvest_packet_lines: Option<u64>,
     pub max_harvest_raw_packet_lines: Option<u64>,
     pub max_harvest_stats_lines: Option<u64>,
+    pub max_harvest_event_lines: Option<u64>,
     pub max_harvest_new_lines: Option<u64>,
     pub max_harvest_duplicate_lines: Option<u64>,
     pub harvest_chunk_statuses: BTreeMap<String, u64>,
@@ -111,6 +114,15 @@ pub(super) enum UsbPacketRecord {
         idle_in_suppressed: Option<u64>,
         raw_line: String,
     },
+    Event {
+        source_label: String,
+        source_path: String,
+        line_number: u64,
+        t_ms: Option<u64>,
+        event: Option<String>,
+        remote_wakeup: Option<u64>,
+        raw_line: String,
+    },
     Harvest {
         source_label: String,
         source_path: String,
@@ -130,6 +142,7 @@ pub(super) enum UsbPacketRecord {
         packet_lines: Option<u64>,
         raw_packet_lines: Option<u64>,
         stats_lines: Option<u64>,
+        event_lines: Option<u64>,
         new_lines: Option<u64>,
         duplicate_lines: Option<u64>,
         total_packet_lines: Option<u64>,
@@ -191,6 +204,8 @@ pub(super) fn summarize_text(text: &str) -> UsbPacketSummary {
             );
         } else if line.starts_with("usb-packet-stats ") {
             summary.add_stats_line(line);
+        } else if line.starts_with("usb-event ") {
+            summary.add_event_line(line);
         } else if line.starts_with(HARVEST_PREFIX) {
             summary.add_harvest_line(line);
         }
@@ -329,7 +344,7 @@ pub(super) fn packet_timeline_text_for_text(label: &str, path: &str, text: &str)
     let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_path={path}\n\n"));
     let rows = packet_timeline_rows(text);
     if rows.is_empty() {
-        out.push_str("No USB packet, packet-stat, or harvest timeline rows were captured.\n");
+        out.push_str("No USB packet, lifecycle event, packet-stat, or harvest timeline rows were captured.\n");
     } else {
         for row in rows {
             out.push_str(&row);
@@ -345,8 +360,8 @@ pub(super) fn packet_timeline_text_for_sources(
 ) -> String {
     let mut out = String::from(
         "# USB packet timeline\n\n\
-         # Includes debug input usb-packet, usb-packet-stats, and harvest records.\n\
-         # dt_ms is measured from the previous timestamped packet/stat row in the same source.\n\
+         # Includes debug input usb-packet, usb-event, usb-packet-stats, and harvest records.\n\
+         # dt_ms is measured from the previous timestamped packet/event/stat row in the same source.\n\
          # Use usb-packets.jsonl for machine parsing and raw packet context.\n\n",
     );
     let mut section_count = 0usize;
@@ -367,7 +382,7 @@ pub(super) fn packet_timeline_text_for_sources(
         out.push('\n');
     }
     if section_count == 0 {
-        out.push_str("No USB packet, packet-stat, or harvest timeline rows were captured.\n");
+        out.push_str("No USB packet, lifecycle event, packet-stat, or harvest timeline rows were captured.\n");
     }
     out
 }
@@ -387,13 +402,17 @@ pub(super) fn enumeration_analysis_text_for_sources(
 ) -> String {
     let mut out = String::from(
         "# USB enumeration analysis\n\n\
-         # Derived from debug input usb-packet setup, control-IN, endpoint-IN, endpoint-OUT, and HID report lines.\n\
+         # Derived from debug input usb-packet setup, control-IN, endpoint-IN, endpoint-OUT, HID report, and usb-event lifecycle lines.\n\
          # This file is a quick checklist for whether a host adapter enumerated, configured, probed, and exchanged runtime traffic with the Pico.\n\n",
     );
     let mut section_count = 0usize;
     for source in per_pico.iter().chain(retained_logs.iter()) {
         let analysis = analyze_enumeration(source.text);
-        if analysis.packet_lines == 0 && analysis.harvest_lines == 0 && analysis.stats_lines == 0 {
+        if analysis.packet_lines == 0
+            && analysis.event_lines == 0
+            && analysis.harvest_lines == 0
+            && analysis.stats_lines == 0
+        {
             continue;
         }
         section_count += 1;
@@ -405,7 +424,9 @@ pub(super) fn enumeration_analysis_text_for_sources(
         out.push('\n');
     }
     if section_count == 0 {
-        out.push_str("No USB packet, packet-stat, or harvest evidence was captured.\n");
+        out.push_str(
+            "No USB packet, lifecycle event, packet-stat, or harvest evidence was captured.\n",
+        );
     }
     out
 }
@@ -441,15 +462,16 @@ pub(super) fn summarize_sources(
         .collect();
 
     UsbPacketBundleSummary {
-        artifact_schema_version: 6,
+        artifact_schema_version: 7,
         aggregate,
         per_pico,
         retained_logs,
         notes: vec![
-            "Counts are derived from bundled usb-packet and usb-packet-stats lines.",
+            "Counts are derived from bundled usb-packet, usb-event, and usb-packet-stats lines.",
             "Aggregate sequence gaps are summed per source; sequence numbers are not compared across different Pico/log sources.",
-            "Packet timing fields are derived from firmware t= milliseconds and gap calculations are per source.",
+            "Packet and lifecycle event timing fields are derived from firmware t= milliseconds and gap calculations are per source.",
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
+            "Lifecycle event lines record low-noise USB mount, unmount, suspend, and resume callbacks from debug input firmware.",
             "Packet summaries separate per-packet truncation from cumulative firmware truncated_bytes so lossy captures are visible.",
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
             "Setup/control summary maps expose observed enumeration requests, descriptor requests, known vendor probes, and control payload replies.",
@@ -546,6 +568,18 @@ fn record_from_line(
             raw_line: line.to_string(),
         });
     }
+    if line.starts_with("usb-event ") {
+        let fields = fields(line);
+        return Some(UsbPacketRecord::Event {
+            source_label: label.to_string(),
+            source_path: path.to_string(),
+            line_number,
+            t_ms: parsed_u64(fields.get("t")),
+            event: cloned_field(fields.get("event")),
+            remote_wakeup: parsed_u64(fields.get("remote_wakeup")),
+            raw_line: line.to_string(),
+        });
+    }
     if line.starts_with(HARVEST_PREFIX) {
         let value = harvest_value(line);
         return Some(UsbPacketRecord::Harvest {
@@ -596,6 +630,9 @@ fn record_from_line(
             stats_lines: value
                 .as_ref()
                 .and_then(|value| json_u64(value, "stats_lines")),
+            event_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "event_lines")),
             new_lines: value
                 .as_ref()
                 .and_then(|value| json_u64(value, "new_lines")),
@@ -665,6 +702,19 @@ fn packet_timeline_row(
             display_field(fields.get("truncated_bytes")),
             display_field(fields.get("truncated_packets")),
             display_field(fields.get("idle_in_suppressed")),
+        ));
+    }
+    if line.starts_with("usb-event ") {
+        let fields = fields(line);
+        let t_ms = parsed_u64(fields.get("t"));
+        let dt_ms = timeline_delta(t_ms, previous_t_ms);
+        return Some(format!(
+            "event line={} t={} dt_ms={} event={} remote_wakeup={}",
+            line_number,
+            display_field(fields.get("t")),
+            dt_ms,
+            display_field(fields.get("event")),
+            display_field(fields.get("remote_wakeup")),
         ));
     }
     if line.starts_with(HARVEST_PREFIX) {
@@ -1183,7 +1233,13 @@ fn le_u16(bytes: &[u8], index: usize) -> u64 {
 struct UsbEnumerationAnalysis {
     packet_lines: u64,
     stats_lines: u64,
+    event_lines: u64,
     harvest_lines: u64,
+    mount_events: u64,
+    unmount_events: u64,
+    suspend_events: u64,
+    resume_events: u64,
+    events: BTreeMap<String, u64>,
     setup_lines: u64,
     control_in_lines: u64,
     endpoint_in_lines: u64,
@@ -1220,6 +1276,8 @@ fn analyze_enumeration(text: &str) -> UsbEnumerationAnalysis {
             analysis.add_packet_line(line);
         } else if line.starts_with("usb-packet-stats ") {
             analysis.stats_lines += 1;
+        } else if line.starts_with("usb-event ") {
+            analysis.add_event_line(line);
         } else if line.starts_with(HARVEST_PREFIX) {
             analysis.harvest_lines += 1;
         }
@@ -1245,6 +1303,20 @@ impl UsbEnumerationAnalysis {
             _ => {}
         }
         self.add_hid_report_fields(&fields);
+    }
+
+    fn add_event_line(&mut self, line: &str) {
+        self.event_lines += 1;
+        let fields = fields(line);
+        let event = fields.get("event").copied().unwrap_or("unknown");
+        bump(&mut self.events, event);
+        match event {
+            "mount" => self.mount_events += 1,
+            "unmount" => self.unmount_events += 1,
+            "suspend" => self.suspend_events += 1,
+            "resume" => self.resume_events += 1,
+            _ => {}
+        }
     }
 
     fn add_setup_fields(&mut self, fields: &BTreeMap<&str, &str>) {
@@ -1384,9 +1456,30 @@ fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysi
         format_args!("packet_lines={}\n", analysis.packet_lines),
     );
     let _ = std::fmt::Write::write_fmt(out, format_args!("stats_lines={}\n", analysis.stats_lines));
+    let _ = std::fmt::Write::write_fmt(out, format_args!("event_lines={}\n", analysis.event_lines));
     let _ = std::fmt::Write::write_fmt(
         out,
         format_args!("harvest_lines={}\n", analysis.harvest_lines),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("mount_events={}\n", analysis.mount_events),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("unmount_events={}\n", analysis.unmount_events),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("suspend_events={}\n", analysis.suspend_events),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("resume_events={}\n", analysis.resume_events),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("events={}\n", format_count_map(&analysis.events)),
     );
     let _ = std::fmt::Write::write_fmt(out, format_args!("setup_lines={}\n", analysis.setup_lines));
     let _ = std::fmt::Write::write_fmt(
@@ -1564,13 +1657,19 @@ fn write_bool(out: &mut String, key: &str, value: bool) {
 
 fn enumeration_verdict(analysis: &UsbEnumerationAnalysis) -> &'static str {
     if analysis.packet_lines == 0 {
-        if analysis.harvest_lines > 0 || analysis.stats_lines > 0 {
+        if analysis.mount_events > 0 {
+            "mounted_no_raw_packets"
+        } else if analysis.event_lines > 0 {
+            "usb_lifecycle_events_only_no_raw_packets"
+        } else if analysis.harvest_lines > 0 || analysis.stats_lines > 0 {
             "harvest_or_stats_only_no_raw_packets"
         } else {
             "no_usb_packet_evidence"
         }
     } else if analysis.endpoint_in_lines > 0 || analysis.endpoint_out_lines > 0 {
         "endpoint_traffic_observed"
+    } else if analysis.mount_events > 0 {
+        "mounted_no_endpoint_traffic"
     } else if analysis.set_configuration_requests > 0 {
         "configured_no_endpoint_traffic"
     } else if analysis.configuration_descriptor_replies > 0 {
@@ -1745,6 +1844,15 @@ impl UsbPacketSummary {
         }
     }
 
+    fn add_event_line(&mut self, line: &str) {
+        self.event_lines += 1;
+        let fields = fields(line);
+        bump(
+            &mut self.events,
+            fields.get("event").copied().unwrap_or("unknown"),
+        );
+    }
+
     fn add_harvest_line(&mut self, line: &str) {
         self.harvest_lines += 1;
         let Some(value) = harvest_value(line) else {
@@ -1798,6 +1906,10 @@ impl UsbPacketSummary {
             json_u64(&value, "stats_lines"),
         );
         max_assign(
+            &mut self.max_harvest_event_lines,
+            json_u64(&value, "event_lines"),
+        );
+        max_assign(
             &mut self.max_harvest_new_lines,
             json_u64(&value, "new_lines"),
         );
@@ -1820,7 +1932,9 @@ impl UsbPacketSummary {
     fn merge_from(&mut self, other: &UsbPacketSummary) {
         self.packet_lines += other.packet_lines;
         self.stats_lines += other.stats_lines;
+        self.event_lines += other.event_lines;
         self.harvest_lines += other.harvest_lines;
+        merge_counts(&mut self.events, &other.events);
         merge_counts(&mut self.directions, &other.directions);
         merge_counts(&mut self.sources, &other.sources);
         merge_counts(&mut self.reasons, &other.reasons);
@@ -1958,6 +2072,10 @@ impl UsbPacketSummary {
             &mut self.max_harvest_stats_lines,
             other.max_harvest_stats_lines,
         );
+        max_assign(
+            &mut self.max_harvest_event_lines,
+            other.max_harvest_event_lines,
+        );
         max_assign(&mut self.max_harvest_new_lines, other.max_harvest_new_lines);
         max_assign(
             &mut self.max_harvest_duplicate_lines,
@@ -2071,11 +2189,14 @@ usb-packet seq=1 t=10 dir=out src=vendor len=3 captured=3 dropped=0 suppressed=0
 usb-packet seq=3 t=11 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=2 reason=changed data=00
 usb-packet seq=3 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=0 reason=changed data=00
 usb-packet seq=2 t=13 dir=setup src=vendor-control len=10 captured=8 truncated=2 dropped=4 suppressed=0 reason=control-setup data=C0
+usb-event t=13 event=mount
 usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4 truncated_packets=1 idle_in_suppressed=9
 ";
         let summary = summarize_text(text);
         assert_eq!(summary.packet_lines, 4);
+        assert_eq!(summary.event_lines, 1);
         assert_eq!(summary.stats_lines, 1);
+        assert_eq!(summary.events["mount"], 1);
         assert_eq!(summary.directions["in"], 2);
         assert_eq!(summary.sources["xinput"], 2);
         assert_eq!(summary.reasons["changed"], 2);
@@ -2109,7 +2230,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
     #[test]
     fn summary_counts_harvest_health() {
         let text = "\
-# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":4,\"missing_chunk_count\":1,\"duplicate_chunk_count\":2,\"got_last\":true,\"chunk_complete\":false,\"lost_bytes\":4,\"diag_bytes\":256,\"diag_lines\":12,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":4,\"missing_chunk_count\":1,\"duplicate_chunk_count\":2,\"got_last\":true,\"chunk_complete\":false,\"lost_bytes\":4,\"diag_bytes\":256,\"diag_lines\":12,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"event_lines\":1,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
 # harvest {\"at\":\"2026-06-15T22:30:01-05:00\",\"status\":\"error\",\"duration_ms\":1200,\"error\":\"no log chunks received\"}
 # harvest not-json
 ";
@@ -2129,6 +2250,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         assert_eq!(summary.max_harvest_packet_lines, Some(8));
         assert_eq!(summary.max_harvest_raw_packet_lines, Some(6));
         assert_eq!(summary.max_harvest_stats_lines, Some(2));
+        assert_eq!(summary.max_harvest_event_lines, Some(1));
         assert_eq!(summary.max_harvest_new_lines, Some(2));
         assert_eq!(summary.max_harvest_duplicate_lines, Some(6));
         assert_eq!(summary.harvest_chunk_statuses["incomplete"], 1);
@@ -2144,12 +2266,14 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         let retained = [UsbPacketSummarySource {
             label: "usb-packets.log".to_string(),
             path: "debug-packets/usb-packets.log".to_string(),
-            text: "usb-packet-stats total=64 out=2 truncated_bytes=0 truncated_packets=0 idle_in_suppressed=0\n",
+            text: "usb-event t=22 event=mount\nusb-packet-stats total=64 out=2 truncated_bytes=0 truncated_packets=0 idle_in_suppressed=0\n",
         }];
         let summary = summarize_sources(&per_pico, &retained);
-        assert_eq!(summary.artifact_schema_version, 6);
+        assert_eq!(summary.artifact_schema_version, 7);
         assert_eq!(summary.aggregate.packet_lines, 2);
+        assert_eq!(summary.aggregate.event_lines, 1);
         assert_eq!(summary.aggregate.stats_lines, 1);
+        assert_eq!(summary.aggregate.events["mount"], 1);
         assert_eq!(summary.aggregate.missing_sequence_numbers, 1);
         assert_eq!(summary.per_pico[0].summary.missing_sequence_numbers, 1);
         assert_eq!(
@@ -2163,6 +2287,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         let text = "\
 usb-packet seq=7 t=10 dir=out src=vendor len=3 captured=3 truncated=0 dropped=0 suppressed=0 reason=host-out data=010203
 usb-packet seq=8 t=15 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup data=C020
+usb-event t=18 event=mount
 usb-packet-stats t=40 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9
 # harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_complete\":true,\"packet_lines\":8,\"raw_packet_lines\":6,\"new_lines\":2}
 usb-packet seq=9 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=0 reason=changed data=00
@@ -2172,11 +2297,12 @@ usb-packet seq=9 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=
         assert!(out.contains("packet line=1 seq=7 t=10 dt_ms=- dir=out src=vendor"));
         assert!(out.contains("truncated=0 dropped=0 suppressed=0"));
         assert!(out.contains("packet line=2 seq=8 t=15 dt_ms=5 dir=setup"));
+        assert!(out.contains("event line=3 t=18 dt_ms=3 event=mount remote_wakeup=-"));
         assert!(out.contains(
-            "stats line=3 t=40 dt_ms=25 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9"
+            "stats line=4 t=40 dt_ms=22 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9"
         ));
-        assert!(out.contains("harvest line=4 at=2026-06-15T22:30:00-05:00 status=ok duration_ms=14 chunk_complete=true packet_lines=8 raw_packet_lines=6 new_lines=2 error=-"));
-        assert!(out.contains("packet line=5 seq=9 t=12 dt_ms=regression dir=in"));
+        assert!(out.contains("harvest line=5 at=2026-06-15T22:30:00-05:00 status=ok duration_ms=14 chunk_complete=true packet_lines=8 raw_packet_lines=6 new_lines=2 error=-"));
+        assert!(out.contains("packet line=6 seq=9 t=12 dt_ms=regression dir=in"));
 
         let summary = summarize_text(text);
         assert_eq!(summary.max_inter_packet_gap_ms, Some(5));
@@ -2213,12 +2339,16 @@ usb-packet seq=6 t=15 dir=setup src=standard-control bm=0x00 req=0x09 value=0x00
 usb-packet seq=7 t=16 dir=setup src=vendor-control bm=0xC0 req=0x20 value=0x0000 index=0x0007 wlen=38 len=8 captured=8 data=C020000007002600
 usb-packet seq=8 t=17 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 reason=control-reply data=0A000000000003062600
 usb-packet seq=9 t=18 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-out data=010203
+usb-event t=19 event=mount
 ";
         let out =
             enumeration_analysis_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
         assert!(out.contains("# USB enumeration analysis"));
         assert!(out.contains("verdict=endpoint_traffic_observed"));
         assert!(out.contains("packet_lines=9"));
+        assert!(out.contains("event_lines=1"));
+        assert!(out.contains("mount_events=1"));
+        assert!(out.contains("events=mount:1"));
         assert!(out.contains("device_descriptor_request=yes"));
         assert!(out.contains("device_descriptor_reply=yes"));
         assert!(out.contains("device_vid_pid=0x045E:0x028E"));
@@ -2250,6 +2380,20 @@ usb-packet seq=9 t=18 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-
     }
 
     #[test]
+    fn enumeration_analysis_distinguishes_lifecycle_only_evidence() {
+        let text = "usb-event t=22 event=mount\nusb-event t=24 event=suspend remote_wakeup=1\n";
+        let out =
+            enumeration_analysis_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("verdict=mounted_no_raw_packets"));
+        assert!(out.contains("packet_lines=0"));
+        assert!(out.contains("event_lines=2"));
+        assert!(out.contains("mount_events=1"));
+        assert!(out.contains("suspend_events=1"));
+        assert!(out.contains("events=mount:1;suspend:1"));
+        assert!(out.contains("device_descriptor_request=no"));
+    }
+
+    #[test]
     fn enumeration_analysis_sources_omit_empty_sources() {
         let per_pico = [UsbPacketSummarySource {
             label: "02E22DA9".to_string(),
@@ -2259,12 +2403,12 @@ usb-packet seq=9 t=18 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-
         let retained = [UsbPacketSummarySource {
             label: "usb-packets.log".to_string(),
             path: "debug-packets/usb-packets.log".to_string(),
-            text: "usb-packet seq=2 dir=setup bm=0x80 req=0x06 value=0x0100 index=0x0000 wlen=18 data=8006000100001200\n",
+            text: "usb-event t=22 event=mount\n",
         }];
         let out = enumeration_analysis_text_for_sources(&per_pico, &retained);
         assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
         assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
-        assert!(out.contains("verdict=setup_requests_seen_no_descriptor_reply"));
+        assert!(out.contains("verdict=mounted_no_raw_packets"));
     }
 
     #[test]
@@ -2430,8 +2574,9 @@ usb-packet seq=3 t=12 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 r
 usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 truncated=0 dropped=0 suppressed=0 reason=control-reply data=12010002
 usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
 usb-packet seq=9 t=12 dir=out src=hid-output len=3 captured=3 truncated=0 dropped=0 suppressed=0 reason=host-out report_id=0x01 report_type=2 data=050607
+usb-event t=13 event=suspend remote_wakeup=1
 usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 truncated_packets=1 idle_in_suppressed=9
-# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":3,\"missing_chunk_count\":0,\"duplicate_chunk_count\":1,\"got_last\":true,\"chunk_complete\":true,\"lost_bytes\":4,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":3,\"missing_chunk_count\":0,\"duplicate_chunk_count\":1,\"got_last\":true,\"chunk_complete\":true,\"lost_bytes\":4,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"event_lines\":1,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
 ";
         let jsonl =
             records_jsonl_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text).unwrap();
@@ -2439,7 +2584,7 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(records.len(), 5);
+        assert_eq!(records.len(), 6);
         assert_eq!(records[0]["kind"], "packet");
         assert_eq!(records[0]["source_label"], "02E22DA9");
         assert_eq!(records[0]["line_number"], 1);
@@ -2474,28 +2619,33 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[2]["hid_report_id"], 1);
         assert_eq!(records[2]["hid_report_type"], 2);
         assert_eq!(records[2]["hid_report_type_name"], "output");
-        assert_eq!(records[3]["kind"], "stats");
-        assert_eq!(records[3]["total"], 64);
-        assert_eq!(records[3]["in"], 4);
-        assert_eq!(records[3]["truncated_packets"], 1);
-        assert_eq!(records[3]["idle_in_suppressed"], 9);
-        assert_eq!(records[4]["kind"], "harvest");
-        assert_eq!(records[4]["status"], "ok");
-        assert_eq!(records[4]["duration_ms"], 14);
-        assert_eq!(records[4]["chunk_count"], 3);
-        assert_eq!(records[4]["expected_chunks"], 3);
-        assert_eq!(records[4]["missing_chunk_count"], 0);
-        assert_eq!(records[4]["duplicate_chunk_count"], 1);
-        assert_eq!(records[4]["got_last"], true);
-        assert_eq!(records[4]["chunk_complete"], true);
-        assert_eq!(records[4]["lost_bytes"], 4);
-        assert_eq!(records[4]["diag_bytes"], 512);
-        assert_eq!(records[4]["diag_lines"], 20);
-        assert_eq!(records[4]["packet_lines"], 8);
-        assert_eq!(records[4]["raw_packet_lines"], 6);
-        assert_eq!(records[4]["stats_lines"], 2);
-        assert_eq!(records[4]["new_lines"], 2);
-        assert_eq!(records[4]["duplicate_lines"], 6);
-        assert_eq!(records[4]["total_packet_lines"], 12);
+        assert_eq!(records[3]["kind"], "event");
+        assert_eq!(records[3]["t_ms"], 13);
+        assert_eq!(records[3]["event"], "suspend");
+        assert_eq!(records[3]["remote_wakeup"], 1);
+        assert_eq!(records[4]["kind"], "stats");
+        assert_eq!(records[4]["total"], 64);
+        assert_eq!(records[4]["in"], 4);
+        assert_eq!(records[4]["truncated_packets"], 1);
+        assert_eq!(records[4]["idle_in_suppressed"], 9);
+        assert_eq!(records[5]["kind"], "harvest");
+        assert_eq!(records[5]["status"], "ok");
+        assert_eq!(records[5]["duration_ms"], 14);
+        assert_eq!(records[5]["chunk_count"], 3);
+        assert_eq!(records[5]["expected_chunks"], 3);
+        assert_eq!(records[5]["missing_chunk_count"], 0);
+        assert_eq!(records[5]["duplicate_chunk_count"], 1);
+        assert_eq!(records[5]["got_last"], true);
+        assert_eq!(records[5]["chunk_complete"], true);
+        assert_eq!(records[5]["lost_bytes"], 4);
+        assert_eq!(records[5]["diag_bytes"], 512);
+        assert_eq!(records[5]["diag_lines"], 20);
+        assert_eq!(records[5]["packet_lines"], 8);
+        assert_eq!(records[5]["raw_packet_lines"], 6);
+        assert_eq!(records[5]["stats_lines"], 2);
+        assert_eq!(records[5]["event_lines"], 1);
+        assert_eq!(records[5]["new_lines"], 2);
+        assert_eq!(records[5]["duplicate_lines"], 6);
+        assert_eq!(records[5]["total_packet_lines"], 12);
     }
 }

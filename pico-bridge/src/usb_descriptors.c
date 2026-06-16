@@ -29,6 +29,7 @@
 // to extra interfaces, and run mode has UDP TYPE_GET_LOG for diag.
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "tusb.h"
@@ -915,6 +916,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_requ
 
 void tud_mount_cb(void) {
     usb_diag_note_mount();
+    usb_packet_debug_note_event("mount", "");
     xinput_note_usb_reset();
     hid_kbd_note_usb_reset();
     dinput_note_usb_reset();
@@ -924,6 +926,7 @@ void tud_mount_cb(void) {
 
 void tud_umount_cb(void) {
     usb_diag_note_umount();
+    usb_packet_debug_note_event("unmount", "");
     xinput_note_usb_reset();
     hid_kbd_note_usb_reset();
     dinput_note_usb_reset();
@@ -933,11 +936,15 @@ void tud_umount_cb(void) {
 
 void tud_suspend_cb(bool remote_wakeup_en) {
     usb_diag_note_suspend();
+    char fields[24];
+    snprintf(fields, sizeof(fields), "remote_wakeup=%u", remote_wakeup_en ? 1u : 0u);
+    usb_packet_debug_note_event("suspend", fields);
     diag_log_printf("usb: suspended (remote_wakeup=%d)", (int)remote_wakeup_en);
 }
 
 void tud_resume_cb(void) {
     usb_diag_note_resume();
+    usb_packet_debug_note_event("resume", "");
     diag_log_msg("usb: resumed");
 }
 

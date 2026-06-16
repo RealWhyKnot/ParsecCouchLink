@@ -17,3 +17,4 @@ void usb_packet_debug_note_hid_get_report(uint8_t instance, uint8_t report_id, u
 void usb_packet_debug_note_hid_set_report(uint8_t instance, uint8_t report_id, uint8_t report_type,
                                           uint16_t payload_len);
 void usb_packet_debug_note_control_in(const char *source, uint8_t const *buffer, uint16_t len);
+void usb_packet_debug_note_event(const char *event, const char *fields);

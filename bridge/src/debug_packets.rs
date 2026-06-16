@@ -33,6 +33,7 @@ pub(crate) struct HarvestOkRecord {
     pub packet_lines: usize,
     pub raw_packet_lines: usize,
     pub stats_lines: usize,
+    pub event_lines: usize,
     pub new_lines: usize,
 }
 
@@ -161,6 +162,7 @@ fn harvest_ok_json(record: &HarvestOkRecord, total_packet_lines: usize) -> serde
         "packet_lines": record.packet_lines,
         "raw_packet_lines": record.raw_packet_lines,
         "stats_lines": record.stats_lines,
+        "event_lines": record.event_lines,
         "new_lines": record.new_lines,
         "duplicate_lines": duplicate_lines,
         "total_packet_lines": total_packet_lines,
@@ -214,6 +216,7 @@ pub(crate) fn extract_usb_packet_lines(diag_text: &str) -> Vec<String> {
         .filter_map(|line| {
             line.find("usb-packet ")
                 .or_else(|| line.find("usb-packet-stats "))
+                .or_else(|| line.find("usb-event "))
                 .map(|idx| line[idx..].to_string())
         })
         .collect()
@@ -358,7 +361,7 @@ mod tests {
 
     #[test]
     fn extracts_packet_lines_from_timestamped_diag() {
-        let text = "[  10] boot\n[  11] usb-packet seq=7 dir=out data=0102\nplain usb-packet seq=8 dir=in data=03\n[  12] usb-packet seq=9 dir=setup data=C020000000000040\n[  13] usb-packet-stats total=64 in=10 out=50\n";
+        let text = "[  10] boot\n[  11] usb-packet seq=7 dir=out data=0102\nplain usb-packet seq=8 dir=in data=03\n[  12] usb-packet seq=9 dir=setup data=C020000000000040\n[  13] usb-packet-stats total=64 in=10 out=50\n[  14] usb-event t=20 event=mount\n";
         assert_eq!(
             extract_usb_packet_lines(text),
             vec![
@@ -366,6 +369,7 @@ mod tests {
                 "usb-packet seq=8 dir=in data=03".to_string(),
                 "usb-packet seq=9 dir=setup data=C020000000000040".to_string(),
                 "usb-packet-stats total=64 in=10 out=50".to_string(),
+                "usb-event t=20 event=mount".to_string(),
             ]
         );
     }
@@ -416,6 +420,7 @@ mod tests {
             packet_lines: 8,
             raw_packet_lines: 6,
             stats_lines: 2,
+            event_lines: 1,
             new_lines: 1,
         })
         .unwrap();
@@ -445,6 +450,7 @@ mod tests {
         assert_eq!(harvest[0]["packet_lines"], 8);
         assert_eq!(harvest[0]["raw_packet_lines"], 6);
         assert_eq!(harvest[0]["stats_lines"], 2);
+        assert_eq!(harvest[0]["event_lines"], 1);
         assert_eq!(harvest[0]["new_lines"], 1);
         assert_eq!(harvest[0]["duplicate_lines"], 7);
         assert_eq!(harvest[0]["total_packet_lines"], 1);

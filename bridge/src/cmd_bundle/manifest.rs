@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 17;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 18;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -178,12 +178,12 @@ pub(super) async fn build_manifest(
             "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
             "When bundle finds a live Pico already in debug input mode, it performs a bundle-time GET_LOG harvest and records the harvest health in that Pico's usb-packets.txt.",
             "Retained debug packet logs include per-harvest health records for GET_LOG duration, chunks, lost bytes, packet counts, and failures.",
-            "usb-packets-summary.json summarizes packet directions, sources, reasons, sequence gaps, truncation, firmware packet-stat checkpoints, debug harvest chunk health, and decoded setup/control behavior maps.",
-            "usb-packets.jsonl normalizes each packet/stat line for reverse-engineering tools, including decoded USB setup and HID report metadata where present.",
+            "usb-packets-summary.json summarizes packet directions, sources, reasons, lifecycle events, sequence gaps, truncation, firmware packet-stat checkpoints, debug harvest chunk health, and decoded setup/control behavior maps.",
+            "usb-packets.jsonl normalizes each packet/event/stat line for reverse-engineering tools, including decoded USB setup and HID report metadata where present.",
             "usb-control-transfers.txt extracts setup and control-IN traffic into a compact transcript with decoded setup request names.",
             "usb-hid-reports.txt extracts HID report ids and report types from HID OUT/FEATURE payloads and HID GET_REPORT/SET_REPORT setup requests.",
-            "usb-packet-timeline.txt extracts packet, stats, and harvest records in timestamp order with per-source timing deltas.",
-            "usb-enumeration-analysis.txt turns packet captures into a phase checklist for descriptor fetches, USB identity, configuration, vendor probes, HID reports, and endpoint traffic.",
+            "usb-packet-timeline.txt extracts packet, lifecycle event, stats, and harvest records in timestamp order with per-source timing deltas.",
+            "usb-enumeration-analysis.txt turns packet and lifecycle captures into a phase checklist for descriptor fetches, USB identity, mount state, configuration, vendor probes, HID reports, and endpoint traffic.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
             "debug-capture-evidence.json exposes the same debug capture gate, lossiness, and per-source evidence counts in machine-readable form.",
         ],

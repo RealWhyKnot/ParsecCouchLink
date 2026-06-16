@@ -63,6 +63,7 @@ static void normal_persona_does_not_log_packets(void) {
     usb_packet_debug_note_hid_get_report(2, 0xEF, 3, 64);
     usb_packet_debug_note_hid_set_report(2, 0x01, 2, sizeof(data));
     usb_packet_debug_note_out_report("hid-output", 0x01, 2, data, sizeof(data));
+    usb_packet_debug_note_event("mount", "");
     assert(line_count == 0);
     current_persona = RUN_PERSONA_DEBUG;
 }
@@ -190,6 +191,17 @@ static void debug_packet_logs_per_packet_truncation(void) {
     require_log_contains("dropped=6");
 }
 
+static void debug_usb_event_logs_lifecycle_without_packet_stats(void) {
+    fake_ms = 1250;
+    reset_log();
+    usb_packet_debug_note_event("mount", "");
+    usb_packet_debug_note_event("suspend", "remote_wakeup=1");
+    assert(line_count == 2);
+    require_log_contains("usb-event t=1250 event=mount");
+    require_log_contains("usb-event t=1250 event=suspend remote_wakeup=1");
+    assert(strstr(log_text, "usb-packet-stats") == NULL);
+}
+
 static void debug_packet_stats_repeat_periodically(void) {
     uint8_t data[] = {0x55};
     reset_log();
@@ -216,6 +228,7 @@ int main(void) {
     debug_hid_control_requests_log_setup_metadata();
     debug_hid_out_report_logs_report_metadata();
     debug_packet_logs_per_packet_truncation();
+    debug_usb_event_logs_lifecycle_without_packet_stats();
     debug_packet_stats_repeat_periodically();
     puts("usb_packet_debug tests passed");
     return 0;

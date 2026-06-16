@@ -1102,11 +1102,14 @@ async fn capture_one_pico(
     };
     let usb_packet_count = count_usb_packet_lines(&usb_packets_text);
     let usb_packet_stats_count = count_usb_packet_stats_lines(&usb_packets_text);
+    let usb_packet_event_count = count_usb_packet_event_lines(&usb_packets_text);
     let usb_packet_harvest_count = count_usb_packet_harvest_lines(&usb_packets_text);
     let usb_packet_status = if usb_packet_count > 0 {
         "captured"
     } else if usb_packet_stats_count > 0 {
         "stats_only"
+    } else if usb_packet_event_count > 0 {
+        "lifecycle_only"
     } else if usb_packet_harvest_count > 0 {
         "harvest_only"
     } else if seed.target.is_some() {
@@ -1120,7 +1123,7 @@ async fn capture_one_pico(
         usb_packet_status,
         usb_packets_text.len(),
         format!(
-            "count={usb_packet_count}; stats={usb_packet_stats_count}; harvest={usb_packet_harvest_count}"
+            "count={usb_packet_count}; stats={usb_packet_stats_count}; events={usb_packet_event_count}; harvest={usb_packet_harvest_count}"
         ),
     );
 
@@ -1288,12 +1291,17 @@ fn usb_packets_text_from_debug_snapshot(
         .iter()
         .filter(|line| line.starts_with("usb-packet-stats "))
         .count();
+    let event_lines = lines
+        .iter()
+        .filter(|line| line.starts_with("usb-event "))
+        .count();
     let harvest = debug_packets::HarvestOkRecord {
         duration_ms,
         snapshot: snapshot.clone(),
         packet_lines: lines.len(),
         raw_packet_lines,
         stats_lines,
+        event_lines,
         new_lines: lines.len(),
     };
     let harvest_line = debug_packets::harvest_ok_line(&harvest, lines.len());
@@ -1319,7 +1327,7 @@ fn usb_packets_text_from_lines(uid: &str, lines: &[String], harvest_line: Option
     if lines.is_empty() {
         let _ = writeln!(
             out,
-            "No usb-packet lines were present. Switch the Pico to debug input mode, reproduce the adapter traffic, then run bundle again."
+            "No usb-packet, usb-event, or usb-packet-stats lines were present. Switch the Pico to debug input mode, reproduce the adapter traffic, then run bundle again."
         );
     }
     if let Some(line) = harvest_line {
@@ -1341,6 +1349,12 @@ fn count_usb_packet_stats_lines(text: &str) -> usize {
         .count()
 }
 
+fn count_usb_packet_event_lines(text: &str) -> usize {
+    text.lines()
+        .filter(|line| line.starts_with("usb-event "))
+        .count()
+}
+
 fn count_usb_packet_harvest_lines(text: &str) -> usize {
     text.lines()
         .filter(|line| line.starts_with("# harvest "))
@@ -1350,6 +1364,7 @@ fn count_usb_packet_harvest_lines(text: &str) -> usize {
 fn usb_packet_line_index(line: &str) -> Option<usize> {
     line.find("usb-packet ")
         .or_else(|| line.find("usb-packet-stats "))
+        .or_else(|| line.find("usb-event "))
 }
 
 fn duration_ms_u64(duration: Duration) -> u64 {
@@ -1370,6 +1385,7 @@ fn aggregate_usb_packets(
     let mut out = String::from("# Aggregate USB packet capture evidence\n\n");
     let mut raw_total = 0usize;
     let mut stats_total = 0usize;
+    let mut event_total = 0usize;
     let mut harvest_total = 0usize;
     let mut diagnostic_total = 0usize;
     for capture in captures {
@@ -1388,6 +1404,8 @@ fn aggregate_usb_packets(
                     raw_total += 1;
                 } else if line.starts_with("usb-packet-stats ") {
                     stats_total += 1;
+                } else if line.starts_with("usb-event ") {
+                    event_total += 1;
                 } else if line.starts_with("# harvest ") {
                     harvest_total += 1;
                 }
@@ -1408,6 +1426,8 @@ fn aggregate_usb_packets(
                         raw_total += 1;
                     } else if line.starts_with("usb-packet-stats ") {
                         stats_total += 1;
+                    } else if line.starts_with("usb-event ") {
+                        event_total += 1;
                     } else if line.starts_with("# harvest ") {
                         harvest_total += 1;
                     }
@@ -1417,19 +1437,24 @@ fn aggregate_usb_packets(
         }
     }
     if diagnostic_total == 0 {
-        out.push_str("No raw USB packets were captured in this bundle.\n");
+        out.push_str("No debug input USB packet, lifecycle event, stat, or harvest lines were captured in this bundle.\n");
     } else if raw_total == 0 {
-        match (stats_total > 0, harvest_total > 0) {
-            (true, true) => out.push_str(
-                "No raw USB packet payload lines were captured, but packet stats and harvest records were present.\n",
-            ),
-            (true, false) => out.push_str(
-                "No raw USB packet payload lines were captured, but packet stats were present.\n",
-            ),
-            (false, true) => out.push_str(
-                "No raw USB packet payload lines were captured, but harvest records were present.\n",
-            ),
-            (false, false) => {}
+        let mut kinds = Vec::new();
+        if stats_total > 0 {
+            kinds.push("packet stats");
+        }
+        if event_total > 0 {
+            kinds.push("USB lifecycle events");
+        }
+        if harvest_total > 0 {
+            kinds.push("harvest records");
+        }
+        if !kinds.is_empty() {
+            let _ = writeln!(
+                out,
+                "No raw USB packet payload lines were captured, but {} were present.",
+                kinds.join(", ")
+            );
         }
     }
     out
@@ -1449,6 +1474,7 @@ fn debug_capture_verdict_text(
     let setup_lines = debug_summary_direction_count(summary, "setup");
     let control_in_lines = debug_summary_direction_count(summary, "control-in");
     let hid_report_lines = summary.aggregate.hid_report_lines;
+    let usb_event_lines = summary.aggregate.event_lines;
     let debug_persona_captures = captures
         .iter()
         .filter(|capture| state_json_persona(&capture.state_json).as_deref() == Some("debug"))
@@ -1461,6 +1487,7 @@ fn debug_capture_verdict_text(
     let _ = writeln!(out, "gate_reason={gate_reason}");
     let _ = writeln!(out, "raw_packet_lines={}", summary.aggregate.packet_lines);
     let _ = writeln!(out, "packet_stats_lines={}", summary.aggregate.stats_lines);
+    let _ = writeln!(out, "usb_event_lines={usb_event_lines}");
     let _ = writeln!(out, "harvest_lines={}", summary.aggregate.harvest_lines);
     let _ = writeln!(
         out,
@@ -1539,6 +1566,11 @@ fn debug_capture_verdict_text(
     );
     let _ = writeln!(
         out,
+        "usb_events={}",
+        format_count_map(&summary.aggregate.events)
+    );
+    let _ = writeln!(
+        out,
         "setup_requests={}",
         format_count_map(&summary.aggregate.setup_requests)
     );
@@ -1583,6 +1615,7 @@ fn debug_capture_verdict_text(
     out.push_str("- setup_requests and control_payload_summaries show whether enumeration, descriptor fetches, class/HID probes, or known vendor probes were observed.\n");
     out.push_str("- setup_lines or control_in_lines > 0 is preferred for enumeration/control-transfer failures.\n");
     out.push_str("- hid_report_lines > 0 is useful for HID-class adapter report analysis.\n");
+    out.push_str("- usb_event_lines > 0 is useful for USB lifecycle failures such as mount, unmount, suspend, or resume without raw traffic.\n");
     out.push_str(
         "- endpoint_in_lines or endpoint_out_lines > 0 is preferred for runtime adapter traffic.\n",
     );
@@ -1611,8 +1644,11 @@ fn debug_capture_verdict_text(
         "harvest_attempted_no_packets" => out.push_str(
             "The bridge attempted retained debug packet harvests, but no raw packet payload lines were captured.",
         ),
+        "debug_lifecycle_only" => out.push_str(
+            "USB lifecycle events were captured, but raw packet payload lines were not retained.",
+        ),
         "retained_logs_without_packet_lines" => out.push_str(
-            "Retained debug packet log files exist, but they did not contain packet, stats, or harvest records.",
+            "Retained debug packet log files exist, but they did not contain packet, lifecycle, stats, or harvest records.",
         ),
         "live_picos_no_packet_evidence" => out.push_str(
             "At least one Pico was reachable, but the captured diagnostics did not include debug input packet evidence.",
@@ -1682,10 +1718,12 @@ fn debug_capture_verdict_text(
             let log_summary = summarize_text(&log.text);
             let _ = writeln!(
                 out,
-                "- path=debug-packets/{} raw_packets={} stats={} hid_reports={} max_gap_ms={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_lost_bytes={} truncated_packets={} max_packet_truncated_bytes={} max_diag_bytes={}",
+                "- path=debug-packets/{} raw_packets={} stats={} events={} event_names={} hid_reports={} max_gap_ms={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_lost_bytes={} truncated_packets={} max_packet_truncated_bytes={} max_diag_bytes={}",
                 log.name,
                 log_summary.packet_lines,
                 log_summary.stats_lines,
+                log_summary.event_lines,
+                format_count_map(&log_summary.events),
                 log_summary.hid_report_lines,
                 log_summary.max_inter_packet_gap_ms.unwrap_or(0),
                 log_summary.harvest_lines,
@@ -1797,7 +1835,7 @@ fn debug_capture_evidence_report_json(
         })
         .collect();
     let report = DebugCaptureEvidenceReport {
-        artifact_schema_version: 2,
+        artifact_schema_version: 3,
         overall_status: status,
         evidence_grade,
         capture_quality,
@@ -1813,6 +1851,7 @@ fn debug_capture_evidence_report_json(
             "capture_quality is lossy when packet payloads are truncated or GET_LOG harvests report lost bytes or missing chunks.",
             "Per-source summary counts are calculated independently; aggregate sequence gaps are summed per source.",
             "Raw packet dumps are only present when the Pico was intentionally switched into debug input mode.",
+            "USB lifecycle event rows can show mount, unmount, suspend, or resume even when raw packet payloads are absent.",
         ],
     };
     Ok(serde_json::to_string_pretty(&report)?)
@@ -1840,8 +1879,12 @@ fn debug_capture_source_missing_evidence(
     if !retained_log && persona != Some("debug") {
         lines.push("current state proving persona=debug for this Pico");
     }
-    if summary.packet_lines == 0 && summary.stats_lines == 0 && summary.harvest_lines == 0 {
-        lines.push("debug packet stats or harvest records from this source");
+    if summary.packet_lines == 0
+        && summary.stats_lines == 0
+        && summary.event_lines == 0
+        && summary.harvest_lines == 0
+    {
+        lines.push("debug packet lifecycle, stats, or harvest records from this source");
     }
     if debug_capture_summary_has_loss(summary) {
         lines.push("lossless packet payload and harvest capture from this source");
@@ -1862,7 +1905,10 @@ fn debug_capture_evidence_grade(summary: &UsbPacketBundleSummary) -> &'static st
         "complete"
     } else if summary.aggregate.packet_lines > 0 {
         "usable_raw_packets"
-    } else if summary.aggregate.stats_lines > 0 || summary.aggregate.harvest_lines > 0 {
+    } else if summary.aggregate.stats_lines > 0
+        || summary.aggregate.event_lines > 0
+        || summary.aggregate.harvest_lines > 0
+    {
         "partial_no_payloads"
     } else {
         "missing"
@@ -1908,6 +1954,7 @@ fn debug_capture_missing_evidence_lines(
         lines.push("current per-Pico state proving persona=debug");
     }
     if summary.aggregate.packet_lines == 0
+        && summary.aggregate.event_lines == 0
         && summary.aggregate.harvest_lines == 0
         && retained_logs.is_empty()
     {
@@ -1966,6 +2013,8 @@ fn debug_capture_overall_status(
         "raw_packets_captured"
     } else if summary.aggregate.stats_lines > 0 {
         "debug_stats_only"
+    } else if summary.aggregate.event_lines > 0 {
+        "debug_lifecycle_only"
     } else if summary.aggregate.harvest_lines > 0 {
         "harvest_attempted_no_packets"
     } else if !retained_logs.is_empty() {
@@ -2000,6 +2049,7 @@ fn format_count_map(map: &BTreeMap<String, u64>) -> String {
 fn is_usb_packet_diagnostic_line(line: &str) -> bool {
     line.starts_with("usb-packet ")
         || line.starts_with("usb-packet-stats ")
+        || line.starts_with("usb-event ")
         || line.starts_with("# harvest ")
 }
 
@@ -2102,8 +2152,8 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_usb_packets, count_usb_packet_harvest_lines, count_usb_packet_lines,
-        count_usb_packet_stats_lines, debug_capture_evidence_report_json,
+        aggregate_usb_packets, count_usb_packet_event_lines, count_usb_packet_harvest_lines,
+        count_usb_packet_lines, count_usb_packet_stats_lines, debug_capture_evidence_report_json,
         debug_capture_overall_status, debug_capture_verdict_text, sanitize_path_component,
         usb_packets_text_from_debug_snapshot, usb_packets_text_from_diag, PicoBundleCapture,
         RetainedDebugPacketLog,
@@ -2119,11 +2169,13 @@ mod tests {
 
     #[test]
     fn extracts_usb_packet_lines_from_diag_log() {
-        let diag = "[      10] boot\n[      11] usb-packet seq=0 dir=out len=3 data=010203\n[      12] usb-packet-stats total=64 in=10 out=54\n";
+        let diag = "[      10] boot\n[      11] usb-packet seq=0 dir=out len=3 data=010203\n[      12] usb-event t=22 event=mount\n[      13] usb-packet-stats total=64 in=10 out=54\n";
         let out = usb_packets_text_from_diag("02E22DA9", diag);
         assert!(out.contains("usb-packet seq=0 dir=out len=3 data=010203"));
+        assert!(out.contains("usb-event t=22 event=mount"));
         assert!(out.contains("usb-packet-stats total=64 in=10 out=54"));
         assert_eq!(count_usb_packet_lines(&out), 1);
+        assert_eq!(count_usb_packet_event_lines(&out), 1);
         assert_eq!(count_usb_packet_stats_lines(&out), 1);
         assert_eq!(count_usb_packet_harvest_lines(&out), 0);
     }
@@ -2131,7 +2183,7 @@ mod tests {
     #[test]
     fn bundle_debug_snapshot_includes_harvest_health() {
         let snapshot = crate::debug_packets::DiagLogSnapshot {
-            text: "usb-packet seq=1 dir=out data=010203\nusb-packet-stats total=1 out=1\n"
+            text: "usb-packet seq=1 dir=out data=010203\nusb-event t=22 event=mount\nusb-packet-stats total=1 out=1\n"
                 .to_string(),
             lost_bytes: 7,
             chunk_count: 2,
@@ -2140,10 +2192,11 @@ mod tests {
             duplicate_chunk_count: 1,
             got_last: true,
             byte_count: 72,
-            line_count: 2,
+            line_count: 3,
         };
         let out = usb_packets_text_from_debug_snapshot("02E22DA9", &snapshot, 25);
         assert!(out.contains("usb-packet seq=1 dir=out data=010203"));
+        assert!(out.contains("usb-event t=22 event=mount"));
         assert!(out.contains("usb-packet-stats total=1 out=1"));
         assert!(out.contains("# harvest {"));
         assert!(out.contains("\"duration_ms\":25"));
@@ -2153,7 +2206,9 @@ mod tests {
         assert!(out.contains("\"lost_bytes\":7"));
         assert!(out.contains("\"raw_packet_lines\":1"));
         assert!(out.contains("\"stats_lines\":1"));
+        assert!(out.contains("\"event_lines\":1"));
         assert_eq!(count_usb_packet_lines(&out), 1);
+        assert_eq!(count_usb_packet_event_lines(&out), 1);
         assert_eq!(count_usb_packet_stats_lines(&out), 1);
         assert_eq!(count_usb_packet_harvest_lines(&out), 1);
     }
@@ -2172,11 +2227,12 @@ mod tests {
     fn aggregate_usb_packets_includes_retained_host_logs() {
         let retained = vec![RetainedDebugPacketLog {
             name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
-            text: "# header\nusb-packet seq=4 dir=out data=010203\nusb-packet-stats total=64 in=10 out=54\n# harvest {\"status\":\"ok\",\"duration_ms\":14,\"packet_lines\":2}\n".to_string(),
+            text: "# header\nusb-packet seq=4 dir=out data=010203\nusb-event t=22 event=mount\nusb-packet-stats total=64 in=10 out=54\n# harvest {\"status\":\"ok\",\"duration_ms\":14,\"packet_lines\":2}\n".to_string(),
         }];
         let out = aggregate_usb_packets(&[], &retained);
         assert!(out.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
         assert!(out.contains("usb-packet seq=4 dir=out data=010203"));
+        assert!(out.contains("usb-event t=22 event=mount"));
         assert!(out.contains("usb-packet-stats total=64 in=10 out=54"));
         assert!(out.contains("# harvest {\"status\":\"ok\",\"duration_ms\":14,\"packet_lines\":2}"));
         assert!(!out.contains("No raw USB packets"));
@@ -2276,6 +2332,34 @@ mod tests {
     }
 
     #[test]
+    fn debug_capture_verdict_identifies_lifecycle_without_payloads() {
+        let capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"debug\"}\n",
+            "usb-event t=22 event=mount\nusb-event t=24 event=suspend remote_wakeup=1\n",
+        );
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: &capture.usb_packets_text,
+        }];
+        let summary = summarize_sources(&per_pico, &[]);
+        assert_eq!(
+            debug_capture_overall_status(&summary, std::slice::from_ref(&capture), &[]),
+            "debug_lifecycle_only"
+        );
+
+        let text = debug_capture_verdict_text(&[capture], &[], &summary);
+        assert!(text.contains("overall_status=debug_lifecycle_only"));
+        assert!(text.contains("evidence_grade=partial_no_payloads"));
+        assert!(text.contains("adapter_reverse_engineering_gate=fail"));
+        assert!(text.contains("usb_event_lines=2"));
+        assert!(text.contains("usb_events=mount:1,suspend:1"));
+        assert!(text.contains("- raw USB packet payload lines from debug input mode"));
+    }
+
+    #[test]
     fn debug_capture_verdict_includes_packet_timing() {
         let capture = pico_capture(
             "02E22DA9",
@@ -2312,7 +2396,7 @@ mod tests {
         let summary = summarize_sources(&per_pico, &[]);
         let json = debug_capture_evidence_report_json(&[capture], &[], &summary).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(value["artifact_schema_version"], 2);
+        assert_eq!(value["artifact_schema_version"], 3);
         assert_eq!(value["adapter_reverse_engineering_gate"], "pass");
         assert_eq!(value["evidence_grade"], "complete");
         assert_eq!(value["capture_quality"], "lossless_observed");
@@ -2449,6 +2533,8 @@ mod tests {
                 pico_state_status: "captured".to_string(),
                 usb_packet_dump_status: if usb_packets_text.contains("usb-packet ") {
                     "captured"
+                } else if usb_packets_text.contains("usb-event ") {
+                    "lifecycle_only"
                 } else {
                     "no_packets"
                 }

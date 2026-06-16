@@ -161,3 +161,16 @@ void usb_packet_debug_note_hid_set_report(uint8_t instance, uint8_t report_id, u
 void usb_packet_debug_note_control_in(const char *source, uint8_t const *buffer, uint16_t len) {
     note_packet("control-in", source, buffer, len, "control-reply", 0);
 }
+
+void usb_packet_debug_note_event(const char *event, const char *fields) {
+    if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
+        return;
+
+    uint32_t now_ms = to_ms_since_boot(get_absolute_time());
+    if (fields && fields[0]) {
+        diag_log_printf("usb-event t=%u event=%s %s", (unsigned)now_ms, event ? event : "unknown",
+                        fields);
+    } else {
+        diag_log_printf("usb-event t=%u event=%s", (unsigned)now_ms, event ? event : "unknown");
+    }
+}
