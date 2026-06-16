@@ -686,7 +686,7 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
                                uint8_t *buffer, uint16_t reqlen) {
-    (void)instance;
+    usb_packet_debug_note_hid_get_report(instance, report_id, (uint8_t)report_type, reqlen);
     if (boot_mode_persona_uses_gamepad_hid(boot_mode_run_persona())) {
         return dinput_get_report_payload(report_id, report_type, buffer, reqlen);
     }
@@ -697,15 +697,17 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
                            uint8_t const *buffer, uint16_t bufsize) {
-    (void)instance;
+    usb_packet_debug_note_hid_set_report(instance, report_id, (uint8_t)report_type, bufsize);
     // Keyboard LEDs and PlayStation output reports are ignored, but noted
     // so OUT-activity diagnostics still light up.
     if (report_type == HID_REPORT_TYPE_OUTPUT && bufsize >= 1) {
         usb_diag_note_xinput_out(buffer, bufsize);
-        usb_packet_debug_note_out("hid-output", buffer, bufsize);
+        usb_packet_debug_note_out_report("hid-output", report_id, (uint8_t)report_type, buffer,
+                                         bufsize);
     }
     if (report_type == HID_REPORT_TYPE_FEATURE && bufsize >= 1) {
-        usb_packet_debug_note_out("hid-feature", buffer, bufsize);
+        usb_packet_debug_note_out_report("hid-feature", report_id, (uint8_t)report_type, buffer,
+                                         bufsize);
     }
     if (boot_mode_persona_uses_gamepad_hid(boot_mode_run_persona())) {
         dinput_set_report(report_id, report_type, buffer, bufsize);

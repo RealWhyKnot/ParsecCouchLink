@@ -60,6 +60,9 @@ static void normal_persona_does_not_log_packets(void) {
     usb_packet_debug_note_in("xinput", data, sizeof(data), true);
     usb_packet_debug_note_setup("vendor-control", 0xC0, 0x20, 0x0102, 0x0304, 0x4000);
     usb_packet_debug_note_control_in("desc-device", data, sizeof(data));
+    usb_packet_debug_note_hid_get_report(2, 0xEF, 3, 64);
+    usb_packet_debug_note_hid_set_report(2, 0x01, 2, sizeof(data));
+    usb_packet_debug_note_out_report("hid-output", 0x01, 2, data, sizeof(data));
     assert(line_count == 0);
     current_persona = RUN_PERSONA_DEBUG;
 }
@@ -136,6 +139,40 @@ static void debug_control_in_logs_reply_payload(void) {
     require_log_contains("data=12010002");
 }
 
+static void debug_hid_control_requests_log_setup_metadata(void) {
+    fake_ms = 1220;
+    reset_log();
+    usb_packet_debug_note_hid_get_report(2, 0xEF, 3, 64);
+    usb_packet_debug_note_hid_set_report(2, 0x01, 2, 4);
+    assert(line_count == 2);
+    require_log_contains("src=hid-get-report");
+    require_log_contains("bm=0xA1");
+    require_log_contains("req=0x01");
+    require_log_contains("value=0x03EF");
+    require_log_contains("index=0x0002");
+    require_log_contains("wlen=64");
+    require_log_contains("data=A101EF0302004000");
+    require_log_contains("src=hid-set-report");
+    require_log_contains("bm=0x21");
+    require_log_contains("req=0x09");
+    require_log_contains("value=0x0201");
+    require_log_contains("wlen=4");
+    require_log_contains("data=2109010202000400");
+}
+
+static void debug_hid_out_report_logs_report_metadata(void) {
+    uint8_t data[] = {0x05, 0x06, 0x07};
+    fake_ms = 1230;
+    reset_log();
+    usb_packet_debug_note_out_report("hid-output", 0x01, 2, data, sizeof(data));
+    assert(line_count == 1);
+    require_log_contains("dir=out");
+    require_log_contains("src=hid-output");
+    require_log_contains("report_id=0x01");
+    require_log_contains("report_type=2");
+    require_log_contains("data=050607");
+}
+
 static void debug_packet_stats_repeat_periodically(void) {
     uint8_t data[] = {0x55};
     reset_log();
@@ -146,8 +183,8 @@ static void debug_packet_stats_repeat_periodically(void) {
     assert(line_count == 59);
     require_log_contains("usb-packet-stats");
     require_log_contains("total=64");
-    require_log_contains("out=59");
-    require_log_contains("setup=1");
+    require_log_contains("out=57");
+    require_log_contains("setup=3");
     require_log_contains("control_in=1");
     require_log_contains("idle_in_suppressed=1");
 }
@@ -158,6 +195,8 @@ int main(void) {
     debug_in_packets_keep_changed_and_summarize_idle_suppression();
     debug_control_setup_logs_wire_bytes();
     debug_control_in_logs_reply_payload();
+    debug_hid_control_requests_log_setup_metadata();
+    debug_hid_out_report_logs_report_metadata();
     debug_packet_stats_repeat_periodically();
     puts("usb_packet_debug tests passed");
     return 0;

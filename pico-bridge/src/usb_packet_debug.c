@@ -94,6 +94,14 @@ void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16
     note_packet("out", source, buffer, len, "host-out", 0);
 }
 
+void usb_packet_debug_note_out_report(const char *source, uint8_t report_id, uint8_t report_type,
+                                      uint8_t const *buffer, uint16_t len) {
+    char extra[64];
+    snprintf(extra, sizeof(extra), "report_id=0x%02X report_type=%u ", (unsigned)report_id,
+             (unsigned)report_type);
+    note_packet_extra("out", source, buffer, len, "host-out", 0, extra);
+}
+
 void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_t len,
                               bool changed) {
     if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
@@ -131,6 +139,18 @@ void usb_packet_debug_note_setup(const char *source, uint8_t bm_request_type, ui
              (unsigned)bm_request_type, (unsigned)b_request, (unsigned)w_value, (unsigned)w_index,
              (unsigned)w_length);
     note_packet_extra("setup", source, setup, sizeof(setup), "control-setup", 0, extra);
+}
+
+void usb_packet_debug_note_hid_get_report(uint8_t instance, uint8_t report_id, uint8_t report_type,
+                                          uint16_t request_len) {
+    uint16_t value = ((uint16_t)report_type << 8) | report_id;
+    usb_packet_debug_note_setup("hid-get-report", 0xA1, 0x01, value, instance, request_len);
+}
+
+void usb_packet_debug_note_hid_set_report(uint8_t instance, uint8_t report_id, uint8_t report_type,
+                                          uint16_t payload_len) {
+    uint16_t value = ((uint16_t)report_type << 8) | report_id;
+    usb_packet_debug_note_setup("hid-set-report", 0x21, 0x09, value, instance, payload_len);
 }
 
 void usb_packet_debug_note_control_in(const char *source, uint8_t const *buffer, uint16_t len) {
