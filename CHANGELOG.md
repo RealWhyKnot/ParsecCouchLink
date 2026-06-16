@@ -4,7 +4,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **persona:** Add adaptive gamepad modes (3abdef6)
 
 ---
 
