@@ -14,6 +14,7 @@ mod cmd_setup;
 mod cmd_test;
 mod cmd_usb_diag;
 mod config;
+mod debug_packets;
 mod diag_usb;
 mod discovery;
 mod firmware_version;

@@ -65,7 +65,10 @@ pub(super) struct Manifest {
     pico_usb_diag_target_count: usize,
     app_log_retention_count: usize,
     bundled_log_files_per_prefix: usize,
+    debug_packet_log_retention_count: usize,
+    retained_debug_packet_count: usize,
     diagnostic_cache_included: bool,
+    retained_debug_packet_logs: Vec<String>,
     per_pico_capture_outcomes: Vec<ManifestPicoCapture>,
     host_snapshots: Vec<ManifestHostSnapshot>,
     capture_policy_notes: Vec<&'static str>,
@@ -88,6 +91,8 @@ pub(super) async fn build_manifest(
     pico_usb_mode: Option<&str>,
     pico_usb_diag_captured: bool,
     pico_usb_diag_target_count: usize,
+    retained_debug_packet_logs: &[String],
+    retained_debug_packet_count: usize,
     diagnostic_cache_included: bool,
     per_pico_capture_outcomes: &[ManifestPicoCapture],
     host_snapshots: &[ManifestHostSnapshot],
@@ -125,7 +130,10 @@ pub(super) async fn build_manifest(
         pico_usb_diag_target_count,
         app_log_retention_count: logfile::LOG_FILE_RETENTION,
         bundled_log_files_per_prefix: BUNDLE_LOG_FILES_PER_PREFIX,
+        debug_packet_log_retention_count: crate::debug_packets::DEBUG_PACKET_FILE_RETENTION,
+        retained_debug_packet_count,
         diagnostic_cache_included,
+        retained_debug_packet_logs: retained_debug_packet_logs.to_vec(),
         per_pico_capture_outcomes: per_pico_capture_outcomes.to_vec(),
         host_snapshots: host_snapshots.to_vec(),
         capture_policy_notes: vec![
@@ -135,6 +143,7 @@ pub(super) async fn build_manifest(
             "BOOTSEL drives are inventoried when present.",
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
             "Debug input mode uses the XInput USB shape and logs raw host-to-device USB OUT packets for adapter reverse engineering.",
+            "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
         ],
         redaction_policy: vec![
             "Wi-Fi passwords are not included.",
@@ -143,6 +152,7 @@ pub(super) async fn build_manifest(
             "Lengths, failure codes, timings, local IPs, device names, driver names, firmware IDs, and filesystem paths may be included for diagnosis.",
             "Raw per-key keyboard traces require trace logging and are not enabled by default.",
             "Raw USB OUT packet dumps are only captured when the Pico is deliberately switched into debug input mode.",
+            "Retained debug packet logs are redacted by the same bundle filter before they are written into the ZIP.",
         ],
         crash_files: crash_files.to_vec(),
         setup_transcripts: setup_transcripts.to_vec(),
@@ -209,6 +219,8 @@ mod tests {
             Some("run"),
             true,
             1,
+            &["usb-packets-20260615-214000-02E22DA9.log".to_string()],
+            7,
             true,
             &[pico],
             &[host],
@@ -225,7 +237,16 @@ mod tests {
             BUNDLE_LOG_FILES_PER_PREFIX
         );
         assert_eq!(json["app_log_retention_count"], logfile::LOG_FILE_RETENTION);
+        assert_eq!(
+            json["debug_packet_log_retention_count"],
+            crate::debug_packets::DEBUG_PACKET_FILE_RETENTION
+        );
         assert_eq!(json["diagnostic_cache_included"], true);
+        assert_eq!(
+            json["retained_debug_packet_logs"][0],
+            "usb-packets-20260615-214000-02E22DA9.log"
+        );
+        assert_eq!(json["retained_debug_packet_count"], 7);
         assert_eq!(json["per_pico_capture_outcomes"][0]["uid"], "02E22DA9");
         assert_eq!(
             json["per_pico_capture_outcomes"][0]["usb_packet_dump_count"],

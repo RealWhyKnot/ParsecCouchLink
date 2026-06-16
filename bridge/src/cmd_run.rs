@@ -3,7 +3,7 @@
 //! module keeps the scriptable route syntax for startup shortcuts and
 //! third-party launchers.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
@@ -14,7 +14,8 @@ use tokio::time::{interval, MissedTickBehavior};
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, Persona, FLAG_PARSEC_CONNECTED};
 use crate::{
-    cdc, cmd_flash, config, discovery, journal, keyboard, net, pico_cache, support, xinput,
+    cdc, cmd_flash, config, debug_packets, discovery, journal, keyboard, net, pico_cache, support,
+    xinput,
 };
 
 const DEFAULT_DISCOVER_SECONDS: u64 = 5;
@@ -23,6 +24,7 @@ const STREAM_TICK: Duration = Duration::from_millis(16);
 const PEER_STALE_AFTER: Duration = Duration::from_secs(5);
 const PEER_RECOVER_EVERY: Duration = Duration::from_secs(10);
 const PEER_RECOVERY_DISCOVER: Duration = Duration::from_secs(2);
+const DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_millis(1200);
 
 #[derive(Clone, Debug)]
 pub struct RunOptions {
@@ -735,6 +737,14 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
     let mut buf = [0u8; 64];
     let (recovery_tx, mut recovery_rx) = mpsc::channel::<Result<Vec<PicoTarget>>>(1);
     let mut recovery_in_flight = false;
+    let mut debug_packet_sinks = HashMap::new();
+    let mut debug_packet_disabled = HashSet::new();
+    ensure_debug_packet_sinks(
+        &runtime,
+        &mut debug_packet_sinks,
+        &mut debug_packet_disabled,
+        options.quiet,
+    );
 
     loop {
         tokio::select! {
@@ -773,6 +783,12 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
                 if !options.quiet {
                     print_status(&mut runtime);
                 }
+                harvest_debug_packets(
+                    &runtime,
+                    &mut debug_packet_sinks,
+                    &mut debug_packet_disabled,
+                    options.quiet,
+                ).await;
                 if !recovery_in_flight && schedule_recovery_if_needed(&mut runtime) {
                     recovery_in_flight = true;
                     let tx = recovery_tx.clone();
@@ -835,6 +851,126 @@ fn save_routes(routes: &[StreamRoute]) -> Result<()> {
         cfg.remember_pico(identity_from_target(&route.pico));
     }
     config::save(&cfg)
+}
+
+fn ensure_debug_packet_sinks(
+    routes: &[RouteRuntime],
+    sinks: &mut HashMap<u32, debug_packets::DebugPacketSink>,
+    disabled: &mut HashSet<u32>,
+    quiet: bool,
+) {
+    for route in routes
+        .iter()
+        .filter(|route| route.route.pico.persona == Persona::Debug)
+    {
+        let uid = route.route.pico.info.unique_id_short;
+        if sinks.contains_key(&uid) || disabled.contains(&uid) {
+            continue;
+        }
+        match debug_packets::DebugPacketSink::create(
+            &route.route.pico.uid_hex(),
+            route.route.pico.peer,
+        ) {
+            Ok(sink) => {
+                tracing::info!(
+                    "debug-packets: capturing {} from {} into {}",
+                    route.route.pico.uid_hex(),
+                    route.route.pico.peer,
+                    sink.path().display()
+                );
+                if !quiet {
+                    println!(
+                        "Debug USB packet capture: {} -> {}",
+                        route.route.pico.short_label(),
+                        sink.path().display()
+                    );
+                }
+                sinks.insert(uid, sink);
+            }
+            Err(e) => {
+                disabled.insert(uid);
+                tracing::warn!(
+                    "debug-packets: disabled for {}: {e:#}",
+                    route.route.pico.short_label()
+                );
+                if !quiet {
+                    println!(
+                        "Debug USB packet capture could not open a retained log for {}: {e:#}",
+                        route.route.pico.short_label()
+                    );
+                }
+            }
+        }
+    }
+}
+
+async fn harvest_debug_packets(
+    routes: &[RouteRuntime],
+    sinks: &mut HashMap<u32, debug_packets::DebugPacketSink>,
+    disabled: &mut HashSet<u32>,
+    quiet: bool,
+) {
+    ensure_debug_packet_sinks(routes, sinks, disabled, quiet);
+    for route in routes
+        .iter()
+        .filter(|route| route.route.pico.persona == Persona::Debug)
+    {
+        let uid = route.route.pico.info.unique_id_short;
+        let Some(sink) = sinks.get_mut(&uid) else {
+            continue;
+        };
+        match debug_packets::capture_run_diag_log(
+            route.route.pico.peer,
+            DEBUG_PACKET_HARVEST_TIMEOUT,
+        )
+        .await
+        {
+            Ok(snapshot) => {
+                let lines = debug_packets::extract_usb_packet_lines(&snapshot.text);
+                let written = match sink.append_lines(&lines) {
+                    Ok(written) => written,
+                    Err(e) => {
+                        tracing::warn!(
+                            "debug-packets: write failed for {}: {e:#}",
+                            route.route.pico.short_label()
+                        );
+                        disabled.insert(uid);
+                        continue;
+                    }
+                };
+                tracing::debug!(
+                    "debug-packets: harvest {} chunks={} lost={} packets={} new={} total={}",
+                    route.route.pico.short_label(),
+                    snapshot.chunk_count,
+                    snapshot.lost_bytes,
+                    lines.len(),
+                    written,
+                    sink.total_written()
+                );
+                if written > 0 || snapshot.lost_bytes > 0 {
+                    pico_cache::record(
+                        pico_cache::PicoStateSnapshot::from_target(
+                            "debug-packet-harvest",
+                            &route.route.pico,
+                        )
+                        .with_outcome(format!(
+                            "new_packets={written}; total_packets={}; lost_bytes={}; chunks={}",
+                            sink.total_written(),
+                            snapshot.lost_bytes,
+                            snapshot.chunk_count
+                        )),
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "debug-packets: harvest failed for {}: {e:#}",
+                    route.route.pico.short_label()
+                );
+            }
+        }
+    }
+    debug_packets::prune_packet_files();
 }
 
 struct RouteRuntime {

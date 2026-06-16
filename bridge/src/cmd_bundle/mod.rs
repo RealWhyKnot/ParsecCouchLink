@@ -24,7 +24,7 @@ use chrono::Local;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::{cmd_run, cmd_usb_diag, config, journal, pico_cache, pico_state};
+use crate::{cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache, pico_state};
 
 use collect::{bundle_log_prefix, collect_crash_file_names, collect_setup_transcript_names};
 use host_snapshot::capture_host_snapshots;
@@ -54,6 +54,8 @@ pub struct BundleSummary {
     pub usb_diag_captured: bool,
     pub usb_diag_target_count: usize,
     pub usb_packet_dump_count: usize,
+    pub retained_debug_packet_log_count: usize,
+    pub retained_debug_packet_count: usize,
     pub per_pico_capture_count: usize,
     pub host_snapshot_count: usize,
     pub diagnostic_cache_included: bool,
@@ -82,6 +84,12 @@ struct PicoCaptureSeed {
     saved: Option<config::PicoIdentity>,
     source: String,
     cached_state_json: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct RetainedDebugPacketLog {
+    name: String,
+    text: String,
 }
 
 #[derive(Default)]
@@ -206,6 +214,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         .iter()
         .map(|capture| capture.manifest.clone())
         .collect();
+    let retained_debug_packet_logs = collect_retained_debug_packet_logs(&mut capture_log);
+    let retained_debug_packet_log_names: Vec<String> = retained_debug_packet_logs
+        .iter()
+        .map(|log| log.name.clone())
+        .collect();
+    let retained_debug_packet_count =
+        count_retained_debug_packet_lines(&retained_debug_packet_logs);
 
     let host_snapshots = capture_host_snapshots().await;
     for snapshot in &host_snapshots {
@@ -273,6 +288,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         pico_usb_mode.as_deref(),
         usb_diag.captured,
         usb_diag.target_count,
+        &retained_debug_packet_log_names,
+        retained_debug_packet_count,
         diagnostic_cache_included,
         &per_pico_manifest,
         &host_snapshot_manifest,
@@ -337,7 +354,18 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     }
 
     zip.start_file("usb-packets.txt", opts)?;
-    zip.write_all(redact_bundle_text(&aggregate_usb_packets(&per_pico_captures)).as_bytes())?;
+    zip.write_all(
+        redact_bundle_text(&aggregate_usb_packets(
+            &per_pico_captures,
+            &retained_debug_packet_logs,
+        ))
+        .as_bytes(),
+    )?;
+
+    for log in &retained_debug_packet_logs {
+        zip.start_file(format!("debug-packets/{}", log.name), opts)?;
+        zip.write_all(redact_bundle_text(&log.text).as_bytes())?;
+    }
 
     if let Some(text) = cache_current.as_ref() {
         zip.start_file("diagnostics/pico-state-current.json", opts)?;
@@ -473,10 +501,12 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.finish()?;
     tracing::info!(
-        "bundle: run finished out_path={} per_pico={} usb_packets={} host_snapshots={} cache_included={}",
+        "bundle: run finished out_path={} per_pico={} usb_packets={} retained_debug_packets={} retained_debug_packet_logs={} host_snapshots={} cache_included={}",
         out_path.display(),
         per_pico_captures.len(),
         usb_packet_dump_count,
+        retained_debug_packet_count,
+        retained_debug_packet_logs.len(),
         host_snapshots.len(),
         diagnostic_cache_included,
     );
@@ -493,10 +523,48 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         usb_diag_captured: usb_diag.captured,
         usb_diag_target_count: usb_diag.target_count,
         usb_packet_dump_count,
+        retained_debug_packet_log_count: retained_debug_packet_logs.len(),
+        retained_debug_packet_count,
         per_pico_capture_count: per_pico_captures.len(),
         host_snapshot_count: host_snapshots.len(),
         diagnostic_cache_included,
     })
+}
+
+fn collect_retained_debug_packet_logs(capture_log: &mut CaptureLog) -> Vec<RetainedDebugPacketLog> {
+    let mut out = Vec::new();
+    for path in debug_packets::recent_packet_files(debug_packets::DEBUG_PACKET_FILE_RETENTION) {
+        let started = Instant::now();
+        let Some(name) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.to_string())
+        else {
+            continue;
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                capture_log.record(
+                    format!("retained_debug_packet_log.{name}"),
+                    started,
+                    "included",
+                    text.len(),
+                    "",
+                );
+                out.push(RetainedDebugPacketLog { name, text });
+            }
+            Err(e) => {
+                capture_log.record(
+                    format!("retained_debug_packet_log.{name}"),
+                    started,
+                    "not_included",
+                    0,
+                    format!("{e:#}"),
+                );
+            }
+        }
+    }
+    out
 }
 
 async fn capture_usb_diag_text() -> UsbDiagBundle {
@@ -986,7 +1054,17 @@ fn count_usb_packet_lines(text: &str) -> usize {
         .count()
 }
 
-fn aggregate_usb_packets(captures: &[PicoBundleCapture]) -> String {
+fn count_retained_debug_packet_lines(logs: &[RetainedDebugPacketLog]) -> usize {
+    logs.iter()
+        .flat_map(|log| log.text.lines())
+        .filter(|line| line.starts_with("usb-packet "))
+        .count()
+}
+
+fn aggregate_usb_packets(
+    captures: &[PicoBundleCapture],
+    retained_logs: &[RetainedDebugPacketLog],
+) -> String {
     let mut out = String::from("# Aggregate raw USB OUT packet dump\n\n");
     let mut total = 0usize;
     for capture in captures {
@@ -1006,6 +1084,20 @@ fn aggregate_usb_packets(captures: &[PicoBundleCapture]) -> String {
             }
         }
         out.push('\n');
+    }
+    if !retained_logs.is_empty() {
+        out.push_str("## retained host debug packet logs\n");
+        for log in retained_logs {
+            let _ = writeln!(out, "### debug-packets/{}", log.name);
+            for line in log.text.lines() {
+                if line.starts_with("usb-packet ") {
+                    out.push_str(line);
+                    out.push('\n');
+                    total += 1;
+                }
+            }
+            out.push('\n');
+        }
     }
     if total == 0 {
         out.push_str("No raw USB OUT packets were captured in this bundle.\n");
@@ -1042,13 +1134,20 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     } else {
         println!("  usb-diag.txt: not captured -- see the file for details");
     }
-    if summary.usb_packet_dump_count > 0 {
+    let total_packet_count = summary.usb_packet_dump_count + summary.retained_debug_packet_count;
+    if total_packet_count > 0 {
         println!(
             "  usb-packets.txt: captured {} raw USB OUT packet(s)",
-            summary.usb_packet_dump_count
+            total_packet_count
         );
     } else {
         println!("  usb-packets.txt: no raw packets captured (debug input mode only)");
+    }
+    if summary.retained_debug_packet_log_count > 0 {
+        println!(
+            "  debug-packets/: {} retained packet log(s)",
+            summary.retained_debug_packet_log_count
+        );
     }
     if summary.crash_file_count == 0 {
         println!("  crashes/: none");
@@ -1100,7 +1199,10 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_usb_packet_lines, sanitize_path_component, usb_packets_text_from_diag};
+    use super::{
+        aggregate_usb_packets, count_usb_packet_lines, sanitize_path_component,
+        usb_packets_text_from_diag, RetainedDebugPacketLog,
+    };
 
     #[test]
     fn pico_bundle_path_component_is_sanitized() {
@@ -1115,5 +1217,17 @@ mod tests {
         let out = usb_packets_text_from_diag("02E22DA9", diag);
         assert!(out.contains("usb-packet seq=0 dir=out len=3 data=010203"));
         assert_eq!(count_usb_packet_lines(&out), 1);
+    }
+
+    #[test]
+    fn aggregate_usb_packets_includes_retained_host_logs() {
+        let retained = vec![RetainedDebugPacketLog {
+            name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
+            text: "# header\nusb-packet seq=4 dir=out data=010203\n".to_string(),
+        }];
+        let out = aggregate_usb_packets(&[], &retained);
+        assert!(out.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
+        assert!(out.contains("usb-packet seq=4 dir=out data=010203"));
+        assert!(!out.contains("No raw USB OUT packets"));
     }
 }
