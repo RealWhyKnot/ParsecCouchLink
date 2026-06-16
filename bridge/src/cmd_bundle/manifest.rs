@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 6;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 7;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -71,6 +71,8 @@ pub(super) struct Manifest {
     usb_packet_summary_path: &'static str,
     usb_packet_records_included: bool,
     usb_packet_records_path: &'static str,
+    usb_control_transfers_included: bool,
+    usb_control_transfers_path: &'static str,
     debug_capture_verdict_included: bool,
     debug_capture_verdict_path: &'static str,
     diagnostic_cache_included: bool,
@@ -142,6 +144,8 @@ pub(super) async fn build_manifest(
         usb_packet_summary_path: "usb-packets-summary.json",
         usb_packet_records_included: true,
         usb_packet_records_path: "usb-packets.jsonl",
+        usb_control_transfers_included: true,
+        usb_control_transfers_path: "usb-control-transfers.txt",
         debug_capture_verdict_included: true,
         debug_capture_verdict_path: "debug-capture-verdict.txt",
         diagnostic_cache_included,
@@ -159,6 +163,7 @@ pub(super) async fn build_manifest(
             "Retained debug packet logs include per-harvest health records for GET_LOG duration, chunks, lost bytes, packet counts, and failures.",
             "usb-packets-summary.json summarizes packet directions, sources, reasons, sequence gaps, truncation, and firmware packet-stat checkpoints.",
             "usb-packets.jsonl normalizes each packet/stat line for reverse-engineering tools.",
+            "usb-control-transfers.txt extracts setup and control-IN traffic into a compact transcript.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
         ],
         redaction_policy: vec![
@@ -267,6 +272,11 @@ mod tests {
         assert_eq!(json["usb_packet_summary_path"], "usb-packets-summary.json");
         assert_eq!(json["usb_packet_records_included"], true);
         assert_eq!(json["usb_packet_records_path"], "usb-packets.jsonl");
+        assert_eq!(json["usb_control_transfers_included"], true);
+        assert_eq!(
+            json["usb_control_transfers_path"],
+            "usb-control-transfers.txt"
+        );
         assert_eq!(json["debug_capture_verdict_included"], true);
         assert_eq!(
             json["debug_capture_verdict_path"],

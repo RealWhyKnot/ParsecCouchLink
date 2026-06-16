@@ -38,8 +38,9 @@ use usb_enum::{
     vendor_not_found_stub_text, PicoEnumState,
 };
 use usb_packet_summary::{
-    records_jsonl_for_sources, records_jsonl_for_text, summarize_sources, summarize_text,
-    UsbPacketBundleSummary, UsbPacketSummarySource,
+    control_transfers_text_for_sources, control_transfers_text_for_text, records_jsonl_for_sources,
+    records_jsonl_for_text, summarize_sources, summarize_text, UsbPacketBundleSummary,
+    UsbPacketSummarySource,
 };
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
@@ -247,6 +248,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     let usb_packet_summary_json = serde_json::to_string_pretty(&usb_packet_summary)?;
     let usb_packet_records_jsonl =
         records_jsonl_for_sources(&per_pico_packet_sources, &retained_packet_sources)?;
+    let usb_control_transfers_text =
+        control_transfers_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
     let debug_capture_status = debug_capture_overall_status(
         &usb_packet_summary,
         &per_pico_captures,
@@ -273,6 +276,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         "included",
         usb_packet_records_jsonl.len(),
         "jsonl",
+    );
+    capture_log.record_duration(
+        "usb_control_transfers",
+        0,
+        "included",
+        usb_control_transfers_text.len(),
+        "setup_and_control_in",
     );
     capture_log.record_duration(
         "debug_capture_verdict",
@@ -423,6 +433,14 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
             &pico.usb_packets_text,
         )?;
         zip.write_all(redact_bundle_text(&records_jsonl).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-control-transfers.txt"), opts)?;
+        let control_transfers = control_transfers_text_for_text(
+            &pico.manifest.uid,
+            &format!("{base}/usb-packets.txt"),
+            &pico.usb_packets_text,
+        );
+        zip.write_all(redact_bundle_text(&control_transfers).as_bytes())?;
     }
 
     zip.start_file("usb-packets.txt", opts)?;
@@ -439,6 +457,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.start_file("usb-packets.jsonl", opts)?;
     zip.write_all(redact_bundle_text(&usb_packet_records_jsonl).as_bytes())?;
+
+    zip.start_file("usb-control-transfers.txt", opts)?;
+    zip.write_all(redact_bundle_text(&usb_control_transfers_text).as_bytes())?;
 
     zip.start_file("debug-capture-verdict.txt", opts)?;
     zip.write_all(redact_bundle_text(&debug_capture_verdict).as_bytes())?;

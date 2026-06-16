@@ -160,6 +160,54 @@ pub(super) fn records_jsonl_for_sources(
     Ok(out)
 }
 
+pub(super) fn control_transfers_text_for_text(label: &str, path: &str, text: &str) -> String {
+    let mut out = String::from("# USB control transfer transcript\n");
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_label={label}\n"));
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_path={path}\n\n"));
+    let rows = control_transfer_rows(text);
+    if rows.is_empty() {
+        out.push_str("No USB control setup or control-IN packet lines were captured.\n");
+    } else {
+        for row in rows {
+            out.push_str(&row);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+pub(super) fn control_transfers_text_for_sources(
+    per_pico: &[UsbPacketSummarySource<'_>],
+    retained_logs: &[UsbPacketSummarySource<'_>],
+) -> String {
+    let mut out = String::from(
+        "# USB control transfer transcript\n\n\
+         # Includes debug input usb-packet lines where dir=setup or dir=control-in.\n\
+         # Use usb-packets.jsonl for machine parsing and raw packet context.\n\n",
+    );
+    let mut section_count = 0usize;
+    for source in per_pico.iter().chain(retained_logs.iter()) {
+        let rows = control_transfer_rows(source.text);
+        if rows.is_empty() {
+            continue;
+        }
+        section_count += 1;
+        let _ = std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!("## {} ({})\n", source.label, source.path),
+        );
+        for row in rows {
+            out.push_str(&row);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if section_count == 0 {
+        out.push_str("No USB control setup or control-IN packet lines were captured.\n");
+    }
+    out
+}
+
 pub(super) fn summarize_sources(
     per_pico: &[UsbPacketSummarySource<'_>],
     retained_logs: &[UsbPacketSummarySource<'_>],
@@ -292,6 +340,51 @@ fn record_from_line(
         });
     }
     None
+}
+
+fn control_transfer_rows(text: &str) -> Vec<String> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(index, line)| control_transfer_row((index + 1) as u64, line))
+        .collect()
+}
+
+fn control_transfer_row(line_number: u64, line: &str) -> Option<String> {
+    if !line.starts_with("usb-packet ") {
+        return None;
+    }
+    let fields = fields(line);
+    let direction = fields.get("dir").copied()?;
+    match direction {
+        "setup" => Some(format!(
+            "setup line={} seq={} t={} src={} bm={} req={} value={} index={} wlen={} len={} captured={} data={}",
+            line_number,
+            display_field(fields.get("seq")),
+            display_field(fields.get("t")),
+            display_field(fields.get("src")),
+            display_field(fields.get("bm")),
+            display_field(fields.get("req")),
+            display_field(fields.get("value")),
+            display_field(fields.get("index")),
+            display_field(fields.get("wlen")),
+            display_field(fields.get("len")),
+            display_field(fields.get("captured")),
+            display_field(fields.get("data")),
+        )),
+        "control-in" => Some(format!(
+            "control-in line={} seq={} t={} src={} reason={} len={} captured={} dropped={} data={}",
+            line_number,
+            display_field(fields.get("seq")),
+            display_field(fields.get("t")),
+            display_field(fields.get("src")),
+            display_field(fields.get("reason")),
+            display_field(fields.get("len")),
+            display_field(fields.get("captured")),
+            display_field(fields.get("dropped")),
+            display_field(fields.get("data")),
+        )),
+        _ => None,
+    }
 }
 
 impl UsbPacketSummary {
@@ -498,6 +591,10 @@ fn cloned_field(value: Option<&&str>) -> Option<String> {
     value.map(|value| (*value).to_string())
 }
 
+fn display_field<'a>(value: Option<&&'a str>) -> &'a str {
+    value.copied().unwrap_or("-")
+}
+
 fn harvest_value(line: &str) -> Option<Value> {
     let json = line.strip_prefix(HARVEST_PREFIX)?;
     serde_json::from_str(json).ok()
@@ -616,6 +713,41 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
             summary.retained_logs[0].summary.last_stats_total_packets,
             Some(64)
         );
+    }
+
+    #[test]
+    fn control_transfer_text_keeps_setup_and_control_in_rows() {
+        let text = "\
+usb-packet seq=7 t=10 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-out data=010203
+usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
+usb-packet seq=9 t=12 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
+usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
+";
+        let out =
+            control_transfers_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("# source_label=02E22DA9"));
+        assert!(out.contains("setup line=2 seq=8 t=11 src=vendor-control bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 len=8 captured=8 data=C020020104030040"));
+        assert!(out.contains("control-in line=3 seq=9 t=12 src=desc-device reason=control-reply len=18 captured=18 dropped=0 data=12010002"));
+        assert!(!out.contains("host-out"));
+        assert!(!out.contains("usb-packet-stats"));
+    }
+
+    #[test]
+    fn control_transfer_sources_omit_empty_sources() {
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: "usb-packet seq=1 dir=out src=vendor reason=host-out\n",
+        }];
+        let retained = [UsbPacketSummarySource {
+            label: "usb-packets.log".to_string(),
+            path: "debug-packets/usb-packets.log".to_string(),
+            text: "usb-packet seq=8 t=11 dir=setup src=vendor-control bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 len=8 captured=8 data=C020020104030040\n",
+        }];
+        let out = control_transfers_text_for_sources(&per_pico, &retained);
+        assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
+        assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
+        assert!(out.contains("setup line=1 seq=8"));
     }
 
     #[test]
