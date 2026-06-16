@@ -8,7 +8,7 @@ _No notable changes since the last release._
 
 ---
 
-## [v2026.6.16.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.16.0-beta) -- 2026-06-16
+## [v2026.6.16.1-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.16.1-beta) -- 2026-06-16
 
 ### Added
 - **bundle:** Fold debug capture into support bundle (2bcdcd9)
