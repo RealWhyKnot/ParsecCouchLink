@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 7;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 8;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -162,8 +162,8 @@ pub(super) async fn build_manifest(
             "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
             "Retained debug packet logs include per-harvest health records for GET_LOG duration, chunks, lost bytes, packet counts, and failures.",
             "usb-packets-summary.json summarizes packet directions, sources, reasons, sequence gaps, truncation, and firmware packet-stat checkpoints.",
-            "usb-packets.jsonl normalizes each packet/stat line for reverse-engineering tools.",
-            "usb-control-transfers.txt extracts setup and control-IN traffic into a compact transcript.",
+            "usb-packets.jsonl normalizes each packet/stat line for reverse-engineering tools, including decoded USB setup metadata where present.",
+            "usb-control-transfers.txt extracts setup and control-IN traffic into a compact transcript with decoded setup request names.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
         ],
         redaction_policy: vec![

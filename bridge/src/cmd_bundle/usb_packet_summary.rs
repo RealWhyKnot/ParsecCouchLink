@@ -63,27 +63,7 @@ pub(super) struct UsbPacketBundleSummary {
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum UsbPacketRecord {
-    Packet {
-        source_label: String,
-        source_path: String,
-        line_number: u64,
-        seq: Option<u64>,
-        t_ms: Option<u64>,
-        direction: Option<String>,
-        source: Option<String>,
-        reason: Option<String>,
-        reported_len: Option<u64>,
-        captured_len: Option<u64>,
-        truncated_bytes_total: Option<u64>,
-        suppressed_idle_reports: Option<u64>,
-        setup_bm_request_type: Option<u64>,
-        setup_request: Option<u64>,
-        setup_value: Option<u64>,
-        setup_index: Option<u64>,
-        setup_length: Option<u64>,
-        data_hex: Option<String>,
-        raw_line: String,
-    },
+    Packet(Box<UsbPacketRecordPacket>),
     Stats {
         source_label: String,
         source_path: String,
@@ -114,6 +94,40 @@ pub(super) enum UsbPacketRecord {
         error: Option<String>,
         raw_line: String,
     },
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub(super) struct UsbPacketRecordPacket {
+    source_label: String,
+    source_path: String,
+    line_number: u64,
+    seq: Option<u64>,
+    t_ms: Option<u64>,
+    direction: Option<String>,
+    source: Option<String>,
+    reason: Option<String>,
+    reported_len: Option<u64>,
+    captured_len: Option<u64>,
+    truncated_bytes_total: Option<u64>,
+    suppressed_idle_reports: Option<u64>,
+    setup_bm_request_type: Option<u64>,
+    setup_request: Option<u64>,
+    setup_value: Option<u64>,
+    setup_index: Option<u64>,
+    setup_length: Option<u64>,
+    setup_direction: Option<&'static str>,
+    setup_type: Option<&'static str>,
+    setup_recipient: Option<&'static str>,
+    setup_request_name: Option<String>,
+    setup_descriptor_type: Option<&'static str>,
+    setup_descriptor_index: Option<u64>,
+    setup_language_id: Option<u64>,
+    setup_known_request: Option<&'static str>,
+    control_payload_kind: Option<&'static str>,
+    control_descriptor_type: Option<&'static str>,
+    control_payload_summary: Option<String>,
+    data_hex: Option<String>,
+    raw_line: String,
 }
 
 pub(super) fn summarize_text(text: &str) -> UsbPacketSummary {
@@ -239,7 +253,7 @@ pub(super) fn summarize_sources(
         .collect();
 
     UsbPacketBundleSummary {
-        artifact_schema_version: 2,
+        artifact_schema_version: 3,
         aggregate,
         per_pico,
         retained_logs,
@@ -248,6 +262,8 @@ pub(super) fn summarize_sources(
             "Aggregate sequence gaps are summed per source; sequence numbers are not compared across different Pico/log sources.",
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
+            "Packet records decode USB setup direction, type, recipient, standard/class requests, descriptor types, and known CouchLink vendor requests.",
+            "Control-IN packet records identify descriptor replies, MS OS descriptor payloads, and setup-mode diag-log payloads when the captured bytes are sufficient.",
         ],
     }
 }
@@ -267,7 +283,9 @@ fn record_from_line(
 ) -> Option<UsbPacketRecord> {
     if line.starts_with("usb-packet ") {
         let fields = fields(line);
-        return Some(UsbPacketRecord::Packet {
+        let decoded_setup = decode_setup_fields(&fields);
+        let decoded_control_payload = decode_control_payload_fields(&fields);
+        return Some(UsbPacketRecord::Packet(Box::new(UsbPacketRecordPacket {
             source_label: label.to_string(),
             source_path: path.to_string(),
             line_number,
@@ -285,9 +303,30 @@ fn record_from_line(
             setup_value: parsed_u64(fields.get("value")),
             setup_index: parsed_u64(fields.get("index")),
             setup_length: parsed_u64(fields.get("wlen")),
+            setup_direction: decoded_setup.as_ref().map(|setup| setup.direction),
+            setup_type: decoded_setup.as_ref().map(|setup| setup.request_type),
+            setup_recipient: decoded_setup.as_ref().map(|setup| setup.recipient),
+            setup_request_name: decoded_setup
+                .as_ref()
+                .map(|setup| setup.request_name.clone()),
+            setup_descriptor_type: decoded_setup
+                .as_ref()
+                .and_then(|setup| setup.descriptor_type),
+            setup_descriptor_index: decoded_setup
+                .as_ref()
+                .and_then(|setup| setup.descriptor_index),
+            setup_language_id: decoded_setup.as_ref().and_then(|setup| setup.language_id),
+            setup_known_request: decoded_setup.as_ref().and_then(|setup| setup.known_request),
+            control_payload_kind: decoded_control_payload.as_ref().map(|payload| payload.kind),
+            control_descriptor_type: decoded_control_payload
+                .as_ref()
+                .and_then(|payload| payload.descriptor_type),
+            control_payload_summary: decoded_control_payload
+                .as_ref()
+                .map(|payload| payload.summary.clone()),
             data_hex: cloned_field(fields.get("data")),
             raw_line: line.to_string(),
-        });
+        })));
     }
     if line.starts_with("usb-packet-stats ") {
         let fields = fields(line);
@@ -357,7 +396,7 @@ fn control_transfer_row(line_number: u64, line: &str) -> Option<String> {
     let direction = fields.get("dir").copied()?;
     match direction {
         "setup" => Some(format!(
-            "setup line={} seq={} t={} src={} bm={} req={} value={} index={} wlen={} len={} captured={} data={}",
+            "setup line={} seq={} t={} src={} bm={} req={} value={} index={} wlen={} len={} captured={} {} data={}",
             line_number,
             display_field(fields.get("seq")),
             display_field(fields.get("t")),
@@ -369,10 +408,11 @@ fn control_transfer_row(line_number: u64, line: &str) -> Option<String> {
             display_field(fields.get("wlen")),
             display_field(fields.get("len")),
             display_field(fields.get("captured")),
+            setup_decode_text(&fields),
             display_field(fields.get("data")),
         )),
         "control-in" => Some(format!(
-            "control-in line={} seq={} t={} src={} reason={} len={} captured={} dropped={} data={}",
+            "control-in line={} seq={} t={} src={} reason={} len={} captured={} dropped={} {} data={}",
             line_number,
             display_field(fields.get("seq")),
             display_field(fields.get("t")),
@@ -381,10 +421,316 @@ fn control_transfer_row(line_number: u64, line: &str) -> Option<String> {
             display_field(fields.get("len")),
             display_field(fields.get("captured")),
             display_field(fields.get("dropped")),
+            control_payload_decode_text(&fields),
             display_field(fields.get("data")),
         )),
         _ => None,
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SetupDecode {
+    direction: &'static str,
+    request_type: &'static str,
+    recipient: &'static str,
+    request_name: String,
+    descriptor_type: Option<&'static str>,
+    descriptor_index: Option<u64>,
+    language_id: Option<u64>,
+    known_request: Option<&'static str>,
+}
+
+fn decode_setup_fields(fields: &BTreeMap<&str, &str>) -> Option<SetupDecode> {
+    let bm = u8::try_from(parsed_u64(fields.get("bm"))? & 0xFF).ok()?;
+    let request = u8::try_from(parsed_u64(fields.get("req"))? & 0xFF).ok()?;
+    let value = parsed_u64(fields.get("value")).unwrap_or(0) & 0xFFFF;
+    let index = parsed_u64(fields.get("index")).unwrap_or(0) & 0xFFFF;
+    let request_type = setup_request_type(bm);
+    let known_request = known_vendor_setup_request(bm, request, index);
+    let request_name = known_request
+        .map(str::to_string)
+        .unwrap_or_else(|| setup_request_name(request_type, request));
+    let decodes_descriptor = request_type == "standard" && matches!(request, 0x06 | 0x07);
+    let descriptor_type =
+        decodes_descriptor.then(|| descriptor_type_name(((value >> 8) & 0xFF) as u8));
+    let descriptor_index = decodes_descriptor.then_some(value & 0xFF);
+    let language_id = (descriptor_type == Some("string")).then_some(index);
+
+    Some(SetupDecode {
+        direction: setup_direction(bm),
+        request_type,
+        recipient: setup_recipient(bm),
+        request_name,
+        descriptor_type,
+        descriptor_index,
+        language_id,
+        known_request,
+    })
+}
+
+fn setup_decode_text(fields: &BTreeMap<&str, &str>) -> String {
+    let Some(decoded) = decode_setup_fields(fields) else {
+        return "decode=-".to_string();
+    };
+    format!(
+        "decode={}/{}/{} request={} descriptor={} descriptor_index={} language_id={} known={}",
+        decoded.direction,
+        decoded.request_type,
+        decoded.recipient,
+        decoded.request_name,
+        decoded.descriptor_type.unwrap_or("-"),
+        decoded
+            .descriptor_index
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        decoded
+            .language_id
+            .map(hex_u16)
+            .unwrap_or_else(|| "-".to_string()),
+        decoded.known_request.unwrap_or("-"),
+    )
+}
+
+fn setup_direction(bm_request_type: u8) -> &'static str {
+    if (bm_request_type & 0x80) != 0 {
+        "device_to_host"
+    } else {
+        "host_to_device"
+    }
+}
+
+fn setup_request_type(bm_request_type: u8) -> &'static str {
+    match (bm_request_type >> 5) & 0x03 {
+        0 => "standard",
+        1 => "class",
+        2 => "vendor",
+        _ => "reserved",
+    }
+}
+
+fn setup_recipient(bm_request_type: u8) -> &'static str {
+    match bm_request_type & 0x1F {
+        0 => "device",
+        1 => "interface",
+        2 => "endpoint",
+        3 => "other",
+        _ => "reserved",
+    }
+}
+
+fn setup_request_name(request_type: &str, request: u8) -> String {
+    let name = match request_type {
+        "standard" => match request {
+            0x00 => Some("get_status"),
+            0x01 => Some("clear_feature"),
+            0x03 => Some("set_feature"),
+            0x05 => Some("set_address"),
+            0x06 => Some("get_descriptor"),
+            0x07 => Some("set_descriptor"),
+            0x08 => Some("get_configuration"),
+            0x09 => Some("set_configuration"),
+            0x0A => Some("get_interface"),
+            0x0B => Some("set_interface"),
+            0x0C => Some("synch_frame"),
+            _ => None,
+        },
+        "class" => match request {
+            0x01 => Some("hid_get_report"),
+            0x02 => Some("hid_get_idle"),
+            0x03 => Some("hid_get_protocol"),
+            0x09 => Some("hid_set_report"),
+            0x0A => Some("hid_set_idle"),
+            0x0B => Some("hid_set_protocol"),
+            _ => None,
+        },
+        "vendor" => None,
+        _ => None,
+    };
+    name.map(str::to_string)
+        .unwrap_or_else(|| format!("{request_type}_{request:#04X}"))
+}
+
+fn descriptor_type_name(descriptor_type: u8) -> &'static str {
+    match descriptor_type {
+        0x01 => "device",
+        0x02 => "configuration",
+        0x03 => "string",
+        0x04 => "interface",
+        0x05 => "endpoint",
+        0x06 => "device_qualifier",
+        0x07 => "other_speed_configuration",
+        0x08 => "interface_power",
+        0x09 => "otg",
+        0x0A => "debug",
+        0x0B => "interface_association",
+        0x0F => "bos",
+        0x10 => "device_capability",
+        0x21 => "hid",
+        0x22 => "hid_report",
+        0x23 => "hid_physical",
+        0x29 => "hub",
+        0x30 => "super_speed_endpoint_companion",
+        _ => "unknown",
+    }
+}
+
+fn known_vendor_setup_request(
+    bm_request_type: u8,
+    request: u8,
+    index: u64,
+) -> Option<&'static str> {
+    match (bm_request_type, request, index) {
+        (0xC0, 0x20, 0x0004) => Some("xgip-ms-os-10-compatible-id"),
+        (0xC0, 0x20, 0x0007) => Some("ms-os-20-descriptor-set"),
+        (0xC1, 0x01, index) if (index & 0x00FF) == 0x0002 => Some("couchlink-setup-diag-log"),
+        _ => None,
+    }
+}
+
+fn hex_u16(value: u64) -> String {
+    format!("0x{:04X}", value & 0xFFFF)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ControlPayloadDecode {
+    kind: &'static str,
+    descriptor_type: Option<&'static str>,
+    summary: String,
+}
+
+fn decode_control_payload_fields(fields: &BTreeMap<&str, &str>) -> Option<ControlPayloadDecode> {
+    if fields.get("dir").copied()? != "control-in" {
+        return None;
+    }
+    let source = fields.get("src").copied().unwrap_or("");
+    match source {
+        "xgip-compat-id" => {
+            return Some(ControlPayloadDecode {
+                kind: "known_vendor_payload",
+                descriptor_type: None,
+                summary: "xgip-ms-os-10-compatible-id".to_string(),
+            });
+        }
+        "ms-os-20" => {
+            return Some(ControlPayloadDecode {
+                kind: "known_vendor_payload",
+                descriptor_type: None,
+                summary: "ms-os-20-descriptor-set".to_string(),
+            });
+        }
+        "setup-diag-log" => {
+            return Some(ControlPayloadDecode {
+                kind: "known_vendor_payload",
+                descriptor_type: None,
+                summary: "couchlink-setup-diag-log".to_string(),
+            });
+        }
+        _ => {}
+    }
+
+    let bytes = hex_bytes(fields.get("data"))?;
+    if bytes.len() < 2 {
+        return None;
+    }
+    let descriptor_type = descriptor_type_name(bytes[1]);
+    let summary = match bytes[1] {
+        0x01 => device_descriptor_summary(&bytes),
+        0x02 => configuration_descriptor_summary(&bytes),
+        0x03 => string_descriptor_summary(&bytes),
+        0x0F => descriptor_len_summary("bos", &bytes),
+        0x21 => descriptor_len_summary("hid", &bytes),
+        0x22 => descriptor_len_summary("hid_report", &bytes),
+        other => format!(
+            "descriptor={},captured_len={}",
+            descriptor_type_name(other),
+            bytes.len()
+        ),
+    };
+    Some(ControlPayloadDecode {
+        kind: "usb_descriptor",
+        descriptor_type: Some(descriptor_type),
+        summary,
+    })
+}
+
+fn control_payload_decode_text(fields: &BTreeMap<&str, &str>) -> String {
+    let Some(decoded) = decode_control_payload_fields(fields) else {
+        return "payload_kind=- payload_descriptor=- payload_summary=-".to_string();
+    };
+    format!(
+        "payload_kind={} payload_descriptor={} payload_summary={}",
+        decoded.kind,
+        decoded.descriptor_type.unwrap_or("-"),
+        decoded.summary,
+    )
+}
+
+fn hex_bytes(value: Option<&&str>) -> Option<Vec<u8>> {
+    let text = *value?;
+    if text.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(text.len() / 2);
+    for index in (0..text.len()).step_by(2) {
+        let byte = u8::from_str_radix(&text[index..index + 2], 16).ok()?;
+        out.push(byte);
+    }
+    Some(out)
+}
+
+fn device_descriptor_summary(bytes: &[u8]) -> String {
+    if bytes.len() < 18 {
+        return format!("descriptor=device,captured_len={}", bytes.len());
+    }
+    format!(
+        "descriptor=device,bcd_usb={},class=0x{:02X},subclass=0x{:02X},protocol=0x{:02X},max_packet={},vid={},pid={},bcd_device={},configs={}",
+        hex_u16(le_u16(bytes, 2)),
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        hex_u16(le_u16(bytes, 8)),
+        hex_u16(le_u16(bytes, 10)),
+        hex_u16(le_u16(bytes, 12)),
+        bytes[17],
+    )
+}
+
+fn configuration_descriptor_summary(bytes: &[u8]) -> String {
+    if bytes.len() < 9 {
+        return format!("descriptor=configuration,captured_len={}", bytes.len());
+    }
+    let max_power_ma = u16::from(bytes[8]) * 2;
+    format!(
+        "descriptor=configuration,total_len={},interfaces={},configuration={},attributes=0x{:02X},max_power_ma={}",
+        le_u16(bytes, 2),
+        bytes[4],
+        bytes[5],
+        bytes[7],
+        max_power_ma,
+    )
+}
+
+fn string_descriptor_summary(bytes: &[u8]) -> String {
+    if bytes.len() == 4 {
+        return format!(
+            "descriptor=string,language_id={}",
+            hex_u16(le_u16(bytes, 2))
+        );
+    }
+    format!(
+        "descriptor=string,utf16_bytes={},captured_len={}",
+        bytes.len().saturating_sub(2),
+        bytes.len()
+    )
+}
+
+fn descriptor_len_summary(name: &str, bytes: &[u8]) -> String {
+    format!("descriptor={name},captured_len={}", bytes.len())
+}
+
+fn le_u16(bytes: &[u8], index: usize) -> u64 {
+    u64::from(bytes[index]) | (u64::from(bytes[index + 1]) << 8)
 }
 
 impl UsbPacketSummary {
@@ -705,6 +1051,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
             text: "usb-packet-stats total=64 out=2 truncated_bytes=0 idle_in_suppressed=0\n",
         }];
         let summary = summarize_sources(&per_pico, &retained);
+        assert_eq!(summary.artifact_schema_version, 3);
         assert_eq!(summary.aggregate.packet_lines, 2);
         assert_eq!(summary.aggregate.stats_lines, 1);
         assert_eq!(summary.aggregate.missing_sequence_numbers, 1);
@@ -721,13 +1068,15 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
 usb-packet seq=7 t=10 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-out data=010203
 usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
 usb-packet seq=9 t=12 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
+usb-packet seq=10 t=13 dir=setup src=standard-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0x80 req=0x06 value=0x0301 index=0x0409 wlen=255 data=800601030904FF00
 usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
 ";
         let out =
             control_transfers_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
         assert!(out.contains("# source_label=02E22DA9"));
-        assert!(out.contains("setup line=2 seq=8 t=11 src=vendor-control bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 len=8 captured=8 data=C020020104030040"));
-        assert!(out.contains("control-in line=3 seq=9 t=12 src=desc-device reason=control-reply len=18 captured=18 dropped=0 data=12010002"));
+        assert!(out.contains("setup line=2 seq=8 t=11 src=vendor-control bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 len=8 captured=8 decode=device_to_host/vendor/device request=vendor_0x20 descriptor=- descriptor_index=- language_id=- known=- data=C020020104030040"));
+        assert!(out.contains("control-in line=3 seq=9 t=12 src=desc-device reason=control-reply len=18 captured=18 dropped=0 payload_kind=usb_descriptor payload_descriptor=device payload_summary=descriptor=device,captured_len=4 data=12010002"));
+        assert!(out.contains("setup line=4 seq=10 t=13 src=standard-control bm=0x80 req=0x06 value=0x0301 index=0x0409 wlen=255 len=8 captured=8 decode=device_to_host/standard/device request=get_descriptor descriptor=string descriptor_index=1 language_id=0x0409 known=- data=800601030904FF00"));
         assert!(!out.contains("host-out"));
         assert!(!out.contains("usb-packet-stats"));
     }
@@ -751,6 +1100,22 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
     }
 
     #[test]
+    fn setup_decode_names_known_vendor_requests() {
+        let text = "\
+usb-packet seq=1 t=10 dir=setup src=vendor-control bm=0xC0 req=0x20 value=0x0000 index=0x0007 wlen=38 len=8 captured=8 data=C020000007002600
+usb-packet seq=2 t=11 dir=setup src=vendor-control bm=0xC1 req=0x01 value=0x0000 index=0x0002 wlen=16388 len=8 captured=8 data=C101000002000440
+usb-packet seq=3 t=12 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 reason=control-reply data=0A000000000003062600
+";
+        let out =
+            control_transfers_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("request=ms-os-20-descriptor-set"));
+        assert!(out.contains("known=ms-os-20-descriptor-set"));
+        assert!(out.contains("request=couchlink-setup-diag-log"));
+        assert!(out.contains("known=couchlink-setup-diag-log"));
+        assert!(out.contains("payload_kind=known_vendor_payload payload_descriptor=- payload_summary=ms-os-20-descriptor-set"));
+    }
+
+    #[test]
     fn records_jsonl_normalizes_packet_and_stats_lines() {
         let text = "\
 usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
@@ -770,6 +1135,12 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[0]["line_number"], 1);
         assert_eq!(records[0]["seq"], 7);
         assert_eq!(records[0]["direction"], "control-in");
+        assert_eq!(records[0]["control_payload_kind"], "usb_descriptor");
+        assert_eq!(records[0]["control_descriptor_type"], "device");
+        assert_eq!(
+            records[0]["control_payload_summary"],
+            "descriptor=device,captured_len=4"
+        );
         assert_eq!(records[0]["data_hex"], "12010002");
         assert_eq!(records[1]["kind"], "packet");
         assert_eq!(records[1]["direction"], "setup");
@@ -778,6 +1149,14 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[1]["setup_value"], 258);
         assert_eq!(records[1]["setup_index"], 772);
         assert_eq!(records[1]["setup_length"], 16384);
+        assert_eq!(records[1]["setup_direction"], "device_to_host");
+        assert_eq!(records[1]["setup_type"], "vendor");
+        assert_eq!(records[1]["setup_recipient"], "device");
+        assert_eq!(records[1]["setup_request_name"], "vendor_0x20");
+        assert!(records[1]["setup_descriptor_type"].is_null());
+        assert!(records[1]["setup_descriptor_index"].is_null());
+        assert!(records[1]["setup_language_id"].is_null());
+        assert!(records[1]["setup_known_request"].is_null());
         assert_eq!(records[1]["data_hex"], "C020020104030040");
         assert_eq!(records[2]["kind"], "stats");
         assert_eq!(records[2]["total"], 64);
