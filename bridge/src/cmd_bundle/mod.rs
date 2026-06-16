@@ -1161,8 +1161,10 @@ fn aggregate_usb_packets(
     captures: &[PicoBundleCapture],
     retained_logs: &[RetainedDebugPacketLog],
 ) -> String {
-    let mut out = String::from("# Aggregate raw USB packet dump\n\n");
+    let mut out = String::from("# Aggregate USB packet capture evidence\n\n");
     let mut raw_total = 0usize;
+    let mut stats_total = 0usize;
+    let mut harvest_total = 0usize;
     let mut diagnostic_total = 0usize;
     for capture in captures {
         let count = capture.manifest.usb_packet_dump_count;
@@ -1178,6 +1180,10 @@ fn aggregate_usb_packets(
                 diagnostic_total += 1;
                 if line.starts_with("usb-packet ") {
                     raw_total += 1;
+                } else if line.starts_with("usb-packet-stats ") {
+                    stats_total += 1;
+                } else if line.starts_with("# harvest ") {
+                    harvest_total += 1;
                 }
             }
         }
@@ -1194,6 +1200,10 @@ fn aggregate_usb_packets(
                     diagnostic_total += 1;
                     if line.starts_with("usb-packet ") {
                         raw_total += 1;
+                    } else if line.starts_with("usb-packet-stats ") {
+                        stats_total += 1;
+                    } else if line.starts_with("# harvest ") {
+                        harvest_total += 1;
                     }
                 }
             }
@@ -1203,9 +1213,18 @@ fn aggregate_usb_packets(
     if diagnostic_total == 0 {
         out.push_str("No raw USB packets were captured in this bundle.\n");
     } else if raw_total == 0 {
-        out.push_str(
-            "No raw USB packet payload lines were captured, but packet stats were present.\n",
-        );
+        match (stats_total > 0, harvest_total > 0) {
+            (true, true) => out.push_str(
+                "No raw USB packet payload lines were captured, but packet stats and harvest records were present.\n",
+            ),
+            (true, false) => out.push_str(
+                "No raw USB packet payload lines were captured, but packet stats were present.\n",
+            ),
+            (false, true) => out.push_str(
+                "No raw USB packet payload lines were captured, but harvest records were present.\n",
+            ),
+            (false, false) => {}
+        }
     }
     out
 }
@@ -1361,7 +1380,9 @@ fn format_count_map(map: &BTreeMap<String, u64>) -> String {
 }
 
 fn is_usb_packet_diagnostic_line(line: &str) -> bool {
-    line.starts_with("usb-packet ") || line.starts_with("usb-packet-stats ")
+    line.starts_with("usb-packet ")
+        || line.starts_with("usb-packet-stats ")
+        || line.starts_with("# harvest ")
 }
 
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
@@ -1490,13 +1511,29 @@ mod tests {
     fn aggregate_usb_packets_includes_retained_host_logs() {
         let retained = vec![RetainedDebugPacketLog {
             name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
-            text: "# header\nusb-packet seq=4 dir=out data=010203\nusb-packet-stats total=64 in=10 out=54\n".to_string(),
+            text: "# header\nusb-packet seq=4 dir=out data=010203\nusb-packet-stats total=64 in=10 out=54\n# harvest {\"status\":\"ok\",\"duration_ms\":14,\"packet_lines\":2}\n".to_string(),
         }];
         let out = aggregate_usb_packets(&[], &retained);
         assert!(out.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
         assert!(out.contains("usb-packet seq=4 dir=out data=010203"));
         assert!(out.contains("usb-packet-stats total=64 in=10 out=54"));
+        assert!(out.contains("# harvest {\"status\":\"ok\",\"duration_ms\":14,\"packet_lines\":2}"));
         assert!(!out.contains("No raw USB packets"));
+    }
+
+    #[test]
+    fn aggregate_usb_packets_explains_harvest_without_payloads() {
+        let retained = vec![RetainedDebugPacketLog {
+            name: "usb-packets-20260615-214000-02E22DA9.log".to_string(),
+            text: "# harvest {\"status\":\"error\",\"duration_ms\":1200,\"error\":\"no log chunks received\"}\n"
+                .to_string(),
+        }];
+        let out = aggregate_usb_packets(&[], &retained);
+        assert!(out.contains("# Aggregate USB packet capture evidence"));
+        assert!(out.contains("# harvest {\"status\":\"error\""));
+        assert!(out.contains(
+            "No raw USB packet payload lines were captured, but harvest records were present."
+        ));
     }
 
     #[test]
