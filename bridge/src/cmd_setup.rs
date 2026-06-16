@@ -8,6 +8,7 @@
 //! All `dialoguer` calls live on a blocking task so they don't stall the
 //! Tokio runtime.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Input, Password};
 use zeroize::Zeroize;
 
-use crate::{cdc, cmd_run, config, diag_usb, journal, protocol};
+use crate::{cdc, cmd_run, config, diag_usb, journal, pico_mode, protocol};
 
 const SETUP_STAGE_NAMES: [&str; 6] = [
     "Pre-flight",
@@ -40,8 +41,8 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
 
     stage_preflight().await?;
     let uf2 = stage_pick_uf2(uf2_override).await?;
-    stage_flash(uf2).await?;
-    stage_wifi_provisioning().await?;
+    let pre_flash_run_uids = stage_flash(uf2).await?;
+    stage_wifi_provisioning(pre_flash_run_uids.as_ref()).await?;
     let (peer_ip, identity) = stage_lan_discovery().await?;
     stage_install_autostart().await?;
 
@@ -123,7 +124,7 @@ async fn stage_pick_uf2(uf2_override: Option<PathBuf>) -> Result<Option<PathBuf>
     Ok(None)
 }
 
-async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
+async fn stage_flash(uf2: Option<PathBuf>) -> Result<Option<HashSet<u32>>> {
     println!();
     print_stage(2);
     tracing::info!("setup: stage 3/6 -- flash");
@@ -148,14 +149,15 @@ async fn stage_flash(uf2: Option<PathBuf>) -> Result<()> {
     println!();
     ask_press_enter("Press Enter once the RPI-RP2 or RP2350 drive has appeared in Windows.")
         .await?;
+    let pre_flash_run_uids = discover_run_mode_uid_baseline().await;
     crate::cmd_flash::run(uf2, false, false).await?;
     println!("  Flash complete. The Pico is rebooting into setup mode --");
     println!("  leave the BOOTSEL button alone during this reboot.");
     tracing::info!("setup: stage 3/6 complete -- Pico rebooting into setup mode");
-    Ok(())
+    Ok(pre_flash_run_uids)
 }
 
-async fn stage_wifi_provisioning() -> Result<()> {
+async fn stage_wifi_provisioning(pre_flash_run_uids: Option<&HashSet<u32>>) -> Result<()> {
     println!();
     print_stage(3);
     tracing::info!("setup: stage 4/6 -- Wi-Fi provisioning");
@@ -165,7 +167,7 @@ async fn stage_wifi_provisioning() -> Result<()> {
          then continue."
     );
 
-    let port = wait_for_setup_cdc(Duration::from_secs(120))
+    let port = wait_for_setup_cdc(Duration::from_secs(120), pre_flash_run_uids)
         .await
         .context("Pico did not appear as a USB serial device")?;
     println!("  Pico in setup mode on {port}");
@@ -568,10 +570,33 @@ fn prompt_wifi_credentials() -> Result<WifiCreds> {
     Ok(WifiCreds { ssid, password })
 }
 
-async fn wait_for_setup_cdc(timeout: Duration) -> Result<String> {
+async fn discover_run_mode_uid_baseline() -> Option<HashSet<u32>> {
+    match cmd_run::discover_picos(Duration::from_secs(2)).await {
+        Ok(picos) => {
+            let ids: HashSet<u32> = picos.iter().map(|p| p.info.unique_id_short).collect();
+            tracing::info!(
+                "setup: pre-flash run-mode baseline contains {} Pico board(s)",
+                ids.len()
+            );
+            Some(ids)
+        }
+        Err(e) => {
+            tracing::debug!("setup: pre-flash run-mode baseline discovery failed: {e:#}");
+            None
+        }
+    }
+}
+
+async fn wait_for_setup_cdc(
+    timeout: Duration,
+    pre_flash_run_uids: Option<&HashSet<u32>>,
+) -> Result<String> {
     let started = std::time::Instant::now();
     let deadline = started + timeout;
     let mut next_beat = started + Duration::from_secs(10);
+    let mut next_recovery_probe = started + Duration::from_secs(3);
+    let mut recovery_requested = false;
+    let mut logged_ambiguous_recovery = false;
     let total = timeout.as_secs();
     loop {
         if let Ok(name) = cdc::find_setup_port() {
@@ -596,13 +621,97 @@ async fn wait_for_setup_cdc(timeout: Duration) -> Result<String> {
             tracing::info!("setup: still waiting for setup-mode CDC port ({elapsed}s/{total}s)");
             next_beat = now + Duration::from_secs(10);
         }
+        if !recovery_requested && now >= next_recovery_probe {
+            let Some(pre_flash_run_uids) = pre_flash_run_uids else {
+                next_recovery_probe = now + Duration::from_secs(10);
+                continue;
+            };
+            match find_reboot_to_setup_candidate(pre_flash_run_uids).await {
+                Ok(SetupRecoveryProbe::One(pico)) => {
+                    println!(
+                        "  Pico came back in {} mode instead of USB serial; asking it to switch to setup USB...",
+                        pico.persona.label(),
+                    );
+                    tracing::info!(
+                        "setup: run-mode Pico {} came back as {}; requesting setup-mode reboot",
+                        pico.short_label(),
+                        pico.persona.label(),
+                    );
+                    pico_mode::request_reboot_to_setup(&pico).await?;
+                    recovery_requested = true;
+                    next_beat = now + Duration::from_secs(10);
+                }
+                Ok(SetupRecoveryProbe::Ambiguous { total, candidates }) => {
+                    if !logged_ambiguous_recovery {
+                        tracing::warn!(
+                            "setup: found {total} run-mode Pico board(s), {candidates} not in pre-flash baseline; not auto-switching stage-4 recovery"
+                        );
+                        logged_ambiguous_recovery = true;
+                    }
+                    next_recovery_probe = now + Duration::from_secs(10);
+                }
+                Ok(SetupRecoveryProbe::None) => {
+                    next_recovery_probe = now + Duration::from_secs(5);
+                }
+                Err(e) => {
+                    tracing::debug!("setup: run-mode recovery discovery failed: {e:#}");
+                    next_recovery_probe = now + Duration::from_secs(5);
+                }
+            }
+        }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }
 
+enum SetupRecoveryProbe {
+    One(cmd_run::PicoTarget),
+    Ambiguous { total: usize, candidates: usize },
+    None,
+}
+
+async fn find_reboot_to_setup_candidate(
+    pre_flash_run_uids: &HashSet<u32>,
+) -> Result<SetupRecoveryProbe> {
+    let picos = cmd_run::discover_picos(Duration::from_secs(2)).await?;
+    if picos.is_empty() {
+        return Ok(SetupRecoveryProbe::None);
+    }
+    let total = picos.len();
+    let candidates = setup_recovery_candidate_uids(&picos, pre_flash_run_uids);
+    if candidates.is_empty() {
+        return Ok(SetupRecoveryProbe::None);
+    }
+    if candidates.len() != 1 {
+        return Ok(SetupRecoveryProbe::Ambiguous {
+            total,
+            candidates: candidates.len(),
+        });
+    }
+    let target_uid = candidates[0];
+    let pico = picos
+        .into_iter()
+        .find(|p| p.info.unique_id_short == target_uid)
+        .expect("candidate UID came from picos");
+    Ok(SetupRecoveryProbe::One(pico))
+}
+
+fn setup_recovery_candidate_uids(
+    picos: &[cmd_run::PicoTarget],
+    pre_flash_run_uids: &HashSet<u32>,
+) -> Vec<u32> {
+    picos
+        .iter()
+        .filter(|p| !pre_flash_run_uids.contains(&p.info.unique_id_short))
+        .map(|p| p.info.unique_id_short)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SETUP_STAGE_NAMES;
+    use super::{setup_recovery_candidate_uids, SETUP_STAGE_NAMES};
+    use crate::{cmd_run::PicoTarget, protocol};
+    use std::collections::HashSet;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
     fn first_run_setup_does_not_require_controller_input() {
@@ -611,5 +720,46 @@ mod tests {
         assert!(!joined.contains("xinput"));
         assert!(!joined.contains("controller"));
         assert!(!joined.contains("smoke"));
+    }
+
+    #[test]
+    fn setup_recovery_targets_only_new_run_mode_picos() {
+        let old = pico_target(0x11111111);
+        let flashed = pico_target(0x22222222);
+        let mut baseline = HashSet::new();
+        baseline.insert(old.info.unique_id_short);
+
+        let candidates = setup_recovery_candidate_uids(&[old, flashed], &baseline);
+
+        assert_eq!(candidates, vec![0x22222222]);
+    }
+
+    #[test]
+    fn setup_recovery_does_not_target_baseline_picos() {
+        let old = pico_target(0x11111111);
+        let mut baseline = HashSet::new();
+        baseline.insert(old.info.unique_id_short);
+
+        let candidates = setup_recovery_candidate_uids(&[old], &baseline);
+
+        assert!(candidates.is_empty());
+    }
+
+    fn pico_target(uid: u32) -> PicoTarget {
+        PicoTarget {
+            peer: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 4242),
+            info: protocol::AckInfo {
+                proto_version: protocol::PROTO_VERSION,
+                fw_major: 26,
+                fw_minor: 6,
+                fw_patch: 16,
+                uptime_seconds: 1,
+                unique_id_short: uid,
+                board_type: protocol::BOARD_PICO_2_W,
+                full_version: None,
+            },
+            persona: protocol::Persona::Ps4,
+            ack_flags: protocol::ACK_FLAG_USB_DIAG_SUPPORTED,
+        }
     }
 }
