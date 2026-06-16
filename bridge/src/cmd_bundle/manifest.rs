@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 15;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 16;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -77,6 +77,8 @@ pub(super) struct Manifest {
     usb_hid_reports_path: &'static str,
     usb_packet_timeline_included: bool,
     usb_packet_timeline_path: &'static str,
+    usb_enumeration_analysis_included: bool,
+    usb_enumeration_analysis_path: &'static str,
     debug_capture_verdict_included: bool,
     debug_capture_verdict_path: &'static str,
     debug_capture_evidence_included: bool,
@@ -156,6 +158,8 @@ pub(super) async fn build_manifest(
         usb_hid_reports_path: "usb-hid-reports.txt",
         usb_packet_timeline_included: true,
         usb_packet_timeline_path: "usb-packet-timeline.txt",
+        usb_enumeration_analysis_included: true,
+        usb_enumeration_analysis_path: "usb-enumeration-analysis.txt",
         debug_capture_verdict_included: true,
         debug_capture_verdict_path: "debug-capture-verdict.txt",
         debug_capture_evidence_included: true,
@@ -179,6 +183,7 @@ pub(super) async fn build_manifest(
             "usb-control-transfers.txt extracts setup and control-IN traffic into a compact transcript with decoded setup request names.",
             "usb-hid-reports.txt extracts HID report ids and report types from HID OUT/FEATURE payloads and HID GET_REPORT/SET_REPORT setup requests.",
             "usb-packet-timeline.txt extracts packet, stats, and harvest records in timestamp order with per-source timing deltas.",
+            "usb-enumeration-analysis.txt turns packet captures into a phase checklist for descriptor fetches, configuration, vendor probes, HID reports, and endpoint traffic.",
             "debug-capture-verdict.txt explains whether the bundle contains enough debug input packet evidence for adapter reverse engineering.",
             "debug-capture-evidence.json exposes the same debug capture gate, lossiness, and per-source evidence counts in machine-readable form.",
         ],
@@ -297,6 +302,11 @@ mod tests {
         assert_eq!(json["usb_hid_reports_path"], "usb-hid-reports.txt");
         assert_eq!(json["usb_packet_timeline_included"], true);
         assert_eq!(json["usb_packet_timeline_path"], "usb-packet-timeline.txt");
+        assert_eq!(json["usb_enumeration_analysis_included"], true);
+        assert_eq!(
+            json["usb_enumeration_analysis_path"],
+            "usb-enumeration-analysis.txt"
+        );
         assert_eq!(json["debug_capture_verdict_included"], true);
         assert_eq!(
             json["debug_capture_verdict_path"],

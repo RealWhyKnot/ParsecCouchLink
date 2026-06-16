@@ -372,6 +372,44 @@ pub(super) fn packet_timeline_text_for_sources(
     out
 }
 
+pub(super) fn enumeration_analysis_text_for_text(label: &str, path: &str, text: &str) -> String {
+    let mut out = String::from("# USB enumeration analysis\n");
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_label={label}\n"));
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_path={path}\n\n"));
+    let analysis = analyze_enumeration(text);
+    write_enumeration_analysis(&mut out, &analysis);
+    out
+}
+
+pub(super) fn enumeration_analysis_text_for_sources(
+    per_pico: &[UsbPacketSummarySource<'_>],
+    retained_logs: &[UsbPacketSummarySource<'_>],
+) -> String {
+    let mut out = String::from(
+        "# USB enumeration analysis\n\n\
+         # Derived from debug input usb-packet setup, control-IN, endpoint-IN, endpoint-OUT, and HID report lines.\n\
+         # This file is a quick checklist for whether a host adapter enumerated, configured, probed, and exchanged runtime traffic with the Pico.\n\n",
+    );
+    let mut section_count = 0usize;
+    for source in per_pico.iter().chain(retained_logs.iter()) {
+        let analysis = analyze_enumeration(source.text);
+        if analysis.packet_lines == 0 && analysis.harvest_lines == 0 && analysis.stats_lines == 0 {
+            continue;
+        }
+        section_count += 1;
+        let _ = std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!("## {} ({})\n", source.label, source.path),
+        );
+        write_enumeration_analysis(&mut out, &analysis);
+        out.push('\n');
+    }
+    if section_count == 0 {
+        out.push_str("No USB packet, packet-stat, or harvest evidence was captured.\n");
+    }
+    out
+}
+
 pub(super) fn summarize_sources(
     per_pico: &[UsbPacketSummarySource<'_>],
     retained_logs: &[UsbPacketSummarySource<'_>],
@@ -1141,6 +1179,310 @@ fn le_u16(bytes: &[u8], index: usize) -> u64 {
     u64::from(bytes[index]) | (u64::from(bytes[index + 1]) << 8)
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct UsbEnumerationAnalysis {
+    packet_lines: u64,
+    stats_lines: u64,
+    harvest_lines: u64,
+    setup_lines: u64,
+    control_in_lines: u64,
+    endpoint_in_lines: u64,
+    endpoint_out_lines: u64,
+    device_descriptor_requests: u64,
+    device_descriptor_replies: u64,
+    configuration_descriptor_requests: u64,
+    configuration_descriptor_replies: u64,
+    string_descriptor_requests: u64,
+    bos_descriptor_requests: u64,
+    hid_report_descriptor_requests: u64,
+    set_address_requests: u64,
+    set_configuration_requests: u64,
+    hid_get_report_requests: u64,
+    hid_set_report_requests: u64,
+    hid_output_reports: u64,
+    hid_feature_reports: u64,
+    first_device_vid_pid: Option<String>,
+    first_configuration_interfaces: Option<u64>,
+    known_vendor_requests: BTreeMap<String, u64>,
+    control_payload_replies: BTreeMap<String, u64>,
+}
+
+fn analyze_enumeration(text: &str) -> UsbEnumerationAnalysis {
+    let mut analysis = UsbEnumerationAnalysis::default();
+    for line in text.lines() {
+        if line.starts_with("usb-packet ") {
+            analysis.add_packet_line(line);
+        } else if line.starts_with("usb-packet-stats ") {
+            analysis.stats_lines += 1;
+        } else if line.starts_with(HARVEST_PREFIX) {
+            analysis.harvest_lines += 1;
+        }
+    }
+    analysis
+}
+
+impl UsbEnumerationAnalysis {
+    fn add_packet_line(&mut self, line: &str) {
+        self.packet_lines += 1;
+        let fields = fields(line);
+        match fields.get("dir").copied() {
+            Some("setup") => {
+                self.setup_lines += 1;
+                self.add_setup_fields(&fields);
+            }
+            Some("control-in") => {
+                self.control_in_lines += 1;
+                self.add_control_payload_fields(&fields);
+            }
+            Some("in") => self.endpoint_in_lines += 1,
+            Some("out") => self.endpoint_out_lines += 1,
+            _ => {}
+        }
+        self.add_hid_report_fields(&fields);
+    }
+
+    fn add_setup_fields(&mut self, fields: &BTreeMap<&str, &str>) {
+        let Some(setup) = decode_setup_fields(fields) else {
+            return;
+        };
+        match setup.request_name.as_str() {
+            "set_address" => self.set_address_requests += 1,
+            "set_configuration" => self.set_configuration_requests += 1,
+            "hid_get_report" => self.hid_get_report_requests += 1,
+            "hid_set_report" => self.hid_set_report_requests += 1,
+            _ => {}
+        }
+        if setup.request_name == "get_descriptor" {
+            match setup.descriptor_type {
+                Some("device") => self.device_descriptor_requests += 1,
+                Some("configuration") => self.configuration_descriptor_requests += 1,
+                Some("string") => self.string_descriptor_requests += 1,
+                Some("bos") => self.bos_descriptor_requests += 1,
+                Some("hid_report") => self.hid_report_descriptor_requests += 1,
+                _ => {}
+            }
+        }
+        if let Some(known_request) = setup.known_request {
+            bump(&mut self.known_vendor_requests, known_request);
+        }
+    }
+
+    fn add_control_payload_fields(&mut self, fields: &BTreeMap<&str, &str>) {
+        let Some(payload) = decode_control_payload_fields(fields) else {
+            return;
+        };
+        bump(&mut self.control_payload_replies, &payload.summary);
+        match payload.descriptor_type {
+            Some("device") => {
+                self.device_descriptor_replies += 1;
+                if self.first_device_vid_pid.is_none() {
+                    self.first_device_vid_pid = device_descriptor_vid_pid(fields);
+                }
+            }
+            Some("configuration") => {
+                self.configuration_descriptor_replies += 1;
+                if self.first_configuration_interfaces.is_none() {
+                    self.first_configuration_interfaces =
+                        configuration_descriptor_interfaces(fields);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn add_hid_report_fields(&mut self, fields: &BTreeMap<&str, &str>) {
+        let Some(report) = decode_hid_report_metadata(fields) else {
+            return;
+        };
+        match report.report_type_name {
+            Some("output") => self.hid_output_reports += 1,
+            Some("feature") => self.hid_feature_reports += 1,
+            _ => {}
+        }
+    }
+}
+
+fn device_descriptor_vid_pid(fields: &BTreeMap<&str, &str>) -> Option<String> {
+    let bytes = hex_bytes(fields.get("data"))?;
+    if bytes.len() < 12 {
+        return None;
+    }
+    Some(format!(
+        "{}:{}",
+        hex_u16(le_u16(&bytes, 8)),
+        hex_u16(le_u16(&bytes, 10))
+    ))
+}
+
+fn configuration_descriptor_interfaces(fields: &BTreeMap<&str, &str>) -> Option<u64> {
+    let bytes = hex_bytes(fields.get("data"))?;
+    (bytes.len() >= 5).then_some(u64::from(bytes[4]))
+}
+
+fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysis) {
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("verdict={}\n", enumeration_verdict(analysis)),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("packet_lines={}\n", analysis.packet_lines),
+    );
+    let _ = std::fmt::Write::write_fmt(out, format_args!("stats_lines={}\n", analysis.stats_lines));
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("harvest_lines={}\n", analysis.harvest_lines),
+    );
+    let _ = std::fmt::Write::write_fmt(out, format_args!("setup_lines={}\n", analysis.setup_lines));
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("control_in_lines={}\n", analysis.control_in_lines),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("endpoint_in_lines={}\n", analysis.endpoint_in_lines),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("endpoint_out_lines={}\n", analysis.endpoint_out_lines),
+    );
+    write_bool(
+        out,
+        "device_descriptor_request",
+        analysis.device_descriptor_requests > 0,
+    );
+    write_bool(
+        out,
+        "device_descriptor_reply",
+        analysis.device_descriptor_replies > 0,
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "device_vid_pid={}\n",
+            analysis.first_device_vid_pid.as_deref().unwrap_or("-")
+        ),
+    );
+    write_bool(
+        out,
+        "configuration_descriptor_request",
+        analysis.configuration_descriptor_requests > 0,
+    );
+    write_bool(
+        out,
+        "configuration_descriptor_reply",
+        analysis.configuration_descriptor_replies > 0,
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "configuration_interfaces={}\n",
+            analysis
+                .first_configuration_interfaces
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ),
+    );
+    write_bool(
+        out,
+        "set_address_request",
+        analysis.set_address_requests > 0,
+    );
+    write_bool(
+        out,
+        "set_configuration_request",
+        analysis.set_configuration_requests > 0,
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "string_descriptor_requests={}\n",
+            analysis.string_descriptor_requests
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "bos_descriptor_requests={}\n",
+            analysis.bos_descriptor_requests
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "hid_report_descriptor_requests={}\n",
+            analysis.hid_report_descriptor_requests
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "hid_get_report_requests={}\n",
+            analysis.hid_get_report_requests
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "hid_set_report_requests={}\n",
+            analysis.hid_set_report_requests
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("hid_output_reports={}\n", analysis.hid_output_reports),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("hid_feature_reports={}\n", analysis.hid_feature_reports),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "known_vendor_requests={}\n",
+            format_count_map(&analysis.known_vendor_requests)
+        ),
+    );
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!(
+            "control_payload_replies={}\n",
+            format_count_map(&analysis.control_payload_replies)
+        ),
+    );
+}
+
+fn write_bool(out: &mut String, key: &str, value: bool) {
+    let _ = std::fmt::Write::write_fmt(
+        out,
+        format_args!("{key}={}\n", if value { "yes" } else { "no" }),
+    );
+}
+
+fn enumeration_verdict(analysis: &UsbEnumerationAnalysis) -> &'static str {
+    if analysis.packet_lines == 0 {
+        if analysis.harvest_lines > 0 || analysis.stats_lines > 0 {
+            "harvest_or_stats_only_no_raw_packets"
+        } else {
+            "no_usb_packet_evidence"
+        }
+    } else if analysis.endpoint_in_lines > 0 || analysis.endpoint_out_lines > 0 {
+        "endpoint_traffic_observed"
+    } else if analysis.set_configuration_requests > 0 {
+        "configured_no_endpoint_traffic"
+    } else if analysis.configuration_descriptor_replies > 0 {
+        "configuration_descriptor_seen_not_configured"
+    } else if analysis.device_descriptor_replies > 0 {
+        "device_descriptor_seen_no_configuration_reply"
+    } else if analysis.device_descriptor_requests > 0 || analysis.setup_lines > 0 {
+        "setup_requests_seen_no_descriptor_reply"
+    } else if analysis.control_in_lines > 0 {
+        "control_replies_seen_without_setup_context"
+    } else {
+        "endpoint_only_or_unclassified_packets"
+    }
+}
+
 impl UsbPacketSummary {
     fn add_packet_line(
         &mut self,
@@ -1588,6 +1930,17 @@ fn merge_counts(into: &mut BTreeMap<String, u64>, from: &BTreeMap<String, u64>) 
     }
 }
 
+fn format_count_map(map: &BTreeMap<String, u64>) -> String {
+    if map.is_empty() {
+        "-".to_string()
+    } else {
+        map.iter()
+            .map(|(key, value)| format!("{key}:{value}"))
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+}
+
 fn min_assign(target: &mut Option<u64>, value: Option<u64>) {
     if let Some(value) = value {
         if target.map(|current| value < current).unwrap_or(true) {
@@ -1743,6 +2096,66 @@ usb-packet seq=9 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=
         assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
         assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
         assert!(out.contains("packet line=1 seq=2 t=22"));
+    }
+
+    #[test]
+    fn enumeration_analysis_reports_descriptor_configuration_and_endpoint_phases() {
+        let text = "\
+usb-packet seq=1 t=10 dir=setup src=standard-control bm=0x80 req=0x06 value=0x0100 index=0x0000 wlen=18 len=8 captured=8 data=8006000100001200
+usb-packet seq=2 t=11 dir=control-in src=desc-device len=18 captured=18 dropped=0 reason=control-reply data=12010002000000405E048E02011401020301
+usb-packet seq=3 t=12 dir=setup src=standard-control bm=0x00 req=0x05 value=0x0005 index=0x0000 wlen=0 len=8 captured=8 data=0005050000000000
+usb-packet seq=4 t=13 dir=setup src=standard-control bm=0x80 req=0x06 value=0x0200 index=0x0000 wlen=32 len=8 captured=8 data=8006000200002000
+usb-packet seq=5 t=14 dir=control-in src=desc-config len=9 captured=9 dropped=0 reason=control-reply data=09022000010100A032
+usb-packet seq=6 t=15 dir=setup src=standard-control bm=0x00 req=0x09 value=0x0001 index=0x0000 wlen=0 len=8 captured=8 data=0009010000000000
+usb-packet seq=7 t=16 dir=setup src=vendor-control bm=0xC0 req=0x20 value=0x0000 index=0x0007 wlen=38 len=8 captured=8 data=C020000007002600
+usb-packet seq=8 t=17 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 reason=control-reply data=0A000000000003062600
+usb-packet seq=9 t=18 dir=out src=vendor len=3 captured=3 dropped=0 reason=host-out data=010203
+";
+        let out =
+            enumeration_analysis_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("# USB enumeration analysis"));
+        assert!(out.contains("verdict=endpoint_traffic_observed"));
+        assert!(out.contains("packet_lines=9"));
+        assert!(out.contains("device_descriptor_request=yes"));
+        assert!(out.contains("device_descriptor_reply=yes"));
+        assert!(out.contains("device_vid_pid=0x045E:0x028E"));
+        assert!(out.contains("configuration_descriptor_request=yes"));
+        assert!(out.contains("configuration_descriptor_reply=yes"));
+        assert!(out.contains("configuration_interfaces=1"));
+        assert!(out.contains("set_address_request=yes"));
+        assert!(out.contains("set_configuration_request=yes"));
+        assert!(out.contains("known_vendor_requests=ms-os-20-descriptor-set:1"));
+        assert!(out.contains("control_payload_replies="));
+        assert!(out.contains("ms-os-20-descriptor-set:1"));
+    }
+
+    #[test]
+    fn enumeration_analysis_distinguishes_harvest_only_evidence() {
+        let text = "# harvest {\"status\":\"ok\",\"duration_ms\":14,\"packet_lines\":0}\n";
+        let out =
+            enumeration_analysis_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("verdict=harvest_or_stats_only_no_raw_packets"));
+        assert!(out.contains("packet_lines=0"));
+        assert!(out.contains("harvest_lines=1"));
+        assert!(out.contains("device_descriptor_request=no"));
+    }
+
+    #[test]
+    fn enumeration_analysis_sources_omit_empty_sources() {
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: "not packet evidence\n",
+        }];
+        let retained = [UsbPacketSummarySource {
+            label: "usb-packets.log".to_string(),
+            path: "debug-packets/usb-packets.log".to_string(),
+            text: "usb-packet seq=2 dir=setup bm=0x80 req=0x06 value=0x0100 index=0x0000 wlen=18 data=8006000100001200\n",
+        }];
+        let out = enumeration_analysis_text_for_sources(&per_pico, &retained);
+        assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
+        assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
+        assert!(out.contains("verdict=setup_requests_seen_no_descriptor_reply"));
     }
 
     #[test]

@@ -42,6 +42,7 @@ use usb_enum::{
 };
 use usb_packet_summary::{
     control_transfers_text_for_sources, control_transfers_text_for_text,
+    enumeration_analysis_text_for_sources, enumeration_analysis_text_for_text,
     hid_reports_text_for_sources, hid_reports_text_for_text, packet_timeline_text_for_sources,
     packet_timeline_text_for_text, records_jsonl_for_sources, records_jsonl_for_text,
     summarize_sources, summarize_text, UsbPacketBundleSummary, UsbPacketSummary,
@@ -261,6 +262,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         hid_reports_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
     let usb_packet_timeline_text =
         packet_timeline_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
+    let usb_enumeration_analysis_text =
+        enumeration_analysis_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
     let debug_capture_status = debug_capture_overall_status(
         &usb_packet_summary,
         &per_pico_captures,
@@ -313,6 +316,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         "included",
         usb_packet_timeline_text.len(),
         "packet_timing",
+    );
+    capture_log.record_duration(
+        "usb_enumeration_analysis",
+        0,
+        "included",
+        usb_enumeration_analysis_text.len(),
+        "enumeration_phase_checklist",
     );
     capture_log.record_duration(
         "debug_capture_verdict",
@@ -494,6 +504,14 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
             &pico.usb_packets_text,
         );
         zip.write_all(redact_bundle_text(&packet_timeline).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-enumeration-analysis.txt"), opts)?;
+        let enumeration_analysis = enumeration_analysis_text_for_text(
+            &pico.manifest.uid,
+            &format!("{base}/usb-packets.txt"),
+            &pico.usb_packets_text,
+        );
+        zip.write_all(redact_bundle_text(&enumeration_analysis).as_bytes())?;
     }
 
     zip.start_file("usb-packets.txt", opts)?;
@@ -519,6 +537,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.start_file("usb-packet-timeline.txt", opts)?;
     zip.write_all(redact_bundle_text(&usb_packet_timeline_text).as_bytes())?;
+
+    zip.start_file("usb-enumeration-analysis.txt", opts)?;
+    zip.write_all(redact_bundle_text(&usb_enumeration_analysis_text).as_bytes())?;
 
     zip.start_file("debug-capture-verdict.txt", opts)?;
     zip.write_all(redact_bundle_text(&debug_capture_verdict).as_bytes())?;
@@ -1617,7 +1638,7 @@ fn debug_capture_verdict_text(
         );
     } else {
         out.push_str(
-            "- Use usb-packets.jsonl for scripts, usb-packet-timeline.txt for timing, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, setup/control behavior, and harvest health totals.\n",
+            "- Use usb-enumeration-analysis.txt for the enumeration/configuration checklist, usb-packets.jsonl for scripts, usb-packet-timeline.txt for timing, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, setup/control behavior, and harvest health totals.\n",
         );
         if debug_capture_has_loss(summary) {
             out.push_str(
