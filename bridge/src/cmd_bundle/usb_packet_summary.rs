@@ -76,6 +76,11 @@ pub(super) enum UsbPacketRecord {
         captured_len: Option<u64>,
         truncated_bytes_total: Option<u64>,
         suppressed_idle_reports: Option<u64>,
+        setup_bm_request_type: Option<u64>,
+        setup_request: Option<u64>,
+        setup_value: Option<u64>,
+        setup_index: Option<u64>,
+        setup_length: Option<u64>,
         data_hex: Option<String>,
         raw_line: String,
     },
@@ -227,6 +232,11 @@ fn record_from_line(
             captured_len: parsed_u64(fields.get("captured")),
             truncated_bytes_total: parsed_u64(fields.get("dropped")),
             suppressed_idle_reports: parsed_u64(fields.get("suppressed")),
+            setup_bm_request_type: parsed_u64(fields.get("bm")),
+            setup_request: parsed_u64(fields.get("req")),
+            setup_value: parsed_u64(fields.get("value")),
+            setup_index: parsed_u64(fields.get("index")),
+            setup_length: parsed_u64(fields.get("wlen")),
             data_hex: cloned_field(fields.get("data")),
             raw_line: line.to_string(),
         });
@@ -473,7 +483,15 @@ fn fields(line: &str) -> BTreeMap<&str, &str> {
 }
 
 fn parsed_u64(value: Option<&&str>) -> Option<u64> {
-    value.and_then(|value| value.parse::<u64>().ok())
+    value.and_then(|value| {
+        value
+            .strip_prefix("0x")
+            .or_else(|| value.strip_prefix("0X"))
+            .map_or_else(
+                || value.parse::<u64>().ok(),
+                |hex| u64::from_str_radix(hex, 16).ok(),
+            )
+    })
 }
 
 fn cloned_field(value: Option<&&str>) -> Option<String> {
@@ -604,6 +622,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
     fn records_jsonl_normalizes_packet_and_stats_lines() {
         let text = "\
 usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
+usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
 usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
 # harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"lost_bytes\":4,\"packet_lines\":8,\"new_lines\":2,\"total_packet_lines\":12}
 ";
@@ -613,24 +632,32 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(records.len(), 3);
+        assert_eq!(records.len(), 4);
         assert_eq!(records[0]["kind"], "packet");
         assert_eq!(records[0]["source_label"], "02E22DA9");
         assert_eq!(records[0]["line_number"], 1);
         assert_eq!(records[0]["seq"], 7);
         assert_eq!(records[0]["direction"], "control-in");
         assert_eq!(records[0]["data_hex"], "12010002");
-        assert_eq!(records[1]["kind"], "stats");
-        assert_eq!(records[1]["total"], 64);
-        assert_eq!(records[1]["in"], 4);
-        assert_eq!(records[1]["idle_in_suppressed"], 9);
-        assert_eq!(records[2]["kind"], "harvest");
-        assert_eq!(records[2]["status"], "ok");
-        assert_eq!(records[2]["duration_ms"], 14);
-        assert_eq!(records[2]["chunk_count"], 3);
-        assert_eq!(records[2]["lost_bytes"], 4);
-        assert_eq!(records[2]["packet_lines"], 8);
-        assert_eq!(records[2]["new_lines"], 2);
-        assert_eq!(records[2]["total_packet_lines"], 12);
+        assert_eq!(records[1]["kind"], "packet");
+        assert_eq!(records[1]["direction"], "setup");
+        assert_eq!(records[1]["setup_bm_request_type"], 192);
+        assert_eq!(records[1]["setup_request"], 32);
+        assert_eq!(records[1]["setup_value"], 258);
+        assert_eq!(records[1]["setup_index"], 772);
+        assert_eq!(records[1]["setup_length"], 16384);
+        assert_eq!(records[1]["data_hex"], "C020020104030040");
+        assert_eq!(records[2]["kind"], "stats");
+        assert_eq!(records[2]["total"], 64);
+        assert_eq!(records[2]["in"], 4);
+        assert_eq!(records[2]["idle_in_suppressed"], 9);
+        assert_eq!(records[3]["kind"], "harvest");
+        assert_eq!(records[3]["status"], "ok");
+        assert_eq!(records[3]["duration_ms"], 14);
+        assert_eq!(records[3]["chunk_count"], 3);
+        assert_eq!(records[3]["lost_bytes"], 4);
+        assert_eq!(records[3]["packet_lines"], 8);
+        assert_eq!(records[3]["new_lines"], 2);
+        assert_eq!(records[3]["total_packet_lines"], 12);
     }
 }

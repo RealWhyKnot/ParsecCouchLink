@@ -1,6 +1,7 @@
 #include "usb_packet_debug.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
@@ -54,8 +55,9 @@ static void maybe_log_stats(uint32_t now_ms) {
                     (unsigned)total_suppressed_idle_in_reports);
 }
 
-static void note_packet(const char *direction, const char *source, uint8_t const *buffer,
-                        uint16_t len, const char *reason, uint32_t suppressed) {
+static void note_packet_extra(const char *direction, const char *source, uint8_t const *buffer,
+                              uint16_t len, const char *reason, uint32_t suppressed,
+                              const char *extra_fields) {
     if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
         return;
 
@@ -76,11 +78,16 @@ static void note_packet(const char *direction, const char *source, uint8_t const
     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
     count_direction(direction);
     diag_log_printf("usb-packet seq=%u t=%u dir=%s src=%s len=%u captured=%u dropped=%u "
-                    "suppressed=%u reason=%s data=%s",
+                    "suppressed=%u reason=%s %sdata=%s",
                     (unsigned)seq++, (unsigned)now_ms, direction, source ? source : "unknown",
                     (unsigned)len, (unsigned)capture_len, (unsigned)dropped_bytes,
-                    (unsigned)suppressed, reason, hex);
+                    (unsigned)suppressed, reason, extra_fields ? extra_fields : "", hex);
     maybe_log_stats(now_ms);
+}
+
+static void note_packet(const char *direction, const char *source, uint8_t const *buffer,
+                        uint16_t len, const char *reason, uint32_t suppressed) {
+    note_packet_extra(direction, source, buffer, len, reason, suppressed, "");
 }
 
 void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16_t len) {
@@ -119,7 +126,11 @@ void usb_packet_debug_note_setup(const char *source, uint8_t bm_request_type, ui
         (uint8_t)(w_length & 0xFFu),
         (uint8_t)((w_length >> 8) & 0xFFu),
     };
-    note_packet("setup", source, setup, sizeof(setup), "control-setup", 0);
+    char extra[80];
+    snprintf(extra, sizeof(extra), "bm=0x%02X req=0x%02X value=0x%04X index=0x%04X wlen=%u ",
+             (unsigned)bm_request_type, (unsigned)b_request, (unsigned)w_value, (unsigned)w_index,
+             (unsigned)w_length);
+    note_packet_extra("setup", source, setup, sizeof(setup), "control-setup", 0, extra);
 }
 
 void usb_packet_debug_note_control_in(const char *source, uint8_t const *buffer, uint16_t len) {

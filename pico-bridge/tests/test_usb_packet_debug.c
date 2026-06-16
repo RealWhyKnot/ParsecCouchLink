@@ -116,6 +116,11 @@ static void debug_control_setup_logs_wire_bytes(void) {
     require_log_contains("src=vendor-control");
     require_log_contains("len=8");
     require_log_contains("reason=control-setup");
+    require_log_contains("bm=0xC0");
+    require_log_contains("req=0x20");
+    require_log_contains("value=0x0102");
+    require_log_contains("index=0x0304");
+    require_log_contains("wlen=16384");
     require_log_contains("data=C020020104030040");
 }
 
