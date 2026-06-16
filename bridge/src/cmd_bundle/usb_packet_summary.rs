@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
+use serde_json::Value;
+
+const HARVEST_PREFIX: &str = "# harvest ";
 
 #[derive(Clone, Debug)]
 pub(super) struct UsbPacketSummarySource<'a> {
@@ -32,6 +35,13 @@ pub(super) struct UsbPacketSummary {
     pub max_stats_truncated_bytes: Option<u64>,
     pub max_stats_idle_in_suppressed: Option<u64>,
     pub stats_direction_max: BTreeMap<String, u64>,
+    pub harvest_lines: u64,
+    pub harvest_statuses: BTreeMap<String, u64>,
+    pub max_harvest_duration_ms: Option<u64>,
+    pub max_harvest_lost_bytes: Option<u64>,
+    pub max_harvest_chunk_count: Option<u64>,
+    pub max_harvest_packet_lines: Option<u64>,
+    pub max_harvest_new_lines: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -84,6 +94,21 @@ pub(super) enum UsbPacketRecord {
         idle_in_suppressed: Option<u64>,
         raw_line: String,
     },
+    Harvest {
+        source_label: String,
+        source_path: String,
+        line_number: u64,
+        at: Option<String>,
+        status: Option<String>,
+        duration_ms: Option<u64>,
+        chunk_count: Option<u64>,
+        lost_bytes: Option<u64>,
+        packet_lines: Option<u64>,
+        new_lines: Option<u64>,
+        total_packet_lines: Option<u64>,
+        error: Option<String>,
+        raw_line: String,
+    },
 }
 
 pub(super) fn summarize_text(text: &str) -> UsbPacketSummary {
@@ -95,6 +120,8 @@ pub(super) fn summarize_text(text: &str) -> UsbPacketSummary {
             summary.add_packet_line(line, &mut seen_sequences, &mut previous_seq);
         } else if line.starts_with("usb-packet-stats ") {
             summary.add_stats_line(line);
+        } else if line.starts_with(HARVEST_PREFIX) {
+            summary.add_harvest_line(line);
         }
     }
     summary
@@ -159,7 +186,7 @@ pub(super) fn summarize_sources(
         .collect();
 
     UsbPacketBundleSummary {
-        artifact_schema_version: 1,
+        artifact_schema_version: 2,
         aggregate,
         per_pico,
         retained_logs,
@@ -167,6 +194,7 @@ pub(super) fn summarize_sources(
             "Counts are derived from bundled usb-packet and usb-packet-stats lines.",
             "Aggregate sequence gaps are summed per source; sequence numbers are not compared across different Pico/log sources.",
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
+            "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
         ],
     }
 }
@@ -217,6 +245,39 @@ fn record_from_line(
             control_in: parsed_u64(fields.get("control_in")),
             truncated_bytes: parsed_u64(fields.get("truncated_bytes")),
             idle_in_suppressed: parsed_u64(fields.get("idle_in_suppressed")),
+            raw_line: line.to_string(),
+        });
+    }
+    if line.starts_with(HARVEST_PREFIX) {
+        let value = harvest_value(line);
+        return Some(UsbPacketRecord::Harvest {
+            source_label: label.to_string(),
+            source_path: path.to_string(),
+            line_number,
+            at: value.as_ref().and_then(|value| json_string(value, "at")),
+            status: value
+                .as_ref()
+                .and_then(|value| json_string(value, "status"))
+                .or_else(|| Some("malformed".to_string())),
+            duration_ms: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "duration_ms")),
+            chunk_count: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "chunk_count")),
+            lost_bytes: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "lost_bytes")),
+            packet_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "packet_lines")),
+            new_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "new_lines")),
+            total_packet_lines: value
+                .as_ref()
+                .and_then(|value| json_u64(value, "total_packet_lines")),
+            error: value.as_ref().and_then(|value| json_string(value, "error")),
             raw_line: line.to_string(),
         });
     }
@@ -305,12 +366,44 @@ impl UsbPacketSummary {
         }
     }
 
+    fn add_harvest_line(&mut self, line: &str) {
+        self.harvest_lines += 1;
+        let Some(value) = harvest_value(line) else {
+            bump(&mut self.harvest_statuses, "malformed");
+            return;
+        };
+        let status = json_string(&value, "status").unwrap_or_else(|| "unknown".to_string());
+        bump(&mut self.harvest_statuses, &status);
+        max_assign(
+            &mut self.max_harvest_duration_ms,
+            json_u64(&value, "duration_ms"),
+        );
+        max_assign(
+            &mut self.max_harvest_lost_bytes,
+            json_u64(&value, "lost_bytes"),
+        );
+        max_assign(
+            &mut self.max_harvest_chunk_count,
+            json_u64(&value, "chunk_count"),
+        );
+        max_assign(
+            &mut self.max_harvest_packet_lines,
+            json_u64(&value, "packet_lines"),
+        );
+        max_assign(
+            &mut self.max_harvest_new_lines,
+            json_u64(&value, "new_lines"),
+        );
+    }
+
     fn merge_from(&mut self, other: &UsbPacketSummary) {
         self.packet_lines += other.packet_lines;
         self.stats_lines += other.stats_lines;
+        self.harvest_lines += other.harvest_lines;
         merge_counts(&mut self.directions, &other.directions);
         merge_counts(&mut self.sources, &other.sources);
         merge_counts(&mut self.reasons, &other.reasons);
+        merge_counts(&mut self.harvest_statuses, &other.harvest_statuses);
         if self.first_seq.is_none() {
             self.first_seq = other.first_seq;
         }
@@ -353,6 +446,23 @@ impl UsbPacketSummary {
                 *entry = *value;
             }
         }
+        max_assign(
+            &mut self.max_harvest_duration_ms,
+            other.max_harvest_duration_ms,
+        );
+        max_assign(
+            &mut self.max_harvest_lost_bytes,
+            other.max_harvest_lost_bytes,
+        );
+        max_assign(
+            &mut self.max_harvest_chunk_count,
+            other.max_harvest_chunk_count,
+        );
+        max_assign(
+            &mut self.max_harvest_packet_lines,
+            other.max_harvest_packet_lines,
+        );
+        max_assign(&mut self.max_harvest_new_lines, other.max_harvest_new_lines);
     }
 }
 
@@ -368,6 +478,22 @@ fn parsed_u64(value: Option<&&str>) -> Option<u64> {
 
 fn cloned_field(value: Option<&&str>) -> Option<String> {
     value.map(|value| (*value).to_string())
+}
+
+fn harvest_value(line: &str) -> Option<Value> {
+    let json = line.strip_prefix(HARVEST_PREFIX)?;
+    serde_json::from_str(json).ok()
+}
+
+fn json_string(value: &Value, key: &str) -> Option<String> {
+    value.get(key)?.as_str().map(|value| value.to_string())
+}
+
+fn json_u64(value: &Value, key: &str) -> Option<u64> {
+    let value = value.get(key)?;
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()))
 }
 
 fn bump(map: &mut BTreeMap<String, u64>, key: &str) {
@@ -429,6 +555,26 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         assert_eq!(summary.last_stats_total_packets, Some(64));
         assert_eq!(summary.max_stats_idle_in_suppressed, Some(9));
         assert_eq!(summary.stats_direction_max["setup"], 1);
+        assert_eq!(summary.harvest_lines, 0);
+    }
+
+    #[test]
+    fn summary_counts_harvest_health() {
+        let text = "\
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"lost_bytes\":4,\"packet_lines\":8,\"new_lines\":2,\"total_packet_lines\":12}
+# harvest {\"at\":\"2026-06-15T22:30:01-05:00\",\"status\":\"error\",\"duration_ms\":1200,\"error\":\"no log chunks received\"}
+# harvest not-json
+";
+        let summary = summarize_text(text);
+        assert_eq!(summary.harvest_lines, 3);
+        assert_eq!(summary.harvest_statuses["ok"], 1);
+        assert_eq!(summary.harvest_statuses["error"], 1);
+        assert_eq!(summary.harvest_statuses["malformed"], 1);
+        assert_eq!(summary.max_harvest_duration_ms, Some(1200));
+        assert_eq!(summary.max_harvest_lost_bytes, Some(4));
+        assert_eq!(summary.max_harvest_chunk_count, Some(3));
+        assert_eq!(summary.max_harvest_packet_lines, Some(8));
+        assert_eq!(summary.max_harvest_new_lines, Some(2));
     }
 
     #[test]
@@ -459,6 +605,7 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         let text = "\
 usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
 usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"lost_bytes\":4,\"packet_lines\":8,\"new_lines\":2,\"total_packet_lines\":12}
 ";
         let jsonl =
             records_jsonl_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text).unwrap();
@@ -466,7 +613,7 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(records.len(), 2);
+        assert_eq!(records.len(), 3);
         assert_eq!(records[0]["kind"], "packet");
         assert_eq!(records[0]["source_label"], "02E22DA9");
         assert_eq!(records[0]["line_number"], 1);
@@ -477,5 +624,13 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert_eq!(records[1]["total"], 64);
         assert_eq!(records[1]["in"], 4);
         assert_eq!(records[1]["idle_in_suppressed"], 9);
+        assert_eq!(records[2]["kind"], "harvest");
+        assert_eq!(records[2]["status"], "ok");
+        assert_eq!(records[2]["duration_ms"], 14);
+        assert_eq!(records[2]["chunk_count"], 3);
+        assert_eq!(records[2]["lost_bytes"], 4);
+        assert_eq!(records[2]["packet_lines"], 8);
+        assert_eq!(records[2]["new_lines"], 2);
+        assert_eq!(records[2]["total_packet_lines"], 12);
     }
 }

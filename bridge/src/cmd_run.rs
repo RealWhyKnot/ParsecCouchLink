@@ -876,6 +876,7 @@ fn save_routes(routes: &[StreamRoute]) -> Result<()> {
 #[derive(Clone, Debug)]
 struct DebugPacketHarvestResult {
     target: PicoTarget,
+    duration_ms: u64,
     outcome: Result<DebugPacketHarvestOk, String>,
 }
 
@@ -967,6 +968,7 @@ fn debug_packet_harvest_targets(
 async fn collect_debug_packet_harvests(targets: Vec<PicoTarget>) -> Vec<DebugPacketHarvestResult> {
     let mut out = Vec::with_capacity(targets.len());
     for target in targets {
+        let started = Instant::now();
         let outcome =
             match debug_packets::capture_run_diag_log(target.peer, DEBUG_PACKET_HARVEST_TIMEOUT)
                 .await
@@ -978,7 +980,11 @@ async fn collect_debug_packet_harvests(targets: Vec<PicoTarget>) -> Vec<DebugPac
                 }),
                 Err(e) => Err(format!("{e:#}")),
             };
-        out.push(DebugPacketHarvestResult { target, outcome });
+        out.push(DebugPacketHarvestResult {
+            target,
+            duration_ms: duration_ms_u64(started.elapsed()),
+            outcome,
+        });
     }
     out
 }
@@ -995,6 +1001,7 @@ fn apply_debug_packet_harvests(
         let Some(sink) = sinks.get_mut(&uid) else {
             continue;
         };
+        let duration_ms = result.duration_ms;
         match result.outcome {
             Ok(ok) => {
                 let written = match sink.append_lines(&ok.lines) {
@@ -1008,9 +1015,24 @@ fn apply_debug_packet_harvests(
                         continue;
                     }
                 };
+                if let Err(e) = sink.append_harvest_ok(
+                    duration_ms,
+                    ok.chunk_count,
+                    ok.lost_bytes,
+                    ok.lines.len(),
+                    written,
+                ) {
+                    tracing::warn!(
+                        "debug-packets: harvest metadata write failed for {}: {e:#}",
+                        result.target.short_label()
+                    );
+                    disabled.insert(uid);
+                    continue;
+                }
                 tracing::debug!(
-                    "debug-packets: harvest {} chunks={} lost={} packets={} new={} total={}",
+                    "debug-packets: harvest {} duration_ms={} chunks={} lost={} packets={} new={} total={}",
                     result.target.short_label(),
+                    duration_ms,
                     ok.chunk_count,
                     ok.lost_bytes,
                     ok.lines.len(),
@@ -1033,14 +1055,26 @@ fn apply_debug_packet_harvests(
                 }
             }
             Err(e) => {
+                if let Err(write_error) = sink.append_harvest_error(duration_ms, &e) {
+                    tracing::warn!(
+                        "debug-packets: harvest failure metadata write failed for {}: {write_error:#}",
+                        result.target.short_label()
+                    );
+                    disabled.insert(uid);
+                    continue;
+                }
                 tracing::debug!(
-                    "debug-packets: harvest failed for {}: {e}",
-                    result.target.short_label()
+                    "debug-packets: harvest failed for {} duration_ms={duration_ms}: {e}",
+                    result.target.short_label(),
                 );
             }
         }
     }
     debug_packets::prune_packet_files();
+}
+
+fn duration_ms_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 struct RouteRuntime {

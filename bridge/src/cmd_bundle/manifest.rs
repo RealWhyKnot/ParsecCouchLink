@@ -152,6 +152,7 @@ pub(super) async fn build_manifest(
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
             "Debug input mode uses the XInput USB shape and logs raw USB IN/OUT packet samples for adapter reverse engineering.",
             "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
+            "Retained debug packet logs include per-harvest health records for GET_LOG duration, chunks, lost bytes, packet counts, and failures.",
             "usb-packets-summary.json summarizes packet directions, sources, reasons, sequence gaps, truncation, and firmware packet-stat checkpoints.",
             "usb-packets.jsonl normalizes each packet/stat line for reverse-engineering tools.",
         ],

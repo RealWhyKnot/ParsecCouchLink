@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::Local;
+use serde_json::json;
 
 use crate::{config, net, protocol};
 
@@ -82,6 +83,41 @@ impl DebugPacketSink {
             self.file.flush()?;
         }
         Ok(written)
+    }
+
+    pub(crate) fn append_harvest_ok(
+        &mut self,
+        duration_ms: u64,
+        chunk_count: usize,
+        lost_bytes: u32,
+        packet_lines: usize,
+        new_lines: usize,
+    ) -> Result<()> {
+        self.append_harvest_record(json!({
+            "at": Local::now().to_rfc3339(),
+            "status": "ok",
+            "duration_ms": duration_ms,
+            "chunk_count": chunk_count,
+            "lost_bytes": lost_bytes,
+            "packet_lines": packet_lines,
+            "new_lines": new_lines,
+            "total_packet_lines": self.total_written,
+        }))
+    }
+
+    pub(crate) fn append_harvest_error(&mut self, duration_ms: u64, error: &str) -> Result<()> {
+        self.append_harvest_record(json!({
+            "at": Local::now().to_rfc3339(),
+            "status": "error",
+            "duration_ms": duration_ms,
+            "error": error,
+        }))
+    }
+
+    fn append_harvest_record(&mut self, record: serde_json::Value) -> Result<()> {
+        writeln!(self.file, "# harvest {record}")?;
+        self.file.flush()?;
+        Ok(())
     }
 }
 
@@ -278,6 +314,37 @@ mod tests {
         let text = fs::read_to_string(recent_packet_files_in(&root, 1)[0].clone()).unwrap();
         assert_eq!(text.matches("usb-packet seq=1").count(), 1);
         assert_eq!(text.matches("usb-packet seq=2").count(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sink_records_harvest_health() {
+        let root = temp_root("harvest");
+        let mut sink = DebugPacketSink::create_in(&root, "02E22DA9", peer()).unwrap();
+        sink.append_lines(&["usb-packet seq=1 dir=in data=00".to_string()])
+            .unwrap();
+        sink.append_harvest_ok(14, 3, 4, 8, 1).unwrap();
+        sink.append_harvest_error(1200, "no log chunks received\nretry later")
+            .unwrap();
+        drop(sink);
+
+        let text = fs::read_to_string(recent_packet_files_in(&root, 1)[0].clone()).unwrap();
+        let harvest: Vec<serde_json::Value> = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("# harvest "))
+            .map(|json| serde_json::from_str(json).unwrap())
+            .collect();
+        assert_eq!(harvest.len(), 2);
+        assert_eq!(harvest[0]["status"], "ok");
+        assert_eq!(harvest[0]["duration_ms"], 14);
+        assert_eq!(harvest[0]["chunk_count"], 3);
+        assert_eq!(harvest[0]["lost_bytes"], 4);
+        assert_eq!(harvest[0]["packet_lines"], 8);
+        assert_eq!(harvest[0]["new_lines"], 1);
+        assert_eq!(harvest[0]["total_packet_lines"], 1);
+        assert_eq!(harvest[1]["status"], "error");
+        assert_eq!(harvest[1]["duration_ms"], 1200);
+        assert_eq!(harvest[1]["error"], "no log chunks received\nretry later");
         let _ = fs::remove_dir_all(root);
     }
 
