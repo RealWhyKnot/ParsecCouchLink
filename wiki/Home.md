@@ -13,7 +13,7 @@ Windows host running couchlink.exe
    v
 Raspberry Pi Pico W or Pico 2 W running CouchLink firmware
    |
-   | USB as selected controller persona
+   | USB as selected input persona
    v
 USB4MAPLE or another USB-to-console adapter
    |

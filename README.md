@@ -4,7 +4,7 @@ Parsec CouchLink lets a remote Parsec player use a real retro console as player 
 
 The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a USB controller to a console adapter such as USB4MAPLE.
 
-For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, for one -- the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For Dreamcast Maple adapters, `couchlink.exe maple` keeps a Maple-labelled Xbox 360-compatible mode, and `couchlink.exe dinput` presents an experimental 8BitDo Pro 2 D-Input HID gamepad shape for adapters that accept DInput. See [Controller Routing](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Controller-Routing) for keyboard, Maple, and DInput modes.
+For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, for one -- the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For adapters with uncertain gamepad support, `couchlink.exe auto` tries the supported gamepad USB modes and keeps the first one the adapter polls. See [Controller Routing](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Controller-Routing) for Auto, Xbox, DInput/PlayStation, Maple, and keyboard modes.
 
 **[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases)** | **[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
 
@@ -16,7 +16,7 @@ For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, f
   - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- also fully supported
 - Micro-USB data cable
 - 2.4 GHz Wi-Fi name and password (both boards use a 2.4 GHz-only radio)
-- USB4MAPLE or another USB-to-console adapter that accepts Xbox 360/XInput or DInput-style USB controllers
+- USB4MAPLE or another USB-to-console adapter that accepts Xbox 360, Xbox One, PS3, PS4, or keyboard USB devices
 - The console and controller adapter you want to use
 
 ## Quick Start
@@ -56,10 +56,16 @@ Useful commands:
 
 ```powershell
 .\couchlink.exe doctor
+.\couchlink.exe auto
+.\couchlink.exe xbox
+.\couchlink.exe xinput
+.\couchlink.exe xbox360
+.\couchlink.exe xboxone
 .\couchlink.exe keyboard
-.\couchlink.exe controller
 .\couchlink.exe maple
 .\couchlink.exe dinput
+.\couchlink.exe ps3
+.\couchlink.exe ps4
 .\couchlink.exe logs --tail
 .\couchlink.exe configure-wifi
 .\couchlink.exe recover
@@ -80,7 +86,7 @@ start streaming.
 
 `couchlink lab` is for development benches with the Pico plugged into the
 Windows host. `--power pnp-remove` asks Windows to remove and rescan the
-CouchLink Pico devices, including the run-mode XInput controller, which is
+CouchLink Pico devices, including the run-mode XInput device, which is
 useful for checking reconnect handling. It is not a physical cable pull or a
 USB power cut; use an external power backend for that.
 
@@ -92,8 +98,9 @@ If something went wrong, the fastest path is:
 2. Open an issue at <https://github.com/RealWhyKnot/ParsecCouchLink/issues>
 3. Fill in the form and drag the generated ZIP into the comment box.
 
-The bundle contains logs, doctor output, and firmware diagnostics when
-the Pico is reachable. It does NOT contain your Wi-Fi password.
+The bundle contains logs, doctor output, firmware diagnostics, USB adapter
+counters, and recent Windows USB events when the Pico is reachable. It does
+NOT contain your Wi-Fi password.
 
 If the bridge won't run at all, the setup transcript at
 `%LOCALAPPDATA%\ParsecCouchLink\data\logs\setup-*.log` is the next-best

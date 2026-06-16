@@ -1,4 +1,5 @@
 mod cdc;
+mod cmd_auto;
 mod cmd_bundle;
 mod cmd_configure_wifi;
 mod cmd_debug;
@@ -101,7 +102,78 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico back to Xbox controller mode (the default persona).
+    /// Automatically select a gamepad USB mode accepted by the console adapter.
+    Auto {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Check every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Select the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to Xbox 360 / XInput mode (the default persona).
+    Xinput {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Try Xbox 360 and Xbox One modes and keep whichever one the adapter polls.
+    Xbox {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Select the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to Xbox 360 / XInput mode.
+    Xbox360 {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to Xbox One-compatible USB mode.
+    Xboxone {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Hidden compatibility alias for older shortcuts.
+    #[command(name = "controller", hide = true)]
     Controller {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
         #[arg(long = "pico")]
@@ -129,8 +201,36 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to 8BitDo Pro 2 D-Input HID mode for USB4MAPLE adapters.
+    /// Try PlayStation-family DInput modes for USB4MAPLE-style adapters.
     Dinput {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to PS3 / DualShock 3 HID mode.
+    Ps3 {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to PS4 / DualShock 4 HID mode.
+    Ps4 {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
         #[arg(long = "pico")]
         picos: Vec<String>,
@@ -192,7 +292,7 @@ enum Command {
         #[arg(long = "to-usb-debug")]
         to_usb_debug: bool,
 
-        /// Ask a USB debug Pico to reboot into Wi-Fi/controller mode.
+        /// Ask a USB debug Pico to reboot into Wi-Fi/input mode.
         #[arg(long = "to-wifi")]
         to_wifi: bool,
 
@@ -350,11 +450,36 @@ fn main() {
                 all,
                 no_stream,
             }) => cmd_persona::run(protocol::Persona::Keyboard, picos, all, !no_stream).await,
+            Some(Command::Auto {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_auto::run(picos, all, !no_stream).await,
+            Some(Command::Xinput {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Xinput, picos, all, !no_stream).await,
+            Some(Command::Xbox {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_auto::run_family(picos, all, !no_stream, cmd_auto::XBOX_FAMILY, "Xbox").await,
+            Some(Command::Xbox360 {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Xinput, picos, all, !no_stream).await,
+            Some(Command::Xboxone {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::XboxOne, picos, all, !no_stream).await,
             Some(Command::Controller {
                 picos,
                 all,
                 no_stream,
-            }) => cmd_persona::run(protocol::Persona::Controller, picos, all, !no_stream).await,
+            }) => cmd_persona::run(protocol::Persona::Xinput, picos, all, !no_stream).await,
             Some(Command::Maple {
                 picos,
                 all,
@@ -364,7 +489,26 @@ fn main() {
                 picos,
                 all,
                 no_stream,
-            }) => cmd_persona::run(protocol::Persona::Dinput, picos, all, !no_stream).await,
+            }) => {
+                cmd_auto::run_family(
+                    picos,
+                    all,
+                    !no_stream,
+                    cmd_auto::PLAYSTATION_FAMILY,
+                    "DInput / PlayStation",
+                )
+                .await
+            }
+            Some(Command::Ps3 {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Ps3, picos, all, !no_stream).await,
+            Some(Command::Ps4 {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::Ps4, picos, all, !no_stream).await,
             Some(Command::Setup { uf2 }) => cmd_setup::run(uf2).await,
             Some(Command::Doctor) => cmd_doctor::run().await,
             Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,
@@ -602,6 +746,76 @@ mod tests {
     }
 
     #[test]
+    fn auto_command_parses_target_all_and_no_stream() {
+        let cli = Cli::try_parse_from([
+            "couchlink",
+            "auto",
+            "--pico",
+            "07D37EB6",
+            "--all",
+            "--no-stream",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Some(Command::Auto {
+                picos,
+                all,
+                no_stream,
+            }) => {
+                assert_eq!(picos, vec!["07D37EB6"]);
+                assert!(all);
+                assert!(no_stream);
+            }
+            other => panic!("expected auto command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn xinput_command_parses_target_and_no_stream() {
+        let cli = Cli::try_parse_from(["couchlink", "xinput", "--pico", "07D37EB6", "--no-stream"])
+            .unwrap();
+
+        match cli.command {
+            Some(Command::Xinput {
+                picos,
+                all,
+                no_stream,
+            }) => {
+                assert_eq!(picos, vec!["07D37EB6"]);
+                assert!(!all);
+                assert!(no_stream);
+            }
+            other => panic!("expected xinput command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn controller_command_still_parses_as_hidden_alias() {
+        let cli = Cli::try_parse_from([
+            "couchlink",
+            "controller",
+            "--pico",
+            "07D37EB6",
+            "--no-stream",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Some(Command::Controller {
+                picos,
+                all,
+                no_stream,
+            }) => {
+                assert_eq!(picos, vec!["07D37EB6"]);
+                assert!(!all);
+                assert!(no_stream);
+            }
+            other => panic!("expected controller alias command, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn dinput_command_parses_target_and_no_stream() {
         let cli = Cli::try_parse_from(["couchlink", "dinput", "--pico", "07D37EB6", "--no-stream"])
             .unwrap();
@@ -617,6 +831,62 @@ mod tests {
                 assert!(no_stream);
             }
             other => panic!("expected dinput command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
+        for command in ["xbox", "xbox360", "xboxone", "ps3", "ps4"] {
+            let cli =
+                Cli::try_parse_from(["couchlink", command, "--pico", "07D37EB6", "--no-stream"])
+                    .unwrap();
+            match (command, cli.command) {
+                (
+                    "xbox",
+                    Some(Command::Xbox {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "xbox360",
+                    Some(Command::Xbox360 {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "xboxone",
+                    Some(Command::Xboxone {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "ps3",
+                    Some(Command::Ps3 {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "ps4",
+                    Some(Command::Ps4 {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                ) => {
+                    assert_eq!(picos, vec!["07D37EB6"]);
+                    assert!(!all);
+                    assert!(no_stream);
+                }
+                other => panic!("unexpected parse result: {other:?}"),
+            }
         }
     }
 }

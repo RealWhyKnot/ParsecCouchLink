@@ -31,6 +31,7 @@
 #include "version.h"
 #include "watchdog.h"
 #include "wifi.h"
+#include "xbone.h"
 #include "xinput.h"
 
 volatile gamepad_state_t g_gamepad_state = {0};
@@ -184,9 +185,15 @@ static void run_mode_main_loop(void) {
     if (persona == RUN_PERSONA_KEYBOARD) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
-    } else if (persona == RUN_PERSONA_DINPUT) {
+    } else if (boot_mode_persona_uses_gamepad_hid(persona)) {
         dinput_init();
-        diag_log_msg("run: USB persona = 8BitDo Pro 2 D-Input");
+        if (persona == RUN_PERSONA_PS4)
+            diag_log_msg("run: USB persona = Sony DualShock 4 / PS4 HID");
+        else
+            diag_log_msg("run: USB persona = Sony DualShock 3 / PS3 HID");
+    } else if (persona == RUN_PERSONA_XBOXONE) {
+        xbone_init();
+        diag_log_msg("run: USB persona = Xbox One XGIP");
     } else if (persona == RUN_PERSONA_MAPLE) {
         xinput_init();
         diag_log_msg("run: USB persona = XInput controller for Maple adapter");
@@ -254,8 +261,10 @@ static void run_mode_main_loop(void) {
 
         if (persona == RUN_PERSONA_KEYBOARD)
             hid_kbd_task();
-        else if (persona == RUN_PERSONA_DINPUT)
+        else if (boot_mode_persona_uses_gamepad_hid(persona))
             dinput_task();
+        else if (persona == RUN_PERSONA_XBOXONE)
+            xbone_task();
         else
             xinput_task();
         watchdog_tick();
@@ -337,7 +346,7 @@ int main(void) {
     const char *persona_name = "CDC+diag";
     if (mode == BOOT_MODE_RUN) {
         switch (boot_mode_run_persona()) {
-        case RUN_PERSONA_CONTROLLER:
+        case RUN_PERSONA_XINPUT:
             persona_name = "XInput";
             break;
         case RUN_PERSONA_KEYBOARD:
@@ -346,8 +355,14 @@ int main(void) {
         case RUN_PERSONA_MAPLE:
             persona_name = "Maple";
             break;
-        case RUN_PERSONA_DINPUT:
-            persona_name = "DInput";
+        case RUN_PERSONA_PS3:
+            persona_name = "PS3";
+            break;
+        case RUN_PERSONA_PS4:
+            persona_name = "PS4";
+            break;
+        case RUN_PERSONA_XBOXONE:
+            persona_name = "Xbox One";
             break;
         }
     }

@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 
 use crate::tui::{confirm, input_text, press_enter, select};
 use crate::{
-    cdc, cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_logs, cmd_run,
-    cmd_setup, cmd_usb_diag, config, protocol, support, xinput,
+    cdc, cmd_auto, cmd_bundle, cmd_configure_wifi, cmd_debug, cmd_doctor, cmd_flash, cmd_logs,
+    cmd_persona, cmd_run, cmd_setup, cmd_usb_diag, config, pico_mode, protocol, support, xinput,
 };
 
 const HOME_SCAN_SECONDS: u64 = 3;
@@ -125,6 +125,13 @@ enum BasicSelection {
     AddNew,
     Advanced,
     Quit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InputModeChoice {
+    Auto,
+    Persona(protocol::Persona),
+    Family(&'static [protocol::Persona]),
 }
 
 async fn scan_pico_inventory() -> Result<PicoInventory> {
@@ -470,7 +477,7 @@ impl PicoAction {
             Self::ChooseRouting { .. } => "Choose controller and stream".to_string(),
             Self::CheckUsbAdapter { .. } => "Check console USB adapter".to_string(),
             Self::SwitchToUsbDebug { .. } => "Switch to USB debug mode".to_string(),
-            Self::RecoverToWifi { .. } => "Recover to Wi-Fi/controller mode".to_string(),
+            Self::RecoverToWifi { .. } => "Recover to Wi-Fi/input mode".to_string(),
             Self::ConfigureWifi { .. } => "Set up or change Wi-Fi".to_string(),
             Self::UpdateFirmwareFromSetupUsb { .. } => "Update firmware".to_string(),
             Self::ReadUsbLog { .. } => "Read USB debug log".to_string(),
@@ -485,7 +492,7 @@ impl PicoAction {
         match self {
             Self::StartStreaming { .. } => "stream this Pico only".to_string(),
             Self::ChooseRouting { .. } => "pick one Windows controller for this Pico".to_string(),
-            Self::CheckUsbAdapter { .. } => "query this Pico's XInput USB status".to_string(),
+            Self::CheckUsbAdapter { .. } => "query this Pico's USB adapter status".to_string(),
             Self::SwitchToUsbDebug { .. } => "move this Wi-Fi Pico to setup USB".to_string(),
             Self::RecoverToWifi { .. } => "move this USB Pico back to normal mode".to_string(),
             Self::ConfigureWifi { .. } => "send Wi-Fi credentials to this USB Pico".to_string(),
@@ -821,6 +828,8 @@ fn slot_item(slot: u32) -> String {
 }
 
 async fn stream(routes: Vec<cmd_run::StreamRoute>, save: bool) -> Result<()> {
+    let mode = choose_input_mode().await?;
+    let routes = prepare_routes_for_input_mode(routes, mode).await?;
     println!();
     println!("Ready to stream:");
     for route in &routes {
@@ -838,6 +847,159 @@ async fn stream(routes: Vec<cmd_run::StreamRoute>, save: bool) -> Result<()> {
         },
     )
     .await
+}
+
+async fn choose_input_mode() -> Result<InputModeChoice> {
+    let choices = vec![
+        menu_item(
+            "Auto",
+            "try gamepad USB modes until the adapter accepts reports",
+        ),
+        menu_item("Xbox", "choose Xbox 360 or Xbox One USB mode"),
+        menu_item("DInput / PlayStation", "choose PS3 or PS4 HID mode"),
+        menu_item(
+            "Maple",
+            "Xbox-compatible mode labelled for Dreamcast adapters",
+        ),
+        menu_item("Keyboard", "USB HID keyboard mode"),
+    ];
+    match select("Pico input mode", &choices, 0).await? {
+        0 => Ok(InputModeChoice::Auto),
+        1 => choose_xbox_input_mode().await,
+        2 => choose_playstation_input_mode().await,
+        3 => Ok(InputModeChoice::Persona(protocol::Persona::Maple)),
+        _ => Ok(InputModeChoice::Persona(protocol::Persona::Keyboard)),
+    }
+}
+
+async fn choose_xbox_input_mode() -> Result<InputModeChoice> {
+    let choices = vec![
+        menu_item("Auto Xbox", "try Xbox 360, then Xbox One"),
+        menu_item("Xbox 360", "wired Xbox 360 / XInput USB mode"),
+        menu_item("Xbox One", "Xbox One-compatible USB mode"),
+    ];
+    match select("Xbox input mode", &choices, 0).await? {
+        0 => Ok(InputModeChoice::Family(cmd_auto::XBOX_FAMILY)),
+        1 => Ok(InputModeChoice::Persona(protocol::Persona::Xinput)),
+        _ => Ok(InputModeChoice::Persona(protocol::Persona::XboxOne)),
+    }
+}
+
+async fn choose_playstation_input_mode() -> Result<InputModeChoice> {
+    let choices = vec![
+        menu_item("Auto DInput", "try PS3, then PS4"),
+        menu_item("PS3", "DualShock 3 / PS3 HID mode"),
+        menu_item("PS4", "DualShock 4 / PS4 HID mode"),
+    ];
+    match select("DInput input mode", &choices, 0).await? {
+        0 => Ok(InputModeChoice::Family(cmd_auto::PLAYSTATION_FAMILY)),
+        1 => Ok(InputModeChoice::Persona(protocol::Persona::Ps3)),
+        _ => Ok(InputModeChoice::Persona(protocol::Persona::Ps4)),
+    }
+}
+
+async fn prepare_routes_for_input_mode(
+    routes: Vec<cmd_run::StreamRoute>,
+    mode: InputModeChoice,
+) -> Result<Vec<cmd_run::StreamRoute>> {
+    match mode {
+        InputModeChoice::Auto => {
+            let targets: Vec<_> = routes.iter().map(|route| route.pico.clone()).collect();
+            let ready = cmd_auto::select_gamepad_targets(targets).await?;
+            let routes = replace_route_targets(routes, &ready);
+            require_all_routes_in_targets(routes, &ready)
+        }
+        InputModeChoice::Family(candidates) => {
+            let targets: Vec<_> = routes.iter().map(|route| route.pico.clone()).collect();
+            let ready =
+                cmd_auto::select_gamepad_targets_from_candidates(targets, candidates).await?;
+            let routes = replace_route_targets(routes, &ready);
+            require_all_routes_in_targets(routes, &ready)
+        }
+        InputModeChoice::Persona(persona) => switch_routes_to_persona(routes, persona).await,
+    }
+}
+
+async fn switch_routes_to_persona(
+    mut routes: Vec<cmd_run::StreamRoute>,
+    desired: protocol::Persona,
+) -> Result<Vec<cmd_run::StreamRoute>> {
+    let mut switched_uids = Vec::new();
+    for route in &routes {
+        if route.pico.persona == desired {
+            continue;
+        }
+        println!(
+            "Switching {} to {} mode...",
+            route.pico.short_label(),
+            desired.label()
+        );
+        pico_mode::request_set_persona(&route.pico, desired).await?;
+        switched_uids.push(route.pico.info.unique_id_short);
+    }
+
+    if !switched_uids.is_empty() {
+        println!(
+            "Waiting up to {}s for the Pico(s) to reboot into {} mode...",
+            cmd_persona::REBOOT_WAIT.as_secs(),
+            desired.label()
+        );
+        let reappeared =
+            cmd_persona::wait_for_persona(&switched_uids, desired, cmd_persona::REBOOT_WAIT)
+                .await?;
+        routes = replace_route_targets(routes, &reappeared);
+    }
+
+    let pending: Vec<_> = routes
+        .iter()
+        .filter(|route| route.pico.persona != desired)
+        .map(|route| route.pico.uid_hex())
+        .collect();
+    if !pending.is_empty() {
+        anyhow::bail!(
+            "{} did not confirm {} mode",
+            pending.join(", "),
+            desired.label()
+        );
+    }
+    Ok(routes)
+}
+
+fn replace_route_targets(
+    mut routes: Vec<cmd_run::StreamRoute>,
+    targets: &[cmd_run::PicoTarget],
+) -> Vec<cmd_run::StreamRoute> {
+    for route in &mut routes {
+        if let Some(target) = targets
+            .iter()
+            .find(|target| target.info.unique_id_short == route.pico.info.unique_id_short)
+        {
+            route.pico = target.clone();
+        }
+    }
+    routes
+}
+
+fn require_all_routes_in_targets(
+    routes: Vec<cmd_run::StreamRoute>,
+    targets: &[cmd_run::PicoTarget],
+) -> Result<Vec<cmd_run::StreamRoute>> {
+    let missing: Vec<_> = routes
+        .iter()
+        .filter(|route| {
+            !targets
+                .iter()
+                .any(|target| target.info.unique_id_short == route.pico.info.unique_id_short)
+        })
+        .map(|route| route.pico.uid_hex())
+        .collect();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "{} did not return in the selected input mode",
+            missing.join(", ")
+        );
+    }
+    Ok(routes)
 }
 
 async fn flash_menu() -> Result<()> {
@@ -947,7 +1109,7 @@ async fn tools_menu() -> Result<()> {
             ),
             menu_item(
                 "Check Pico USB adapter",
-                "ask the Pico whether the console adapter accepted XInput",
+                "ask the Pico whether the console adapter accepted its input mode",
             ),
             menu_item(
                 "Auto recover for streaming",
@@ -1133,6 +1295,24 @@ async fn show_direct_commands() -> Result<()> {
         "route to a Pico by manual IP",
     );
     println!();
+    println!("Input modes");
+    print_command(
+        "couchlink auto",
+        "try gamepad modes and keep the first one the adapter polls",
+    );
+    print_command("couchlink xinput", "switch to wired Xbox 360 USB mode");
+    print_command("couchlink xbox", "try Xbox 360 and Xbox One modes");
+    print_command("couchlink xbox360", "switch to wired Xbox 360 USB mode");
+    print_command("couchlink xboxone", "switch to Xbox One USB mode");
+    print_command("couchlink dinput", "try PS3 and PS4 DInput-family modes");
+    print_command("couchlink ps3", "switch to PS3 HID mode");
+    print_command("couchlink ps4", "switch to PS4 HID mode");
+    print_command(
+        "couchlink maple",
+        "switch to Dreamcast adapter-labelled XInput mode",
+    );
+    print_command("couchlink keyboard", "switch to USB keyboard mode");
+    println!();
     println!("Pico recovery");
     print_command(
         "couchlink recover",
@@ -1149,7 +1329,7 @@ async fn show_direct_commands() -> Result<()> {
     );
     print_command(
         "couchlink debug --to-wifi --port COM3",
-        "switch USB debug mode back to Wi-Fi mode",
+        "switch USB debug mode back to Wi-Fi/input mode",
     );
     print_command(
         "couchlink bootsel --port COM3",
@@ -1225,7 +1405,7 @@ mod tests {
                 unique_id_short: uid,
                 full_version: None,
             },
-            persona: protocol::Persona::Controller,
+            persona: protocol::Persona::Xinput,
         }
     }
 

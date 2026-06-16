@@ -102,11 +102,14 @@ static const char *lwip_err_name(err_t e) {
 #define ACK_FLAG_FULL_VERSION_SUPPORTED 0x10
 // Set when this Pico is currently in Dreamcast Maple adapter mode. It
 // consumes the same STATE packets and emits the same Xbox-compatible USB
-// reports as the controller persona.
+// reports as the XInput persona.
 #define ACK_FLAG_MAPLE_PERSONA 0x20
-// Set when this Pico is currently in 8BitDo Pro 2 D-Input HID mode. It
-// consumes the same STATE packets and emits HID gamepad reports.
+// Set when this Pico is currently in PS3 HID mode. Combined with
+// ACK_FLAG_ALT_PERSONA for PS4 HID mode.
 #define ACK_FLAG_DINPUT_PERSONA 0x40
+// Persona extension flag. Combined with Maple for Xbox One XGIP and
+// with DInput for PS4 HID.
+#define ACK_FLAG_ALT_PERSONA 0x80
 
 #define USB_DIAG_WIRE_SIZE 78
 #define USB_DIAG_VERSION 1
@@ -199,8 +202,12 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
         ack_flags |= ACK_FLAG_KEYBOARD_PERSONA;
     if (boot_mode_run_persona() == RUN_PERSONA_MAPLE)
         ack_flags |= ACK_FLAG_MAPLE_PERSONA;
-    if (boot_mode_run_persona() == RUN_PERSONA_DINPUT)
+    if (boot_mode_run_persona() == RUN_PERSONA_PS3)
         ack_flags |= ACK_FLAG_DINPUT_PERSONA;
+    if (boot_mode_run_persona() == RUN_PERSONA_PS4)
+        ack_flags |= ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_ALT_PERSONA;
+    if (boot_mode_run_persona() == RUN_PERSONA_XBOXONE)
+        ack_flags |= ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA;
     buf[3] = ack_flags;
     // body[0..11]
     buf[4] = PICO_BRIDGE_UDP_PROTO_VERSION;
@@ -437,13 +444,17 @@ static void apply_key_body(const uint8_t *body, uint8_t flags) {
 // A no-op when the persona already matches, to avoid needless flash wear
 // and a session-dropping reboot.
 static void apply_set_persona(uint8_t persona) {
-    uint8_t want = FLASH_PERSONA_CONTROLLER;
+    uint8_t want = FLASH_PERSONA_XINPUT;
     if (persona == FLASH_PERSONA_KEYBOARD)
         want = FLASH_PERSONA_KEYBOARD;
     else if (persona == FLASH_PERSONA_MAPLE)
         want = FLASH_PERSONA_MAPLE;
-    else if (persona == FLASH_PERSONA_DINPUT)
-        want = FLASH_PERSONA_DINPUT;
+    else if (persona == FLASH_PERSONA_PS3)
+        want = FLASH_PERSONA_PS3;
+    else if (persona == FLASH_PERSONA_PS4)
+        want = FLASH_PERSONA_PS4;
+    else if (persona == FLASH_PERSONA_XBOXONE)
+        want = FLASH_PERSONA_XBOXONE;
 
     flash_creds_t rec;
     if (!flash_creds_load(&rec)) {

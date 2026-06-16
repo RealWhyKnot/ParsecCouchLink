@@ -76,13 +76,14 @@ pub const ACK_FLAG_KEYBOARD_PERSONA: u8 = 1 << 3;
 /// `TYPE_VERSION`.
 pub const ACK_FLAG_FULL_VERSION_SUPPORTED: u8 = 1 << 4;
 /// Set in the ACK flags byte when the Pico is presenting the Dreamcast
-/// Maple adapter persona. The bridge still streams normal controller STATE
-/// packets; the Pico presents Xbox 360-compatible USB.
+/// Maple adapter persona. Combined with `ACK_FLAG_ALT_PERSONA` for the
+/// Xbox One-compatible persona.
 pub const ACK_FLAG_MAPLE_PERSONA: u8 = 1 << 5;
-/// Set in the ACK flags byte when the Pico is presenting the 8BitDo Pro 2
-/// D-Input HID persona. The bridge still streams normal controller STATE
-/// packets; the Pico maps them into HID gamepad reports.
+/// Set in the ACK flags byte when the Pico is presenting the PS3 HID
+/// persona. Combined with `ACK_FLAG_ALT_PERSONA` for the PS4 HID persona.
 pub const ACK_FLAG_DINPUT_PERSONA: u8 = 1 << 6;
+/// Extends the persona bits without changing the fixed ACK packet shape.
+pub const ACK_FLAG_ALT_PERSONA: u8 = 1 << 7;
 
 pub const USB_DIAG_WIRE_SIZE: usize = 78;
 pub const USB_DIAG_VERSION: u8 = 1;
@@ -141,10 +142,12 @@ pub struct KeyboardReport {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Persona {
     #[default]
-    Controller,
+    Xinput,
     Keyboard,
     Maple,
-    Dinput,
+    Ps3,
+    Ps4,
+    XboxOne,
 }
 
 impl Persona {
@@ -152,12 +155,16 @@ impl Persona {
     pub fn from_ack_flags(flags: u8) -> Self {
         if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
             Persona::Keyboard
+        } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
+            Persona::XboxOne
+        } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
+            Persona::Ps4
         } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 {
-            Persona::Dinput
+            Persona::Ps3
         } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 {
             Persona::Maple
         } else {
-            Persona::Controller
+            Persona::Xinput
         }
     }
 
@@ -165,19 +172,34 @@ impl Persona {
     /// `TYPE_SET_PERSONA` request body.
     pub fn flash_byte(self) -> u8 {
         match self {
-            Persona::Controller => 0,
+            Persona::Xinput => 0,
             Persona::Keyboard => 1,
             Persona::Maple => 2,
-            Persona::Dinput => 3,
+            Persona::Ps3 => 3,
+            Persona::Ps4 => 4,
+            Persona::XboxOne => 5,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Persona::Controller => "controller",
+            Persona::Xinput => "xinput",
             Persona::Keyboard => "keyboard",
             Persona::Maple => "maple",
-            Persona::Dinput => "dinput",
+            Persona::Ps3 => "ps3",
+            Persona::Ps4 => "ps4",
+            Persona::XboxOne => "xboxone",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Persona::Xinput => "Xbox 360 / XInput",
+            Persona::Keyboard => "Keyboard",
+            Persona::Maple => "Maple adapter",
+            Persona::Ps3 => "PS3 / DualShock 3",
+            Persona::Ps4 => "PS4 / DualShock 4",
+            Persona::XboxOne => "Xbox One",
         }
     }
 }
@@ -1056,7 +1078,7 @@ mod tests {
             assert_eq!(*b, 0);
         }
         assert_eq!(buf[16], crc8(&buf[..16]));
-        assert_eq!(encode_set_persona(0, Persona::Controller)[4], 0);
+        assert_eq!(encode_set_persona(0, Persona::Xinput)[4], 0);
         // Decode is lenient on unknown types; SET_PERSONA isn't a PacketKind.
         assert_eq!(
             Packet::decode(&buf),
@@ -1066,10 +1088,10 @@ mod tests {
 
     #[test]
     fn persona_from_ack_flags() {
-        assert_eq!(Persona::from_ack_flags(0), Persona::Controller);
+        assert_eq!(Persona::from_ack_flags(0), Persona::Xinput);
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_LOG_CHUNK_SUPPORTED),
-            Persona::Controller
+            Persona::Xinput
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA),
@@ -1085,7 +1107,15 @@ mod tests {
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_USB_DIAG_SUPPORTED),
-            Persona::Dinput
+            Persona::Ps3
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_ALT_PERSONA),
+            Persona::Ps4
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA),
+            Persona::XboxOne
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_MAPLE_PERSONA),
@@ -1093,16 +1123,18 @@ mod tests {
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA),
-            Persona::Dinput
+            Persona::Ps3
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA),
             Persona::Keyboard
         );
-        assert_eq!(Persona::Controller.flash_byte(), 0);
+        assert_eq!(Persona::Xinput.flash_byte(), 0);
         assert_eq!(Persona::Keyboard.flash_byte(), 1);
         assert_eq!(Persona::Maple.flash_byte(), 2);
-        assert_eq!(Persona::Dinput.flash_byte(), 3);
+        assert_eq!(Persona::Ps3.flash_byte(), 3);
+        assert_eq!(Persona::Ps4.flash_byte(), 4);
+        assert_eq!(Persona::XboxOne.flash_byte(), 5);
     }
 
     #[test]

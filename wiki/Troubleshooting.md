@@ -44,8 +44,8 @@ If the Pico feels "lost", use the debug menu first:
 
 The menu checks all three recoverable states:
 
-- **Wi-Fi/controller mode**: the normal running mode. The bridge can ask this Pico to reboot into USB debug mode.
-- **USB debug mode**: the setup USB serial mode. From here you can read logs, change Wi-Fi, switch back to Wi-Fi/controller mode, or enter BOOTSEL.
+- **Wi-Fi/input mode**: the normal running mode. The bridge can ask this Pico to reboot into USB debug mode.
+- **USB debug mode**: the setup USB serial mode. From here you can read logs, change Wi-Fi, switch back to Wi-Fi/input mode, or enter BOOTSEL.
 - **BOOTSEL firmware mode**: the hardware fallback used by firmware update.
 
 Useful direct commands:
@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 This happens after flashing if the Pico did not boot the firmware setup mode.
 
 If the Pico already had saved Wi-Fi, it may have booted straight into run mode
-as an Xbox controller. In the guided menu, choose **Use current Wi-Fi and stop**
+as an XInput device. In the guided menu, choose **Use current Wi-Fi and stop**
 if you only updated firmware. If you need to change Wi-Fi, choose the option to
 reboot the running Pico into setup mode.
 
@@ -124,7 +124,7 @@ controller problem. It means the PC did not receive a UDP discovery reply
 from a running Pico.
 
 The **Basic** tab shows setup USB Picos separately. If a Pico has saved Wi-Fi,
-use that Pico's **Recover to Wi-Fi/controller mode** command before streaming.
+use that Pico's **Recover to Wi-Fi/input mode** command before streaming.
 
 Try this in order:
 
@@ -228,7 +228,7 @@ The result tells you where USB stopped:
 On a development bench where the Pico is plugged into the Windows host, use
 [[Hardware Lab]] for repeatable reconnect checks. `couchlink lab --scenario full
 --power pnp-remove --no-flash` removes and rescans the CouchLink setup and
-XInput PnP instances, then verifies Wi-Fi/controller detection and signal
+XInput PnP instances, then verifies Wi-Fi/input detection and signal
 delivery after reconnect. It is still a Windows PnP simulation, not a physical
 power cut.
 

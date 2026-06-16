@@ -38,7 +38,7 @@ Use this when setup asks for the Pico in BOOTSEL mode:
 
 The bridge looks for either drive label, picks the matching UF2 from the release folder, and copies it. The Pico usually reboots as soon as the copy completes.
 
-After a firmware update, the Pico enters USB setup/debug mode and keeps any saved Wi-Fi credentials. On later normal replug, saved credentials make it boot as a controller.
+After a firmware update, the Pico enters USB setup/debug mode and keeps any saved Wi-Fi credentials. On later normal replug, saved credentials make it boot into the saved input mode, with XInput as the default.
 
 ## Setup Mode
 
@@ -61,9 +61,9 @@ Run this when you need to see where the Pico is or move it between modes:
 
 The debug menu can:
 
-- Show Pico state across Wi-Fi/controller mode, USB debug mode, and BOOTSEL firmware mode.
+- Show Pico state across Wi-Fi/input mode, USB debug mode, and BOOTSEL firmware mode.
 - Reboot a Wi-Fi Pico into USB debug mode.
-- Reboot a USB debug Pico back into Wi-Fi/controller mode.
+- Reboot a USB debug Pico back into Wi-Fi/input mode.
 - Read the USB debug firmware log.
 - Send a USB debug Pico into BOOTSEL for firmware update.
 
@@ -107,7 +107,7 @@ This only works when the Pico is visible as a setup-mode USB serial device. If t
 ## Wi-Fi Change Recovery
 
 If the Pico already has saved Wi-Fi, a firmware update may reboot straight
-into run mode as an Xbox controller instead of setup-mode USB. That is OK when
+into run mode as an XInput device instead of setup-mode USB. That is OK when
 the Wi-Fi is still correct.
 
 To change Wi-Fi:

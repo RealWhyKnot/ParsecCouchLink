@@ -101,6 +101,7 @@ add_executable(pico_bridge
     src/usb_descriptors.c
     src/watchdog.c
     src/wifi.c
+    src/xbone.c
     src/xinput.c
 )
 

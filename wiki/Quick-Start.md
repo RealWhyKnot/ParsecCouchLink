@@ -11,7 +11,7 @@ This is the path for a new Pico user starting from a release zip.
   - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- equivalent and fully supported.
 - Micro-USB data cable. Charge-only cables will fail.
 - 2.4 GHz Wi-Fi name and password. Both Pico variants use the CYW43439 radio, which is 2.4 GHz only -- 5 GHz-only networks won't work.
-- USB4MAPLE or another USB-to-console adapter that accepts Xbox 360/XInput or DInput-style USB controllers.
+- USB4MAPLE or another USB-to-console adapter that accepts Xbox 360, Xbox One, PS3, PS4, or keyboard USB devices.
 
 ## Install
 
@@ -32,7 +32,7 @@ The script explains each step before it starts. In short:
 2. With BOOTSEL still held, plug the Pico into the PC using a micro-USB **data** cable (charge-only cables will not work).
 3. **Release BOOTSEL** as soon as Windows shows a removable drive named `RPI-RP2` (Pico W or Pico WH) or `RP2350` (Pico 2 W). The Pico stays in flash mode after you let go -- you do not need to keep the button held while the firmware copies.
 4. Setup detects which Pico is in BOOTSEL and copies the matching firmware (`couchlink-pico2w.uf2` for the RP2350 board, `couchlink-picow.uf2` for the RP2040 board).
-5. The Pico reboots into the CouchLink firmware. After a firmware update it enters USB setup/debug mode and keeps any saved Wi-Fi credentials. On later normal replug, saved credentials make it boot as a controller.
+5. The Pico reboots into the CouchLink firmware. After a firmware update it enters USB setup/debug mode and keeps any saved Wi-Fi credentials. On later normal replug, saved credentials make it boot into the saved input mode, with XInput as the default.
 6. The Pico comes back as a USB serial setup device.
 7. Enter the 2.4 GHz Wi-Fi credentials when prompted.
 8. Setup waits for the Pico to join Wi-Fi and answer discovery.
@@ -70,6 +70,7 @@ The guided menu can:
 
 - Start streaming for one selected Pico.
 - Choose which Windows controller feeds one selected Pico.
+- Choose Auto, Xbox, DInput / PlayStation, Maple, or Keyboard input mode before guided streaming.
 - Show each Pico state: Wi-Fi ready, USB debug, BOOTSEL, or not seen.
 - Save a detected Pico or remove a missing saved Pico.
 - Recover one Pico left in USB debug mode when it already has saved Wi-Fi.
@@ -130,7 +131,7 @@ If you are not sure which mode the Pico is in, run:
 .\couchlink.exe debug
 ```
 
-The debug menu shows whether the Pico is in Wi-Fi/controller mode, USB debug
+The debug menu shows whether the Pico is in Wi-Fi/input mode, USB debug
 mode, or BOOTSEL firmware mode. It can switch a Wi-Fi Pico into USB debug mode,
-switch USB debug mode back to Wi-Fi/controller mode, read the firmware log, and
+switch USB debug mode back to Wi-Fi/input mode, read the firmware log, and
 send a USB debug Pico into BOOTSEL for firmware update.

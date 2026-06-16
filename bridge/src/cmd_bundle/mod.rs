@@ -11,15 +11,17 @@ mod pico_diag;
 mod sysinfo;
 mod usb_enum;
 
+use std::fmt::Write as _;
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use chrono::Local;
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-use crate::{config, journal};
+use crate::{cmd_run, cmd_usb_diag, config, journal};
 
 use collect::{bundle_log_prefix, collect_crash_file_names, collect_setup_transcript_names};
 use manifest::build_manifest;
@@ -44,6 +46,15 @@ pub struct BundleSummary {
     pub crash_file_count: usize,
     pub setup_transcript_count: usize,
     pub pico_usb_enumerated: bool,
+    pub usb_diag_captured: bool,
+    pub usb_diag_target_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct UsbDiagBundle {
+    text: String,
+    captured: bool,
+    target_count: usize,
 }
 
 /// Build the support bundle zip. Captures diag, doctor, usb topology,
@@ -77,6 +88,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     let usb_events = capture_windows_usb_events().await;
     let usb_events_captured = usb_events.is_some();
 
+    let usb_diag = capture_usb_diag_text().await;
+
     // Classify current Pico USB enumeration state from the pnputil output.
     // Used both in manifest.json and in the VendorNotFound stub text.
     let pico_enum_state = usb_devices
@@ -105,6 +118,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         usb_events_captured,
         pico_usb_enumerated,
         pico_usb_mode.as_deref(),
+        usb_diag.captured,
+        usb_diag.target_count,
         &crash_files,
         &setup_transcripts,
     )
@@ -140,6 +155,12 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     };
     zip.start_file("pico-diag.txt", opts)?;
     zip.write_all(pico_diag_body.as_bytes())?;
+
+    // usb-diag.txt: structured run-mode USB counters from the Pico. This
+    // complements pico-diag.txt's firmware log ring with the current USB
+    // mount, descriptor, input-report, and host OUT counters.
+    zip.start_file("usb-diag.txt", opts)?;
+    zip.write_all(usb_diag.text.as_bytes())?;
 
     // system-info.txt: always present. Captures the Windows build,
     // couchlink version, last-known Pico identity, short hostname.
@@ -270,7 +291,87 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         crash_file_count: crash_files.len(),
         setup_transcript_count: setup_transcripts.len(),
         pico_usb_enumerated,
+        usb_diag_captured: usb_diag.captured,
+        usb_diag_target_count: usb_diag.target_count,
     })
+}
+
+async fn capture_usb_diag_text() -> UsbDiagBundle {
+    let (targets, source) = match resolve_usb_diag_targets().await {
+        Ok(found) => found,
+        Err(e) => {
+            return UsbDiagBundle {
+                text: format!(
+                    "Structured Pico USB diagnostics were not captured.\n\n\
+                     Suggested next step:\n\
+                     - Make sure the Pico is powered, has joined Wi-Fi, and is still plugged into the console adapter.\n\
+                     - Run `couchlink.exe bundle` again immediately after the failure.\n\
+                     - If the Pico is on Wi-Fi but broadcast discovery is blocked, run `couchlink.exe doctor` once so the last-known IP is saved.\n\n\
+                     Diagnostic details:\n\
+                     error={e:#}\n"
+                ),
+                captured: false,
+                target_count: 0,
+            };
+        }
+    };
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "# Structured Pico USB diagnostics\n# target source: {source}\n"
+    );
+
+    let mut captured = false;
+    for pico in &targets {
+        let _ = writeln!(out, "{}", pico.detail_label());
+        match cmd_usb_diag::query_usb_diag(pico, Duration::from_secs(3)).await {
+            Ok(diag) => {
+                captured = true;
+                out.push_str(&cmd_usb_diag::format_usb_diag(&diag, pico.persona));
+            }
+            Err(e) => {
+                let _ = writeln!(
+                    out,
+                    "  FAIL  USB diagnostic did not reply: {e:#}\n  Update Pico firmware, then run this bundle again."
+                );
+            }
+        }
+        out.push('\n');
+    }
+
+    UsbDiagBundle {
+        text: out,
+        captured,
+        target_count: targets.len(),
+    }
+}
+
+async fn resolve_usb_diag_targets() -> Result<(Vec<cmd_run::PicoTarget>, String)> {
+    match cmd_run::discover_picos(Duration::from_secs(2)).await {
+        Ok(picos) if !picos.is_empty() => {
+            return Ok((picos, "broadcast discovery".to_string()));
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::debug!("bundle: USB diag broadcast discovery failed: {e:#}");
+        }
+    }
+
+    let cfg = config::load().unwrap_or_default();
+    let last_ip = cfg
+        .last_pico
+        .as_ref()
+        .and_then(|p| p.last_ip.as_deref())
+        .ok_or_else(|| {
+            anyhow!("no running Pico answered discovery and no last-known Pico IP is saved")
+        })?;
+    let ip = cmd_run::parse_ip_selector(last_ip)
+        .ok_or_else(|| anyhow!("last-known Pico IP `{last_ip}` is not a valid IP address"))?;
+    let pico = cmd_run::probe_pico_ip(ip, Duration::from_secs(3))
+        .await
+        .with_context(|| format!("probing last-known Pico IP {ip}"))?;
+    Ok((vec![pico], format!("last-known IP {ip}")))
 }
 
 pub async fn run(output: Option<PathBuf>) -> Result<()> {
@@ -293,6 +394,14 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
             "  pico-diag.txt: not captured ({}) -- see the file for details",
             summary.pico_diag_outcome
         );
+    }
+    if summary.usb_diag_captured {
+        println!(
+            "  usb-diag.txt: captured for {} Pico board(s)",
+            summary.usb_diag_target_count
+        );
+    } else {
+        println!("  usb-diag.txt: not captured -- see the file for details");
     }
     if summary.crash_file_count == 0 {
         println!("  crashes/: none");

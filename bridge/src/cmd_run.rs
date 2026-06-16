@@ -113,7 +113,7 @@ impl StreamRoute {
     pub fn source_label(&self) -> String {
         match self.pico.persona {
             Persona::Keyboard => "Keyboard".to_string(),
-            Persona::Controller | Persona::Maple | Persona::Dinput => {
+            Persona::Xinput | Persona::Maple | Persona::Ps3 | Persona::Ps4 | Persona::XboxOne => {
                 xinput::user_slot_label(self.source_slot)
             }
         }
@@ -317,7 +317,7 @@ async fn recover_setup_usb_to_wifi(quiet: bool) -> Result<usize> {
             Ok(SetupRecovery::Rebooted { firmware, board }) => {
                 rebooted += 1;
                 if !quiet {
-                    println!("  {port}: fw v{firmware} {board} -> Wi-Fi/controller mode");
+                    println!("  {port}: fw v{firmware} {board} -> Wi-Fi/input mode");
                 }
             }
             Ok(SetupRecovery::NoCredentials { firmware, board }) => {
@@ -831,7 +831,9 @@ impl RouteRuntime {
 
     async fn send_tick(&mut self, socket: &UdpSocket) -> std::io::Result<()> {
         let packet = match self.route.pico.persona {
-            Persona::Controller | Persona::Maple | Persona::Dinput => self.next_controller_packet(),
+            Persona::Xinput | Persona::Maple | Persona::Ps3 | Persona::Ps4 | Persona::XboxOne => {
+                self.next_controller_packet()
+            }
             Persona::Keyboard => self.next_keyboard_packet(),
         };
         self.seq = self.seq.wrapping_add(1);
@@ -944,16 +946,18 @@ fn print_status(routes: &mut [RouteRuntime]) {
             "waiting for source"
         };
         let detail = match route.route.pico.persona {
-            Persona::Controller | Persona::Maple | Persona::Dinput => format!(
-                "buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
-                route.last_state.buttons,
-                route.last_state.left_trigger,
-                route.last_state.right_trigger,
-                route.last_state.left_x,
-                route.last_state.left_y,
-                route.last_state.right_x,
-                route.last_state.right_y,
-            ),
+            Persona::Xinput | Persona::Maple | Persona::Ps3 | Persona::Ps4 | Persona::XboxOne => {
+                format!(
+                    "buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
+                    route.last_state.buttons,
+                    route.last_state.left_trigger,
+                    route.last_state.right_trigger,
+                    route.last_state.left_x,
+                    route.last_state.left_y,
+                    route.last_state.right_x,
+                    route.last_state.right_y,
+                )
+            }
             Persona::Keyboard => {
                 let keys: Vec<String> = route
                     .last_key
@@ -1105,7 +1109,7 @@ mod tests {
                 unique_id_short: uid,
                 full_version: None,
             },
-            persona: Persona::Controller,
+            persona: Persona::Xinput,
         }
     }
 

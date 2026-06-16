@@ -15,17 +15,19 @@
 // The persona byte stored in flash is the run_persona_t value directly;
 // boot_mode_persona_from_flash() relies on this so it can stay free of a
 // flash_creds.h dependency (and thus host-compilable for unit tests).
-_Static_assert((int)FLASH_PERSONA_CONTROLLER == (int)RUN_PERSONA_CONTROLLER &&
+_Static_assert((int)FLASH_PERSONA_XINPUT == (int)RUN_PERSONA_XINPUT &&
                    (int)FLASH_PERSONA_KEYBOARD == (int)RUN_PERSONA_KEYBOARD &&
                    (int)FLASH_PERSONA_MAPLE == (int)RUN_PERSONA_MAPLE &&
-                   (int)FLASH_PERSONA_DINPUT == (int)RUN_PERSONA_DINPUT,
+                   (int)FLASH_PERSONA_PS3 == (int)RUN_PERSONA_PS3 &&
+                   (int)FLASH_PERSONA_PS4 == (int)RUN_PERSONA_PS4 &&
+                   (int)FLASH_PERSONA_XBOXONE == (int)RUN_PERSONA_XBOXONE,
                "flash persona byte values must match run_persona_t");
 
 static boot_mode_t current = BOOT_MODE_SETUP;
 
 // Output persona for run mode, latched alongside `current` when a RUN
-// decision is made. Setup mode leaves it at the controller default.
-static run_persona_t run_persona = RUN_PERSONA_CONTROLLER;
+// decision is made. Setup mode leaves it at the XInput default.
+static run_persona_t run_persona = RUN_PERSONA_XINPUT;
 
 // t=0 BOOTSEL state, latched by boot_mode_decide().
 static bool bootsel_at_boot = false;
@@ -95,7 +97,7 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
     // intentionally runs after reset-reason handling so an RP2350 UF2
     // reflash or firmware-driven reboot cannot be mistaken for a
     // physical BOOTSEL hold. A provisioned cold boot still enters run
-    // mode; saved credentials are the stable controller path.
+    // mode; saved credentials are the stable XInput path.
     bootsel_at_boot = read_bootsel_button();
 
     if (bootsel_at_boot) {

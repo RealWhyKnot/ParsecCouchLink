@@ -30,6 +30,8 @@ pub(super) struct Manifest {
     pico_usb_enumerated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pico_usb_mode: Option<String>,
+    pico_usb_diag_captured: bool,
+    pico_usb_diag_target_count: usize,
     crash_files: Vec<String>,
     setup_transcripts: Vec<String>,
     notes: Vec<&'static str>,
@@ -46,6 +48,8 @@ pub(super) async fn build_manifest(
     usb_events_captured: bool,
     pico_usb_enumerated: bool,
     pico_usb_mode: Option<&str>,
+    pico_usb_diag_captured: bool,
+    pico_usb_diag_target_count: usize,
     crash_files: &[String],
     setup_transcripts: &[String],
 ) -> Result<Manifest> {
@@ -75,6 +79,8 @@ pub(super) async fn build_manifest(
         usb_events_captured,
         pico_usb_enumerated,
         pico_usb_mode: pico_usb_mode.map(|s| s.to_string()),
+        pico_usb_diag_captured,
+        pico_usb_diag_target_count,
         crash_files: crash_files.to_vec(),
         setup_transcripts: setup_transcripts.to_vec(),
         notes: vec![

@@ -18,16 +18,24 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
     // flash_creds.h dependency is needed here -- which keeps this module
     // host-compilable for the unit tests.
     if (!have_creds)
-        return RUN_PERSONA_CONTROLLER;
+        return RUN_PERSONA_XINPUT;
     if (persona_byte == (uint8_t)RUN_PERSONA_KEYBOARD)
         return RUN_PERSONA_KEYBOARD;
     if (persona_byte == (uint8_t)RUN_PERSONA_MAPLE)
         return RUN_PERSONA_MAPLE;
-    if (persona_byte == (uint8_t)RUN_PERSONA_DINPUT)
-        return RUN_PERSONA_DINPUT;
-    return RUN_PERSONA_CONTROLLER;
+    if (persona_byte == (uint8_t)RUN_PERSONA_PS3)
+        return RUN_PERSONA_PS3;
+    if (persona_byte == (uint8_t)RUN_PERSONA_PS4)
+        return RUN_PERSONA_PS4;
+    if (persona_byte == (uint8_t)RUN_PERSONA_XBOXONE)
+        return RUN_PERSONA_XBOXONE;
+    return RUN_PERSONA_XINPUT;
 }
 
 bool boot_mode_persona_uses_xinput_usb(run_persona_t persona) {
-    return persona == RUN_PERSONA_CONTROLLER || persona == RUN_PERSONA_MAPLE;
+    return persona == RUN_PERSONA_XINPUT || persona == RUN_PERSONA_MAPLE;
+}
+
+bool boot_mode_persona_uses_gamepad_hid(run_persona_t persona) {
+    return persona == RUN_PERSONA_PS3 || persona == RUN_PERSONA_PS4;
 }

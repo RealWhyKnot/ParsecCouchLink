@@ -4,9 +4,15 @@
 
 #include "gamepad_state.h"
 
-#define DINPUT_REPORT_ID 0x03u
-#define DINPUT_WIRE_REPORT_LEN 11u
-#define DINPUT_PAYLOAD_REPORT_LEN 10u
+#define DINPUT_PS3_REPORT_ID 0x01u
+#define DINPUT_PS3_WIRE_REPORT_LEN 49u
+#define DINPUT_PS3_PAYLOAD_REPORT_LEN 48u
+
+#define DINPUT_PS4_REPORT_ID 0x01u
+#define DINPUT_PS4_WIRE_REPORT_LEN 64u
+#define DINPUT_PS4_PAYLOAD_REPORT_LEN 63u
+
+#define DINPUT_MAX_WIRE_REPORT_LEN 64u
 
 #define DINPUT_HAT_UP 0x00u
 #define DINPUT_HAT_UP_RIGHT 0x01u
@@ -52,11 +58,15 @@
 #define DINPUT_BUTTON_STAR_TURBO 0x8000u
 
 typedef struct {
-    uint8_t bytes[DINPUT_WIRE_REPORT_LEN];
+    uint8_t bytes[DINPUT_MAX_WIRE_REPORT_LEN];
+    uint8_t len;
+    uint8_t report_id;
 } dinput_report_t;
 
 uint8_t dinput_axis_x_to_hid(int16_t value);
 uint8_t dinput_axis_y_to_hid(int16_t value);
 uint8_t dinput_hat_from_buttons(uint16_t buttons);
 uint16_t dinput_buttons_from_gamepad(const gamepad_state_t *state);
-void dinput_build_report(const gamepad_state_t *state, dinput_report_t *out);
+void dinput_build_ps3_report(const gamepad_state_t *state, dinput_report_t *out);
+void dinput_build_ps4_report(const gamepad_state_t *state, uint8_t report_counter,
+                             dinput_report_t *out);

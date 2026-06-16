@@ -32,7 +32,7 @@ void watchdog_tick(void) {
             g_gamepad_state.right_x = 0;
             g_gamepad_state.right_y = 0;
             // Neutralize the keyboard persona too: all keys up. Harmless
-            // in controller mode where this state is never read.
+            // in gamepad modes where this state is never read.
             g_keyboard_state.modifiers = 0;
             for (int i = 0; i < 6; i++)
                 g_keyboard_state.keys[i] = 0;

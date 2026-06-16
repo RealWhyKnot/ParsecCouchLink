@@ -1,5 +1,6 @@
 //! Run-mode Pico USB diagnostics over Wi-Fi.
 
+use std::fmt::Write as _;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
@@ -169,14 +170,22 @@ pub async fn query_usb_diag(
 }
 
 fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
+    print!("{}", format_usb_diag(diag, persona));
+}
+
+pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> String {
     let device_label = match persona {
-        protocol::Persona::Controller => "XInput",
+        protocol::Persona::Xinput => "XInput",
         protocol::Persona::Keyboard => "HID keyboard",
         protocol::Persona::Maple => "XInput (Maple mode)",
-        protocol::Persona::Dinput => "8BitDo Pro 2 DInput",
+        protocol::Persona::Ps3 => "PS3 HID gamepad",
+        protocol::Persona::Ps4 => "PS4 HID gamepad",
+        protocol::Persona::XboxOne => "Xbox One XGIP",
     };
-    println!("  {}", usb_verdict(diag, device_label));
-    println!(
+    let mut out = String::new();
+    let _ = writeln!(out, "  {}", usb_verdict(diag, device_label));
+    let _ = writeln!(
+        out,
         "  USB: {}{}  mounts={} unmounts={} suspends={} resumes={}",
         if diag.mounted() {
             "configured"
@@ -189,15 +198,18 @@ fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
         diag.suspend_count,
         diag.resume_count,
     );
-    println!(
+    let _ = writeln!(
+        out,
         "  descriptors: device={} configuration={}",
         diag.device_desc_count, diag.config_desc_count
     );
-    println!(
+    let _ = writeln!(
+        out,
         "  {device_label}: queued_reports={} host_accepted_reports={} host_out_reports={}",
         diag.xinput_in_queued_count, diag.xinput_in_sent_count, diag.xinput_out_count
     );
-    println!(
+    let _ = writeln!(
+        out,
         "  recent: mount={} in={} out={} bridge_packet={}",
         age_label(diag, diag.last_mount_ms),
         age_label(diag, diag.last_in_sent_ms),
@@ -205,16 +217,19 @@ fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
         age_label(diag, diag.last_bridge_packet_ms),
     );
     if diag.last_out_len > 0 {
-        println!(
+        let _ = writeln!(
+            out,
             "  last host OUT: len={} first_bytes={:02X} {:02X}",
             diag.last_out_len, diag.last_out_byte0, diag.last_out_byte1
         );
     }
-    println!(
+    let _ = writeln!(
+        out,
         "  stream state: bridge_peer={} parsec_connected={}",
         yes_no(diag.bridge_peer_latched()),
         yes_no(diag.parsec_connected()),
     );
+    out
 }
 
 fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str) -> String {
@@ -320,9 +335,18 @@ mod tests {
     }
 
     #[test]
-    fn verdict_uses_dinput_label() {
-        let verdict = usb_verdict(&diag(true, false, false, true), "8BitDo Pro 2 DInput");
-        assert!(verdict.contains("8BitDo Pro 2 DInput report"));
+    fn verdict_uses_playstation_label() {
+        let verdict = usb_verdict(&diag(true, false, false, true), "PS3 HID gamepad");
+        assert!(verdict.contains("PS3 HID gamepad report"));
+    }
+
+    #[test]
+    fn format_usb_diag_contains_persona_and_counters() {
+        let text = format_usb_diag(&diag(true, true, true, true), protocol::Persona::Ps4);
+        assert!(text.contains("PS4 HID gamepad"));
+        assert!(text.contains("mounts=1"));
+        assert!(text.contains("host_accepted_reports=1"));
+        assert!(text.contains("stream state:"));
     }
 
     #[test]

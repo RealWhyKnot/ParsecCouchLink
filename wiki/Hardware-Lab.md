@@ -10,7 +10,7 @@ Run the current status snapshot first:
 .\couchlink.exe lab --scenario status
 ```
 
-The status snapshot records visible setup-mode USB Picos, Wi-Fi/controller-mode
+The status snapshot records visible setup-mode USB Picos, Wi-Fi/input-mode
 Picos, BOOTSEL drives, Windows XInput slots, and problem USB devices.
 
 ## Scenarios
@@ -18,10 +18,10 @@ Picos, BOOTSEL drives, Windows XInput slots, and problem USB devices.
 | Scenario | What it checks |
 |---|---|
 | `status` | Snapshot only; no mode changes. |
-| `mode-cycle` | Setup USB -> Wi-Fi/controller mode -> setup USB. |
+| `mode-cycle` | Setup USB -> Wi-Fi/input mode -> setup USB. |
 | `flash-cycle` | Setup USB -> BOOTSEL -> flash matching UF2 -> setup USB or Wi-Fi recovery. |
 | `power-cycle` | Selected reconnect backend only. |
-| `full` | Status, mode cycle, reconnect cycle, flash cycle, final Wi-Fi/controller check, and signal checks. |
+| `full` | Status, mode cycle, reconnect cycle, flash cycle, final Wi-Fi/input check, and signal checks. |
 
 Run the full scenario once:
 
@@ -45,8 +45,8 @@ reset re-enumeration.
 
 `pnp-remove` is the strongest built-in Windows reconnect simulation. During the
 full scenario it removes/rescans setup-mode USB instances, returns the Pico to
-run mode, verifies the XInput controller persona, removes/rescans that XInput
-PnP instance, then verifies Wi-Fi/controller detection and signal delivery
+run mode, verifies the XInput persona, removes/rescans that XInput
+PnP instance, then verifies Wi-Fi/input detection and signal delivery
 again.
 
 `pnp-remove` still does not physically cut USB power. Use an external power

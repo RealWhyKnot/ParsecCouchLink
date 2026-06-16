@@ -94,7 +94,7 @@ async fn run_interactive() -> Result<()> {
         println!();
         println!("Pico debug and recovery");
         println!(
-            "USB debug mode is the setup USB port. Wi-Fi mode is the normal controller bridge."
+            "USB debug mode is the setup USB port. Wi-Fi/input mode is normal bridge operation."
         );
         print_status().await?;
 
@@ -104,8 +104,8 @@ async fn run_interactive() -> Result<()> {
                 "use this before changing Wi-Fi or reading setup logs",
             ),
             menu_item(
-                "Switch USB debug Pico to Wi-Fi/controller mode",
-                "return to normal bridge/controller operation",
+                "Switch USB debug Pico to Wi-Fi/input mode",
+                "return to normal bridge input operation",
             ),
             menu_item(
                 "Switch USB debug Pico to BOOTSEL firmware mode",
@@ -176,9 +176,9 @@ async fn print_status() -> Result<()> {
     }
 
     if wifi.is_empty() {
-        println!("  Wi-Fi/controller mode: none");
+        println!("  Wi-Fi/input mode: none");
     } else {
-        println!("  Wi-Fi/controller mode:");
+        println!("  Wi-Fi/input mode:");
         for pico in &wifi {
             println!("    {}", pico.detail_label());
             println!("      manual IP: {}", pico.peer.ip());
@@ -239,7 +239,7 @@ async fn switch_setup_ports_to_wifi(ports: Vec<String>) -> Result<()> {
     }
     let before_wifi = wifi_uid_set().await?;
     for port in &ports {
-        println!("Asking {port} to reboot into Wi-Fi/controller mode...");
+        println!("Asking {port} to reboot into Wi-Fi/input mode...");
         let hello = reboot_setup_port_to_wifi(port.clone()).await?;
         println!(
             "  {port} fw v{} {} -> Wi-Fi mode",
@@ -250,7 +250,7 @@ async fn switch_setup_ports_to_wifi(ports: Vec<String>) -> Result<()> {
     println!("Waiting up to 60 s for a Wi-Fi reply...");
     match wait_for_wifi_picos_after(&before_wifi, MODE_SWITCH_TIMEOUT).await? {
         WifiWaitResult::Found(picos) => {
-            println!("Wi-Fi/controller mode is available:");
+            println!("Wi-Fi/input mode is available:");
             for pico in picos {
                 println!("  {}", pico.detail_label());
                 println!("  manual IP: {}", pico.peer.ip());
@@ -695,9 +695,7 @@ async fn wait_for_wifi_picos_after(
 fn print_recovery_steps() {
     println!("Recovery paths:");
     println!("  If the Pico is on Wi-Fi, choose `Switch Wi-Fi Pico to USB debug mode`.");
-    println!(
-        "  If USB debug mode is visible, choose `Switch USB debug Pico to Wi-Fi/controller mode`."
-    );
+    println!("  If USB debug mode is visible, choose `Switch USB debug Pico to Wi-Fi/input mode`.");
     println!("  If neither mode is visible, use `Update Pico firmware` and BOOTSEL firmware mode.");
     println!(
         "  BOOTSEL is the hardware fallback: hold BOOTSEL while plugging the Pico into this PC."

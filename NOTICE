@@ -15,3 +15,7 @@ Release archives published from this repository contain:
 
 The build uses Rust crates from crates.io and the Raspberry Pi Pico SDK. Those
 components retain their own upstream licenses.
+
+Portions of the PlayStation and Xbox One USB descriptor/report reference data
+are adapted from GP2040-CE, Copyright (c) 2024 OpenStickCommunity
+(gp2040-ce.info), licensed under the MIT License.

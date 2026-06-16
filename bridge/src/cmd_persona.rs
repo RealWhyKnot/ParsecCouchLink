@@ -1,5 +1,4 @@
-//! `couchlink keyboard` / `couchlink controller` / `couchlink maple` /
-//! `couchlink dinput` -- switch a Pico's output persona over Wi-Fi and
+//! Direct persona commands -- switch a Pico's output persona over Wi-Fi and
 //! optionally start streaming to it.
 //!
 //! The persona is persisted on the Pico and applied at the next boot, so
@@ -17,8 +16,8 @@ use anyhow::{bail, Result};
 use crate::protocol::Persona;
 use crate::{cmd_run, pico_mode, support};
 
-const DISCOVER: Duration = Duration::from_secs(5);
-const REBOOT_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const DISCOVER: Duration = Duration::from_secs(5);
+pub(crate) const REBOOT_WAIT: Duration = Duration::from_secs(60);
 
 pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bool) -> Result<()> {
     let picos = cmd_run::discover_picos_with_auto_recovery(DISCOVER, false).await?;
@@ -86,7 +85,7 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
 
     if !stream {
         println!(
-            "Run `couchlink run` to start streaming, or re-run with --stream to switch and stream."
+            "Run `couchlink run` to start streaming, or run this command again without --no-stream."
         );
         return Ok(());
     }
@@ -105,7 +104,7 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
     cmd_run::stream_routes(routes, cmd_run::StreamOptions::default()).await
 }
 
-fn select_targets(
+pub(crate) fn select_targets(
     picos: &[cmd_run::PicoTarget],
     selectors: &[String],
     all: bool,
@@ -133,7 +132,7 @@ fn select_targets(
     }
 }
 
-async fn wait_for_persona(
+pub(crate) async fn wait_for_persona(
     uids: &[u32],
     desired: Persona,
     timeout: Duration,

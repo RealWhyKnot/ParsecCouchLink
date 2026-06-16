@@ -22,12 +22,14 @@
 
 // Run-mode output persona stored alongside the credentials. The byte sits
 // where the pad used to be all-zero, so a record written before this
-// field existed reads back as the controller persona with its CRC still
+// field existed reads back as the XInput persona with its CRC still
 // valid -- no version bump or migration needed.
-#define FLASH_PERSONA_CONTROLLER 0 // wired Xbox 360 / XInput (default)
-#define FLASH_PERSONA_KEYBOARD 1   // USB HID boot keyboard
-#define FLASH_PERSONA_MAPLE 2      // Xbox-compatible Dreamcast Maple adapter mode
-#define FLASH_PERSONA_DINPUT 3     // 8BitDo Pro 2 D-Input HID gamepad
+#define FLASH_PERSONA_XINPUT 0   // wired Xbox 360 / XInput (default)
+#define FLASH_PERSONA_KEYBOARD 1 // USB HID boot keyboard
+#define FLASH_PERSONA_MAPLE 2    // Xbox-compatible Dreamcast Maple adapter mode
+#define FLASH_PERSONA_PS3 3      // Sony DualShock 3 / PS3 HID gamepad
+#define FLASH_PERSONA_PS4 4      // Sony DualShock 4 / PS4 HID gamepad
+#define FLASH_PERSONA_XBOXONE 5  // Xbox One-compatible XGIP gamepad
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;  // FLASH_CREDS_MAGIC
@@ -39,7 +41,7 @@ typedef struct __attribute__((packed)) {
     uint8_t ssid[FLASH_CREDS_SSID_MAX];                       // 32
     uint8_t password[FLASH_CREDS_PASS_MAX + 1];               // 64 with NUL room
     uint8_t device_name[FLASH_CREDS_NAME_MAX];                // 32
-    uint8_t usb_persona;                                      // FLASH_PERSONA_*; 0 = controller
+    uint8_t usb_persona;                                      // FLASH_PERSONA_*; 0 = XInput
     uint8_t reserved[256 - 4 - 4 - 4 - 32 - 64 - 32 - 1 - 4]; // pad
     uint32_t crc32;                                           // over the first 252 bytes
 } flash_creds_t;

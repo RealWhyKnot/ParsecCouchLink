@@ -19,20 +19,6 @@ static gamepad_state_t neutral_state(void) {
     return state;
 }
 
-static uint16_t report_buttons(const dinput_report_t *report) {
-    return (uint16_t)report->bytes[8] | ((uint16_t)report->bytes[9] << 8);
-}
-
-static void test_neutral_report_matches_usb4maple_sample(void) {
-    static const uint8_t expected[DINPUT_WIRE_REPORT_LEN] = {
-        0x03, 0x0F, 0x7F, 0x7F, 0x7F, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x64,
-    };
-    gamepad_state_t state = neutral_state();
-    dinput_report_t report;
-    dinput_build_report(&state, &report);
-    CHECK(memcmp(report.bytes, expected, sizeof(expected)) == 0);
-}
-
 static void test_axis_conversion(void) {
     CHECK(dinput_axis_x_to_hid(-32768) == 0x00);
     CHECK(dinput_axis_x_to_hid(0) == 0x7F);
@@ -61,56 +47,112 @@ static void test_hat_values(void) {
           DINPUT_HAT_NEUTRAL);
 }
 
-static void test_report_axis_and_trigger_order(void) {
+static void test_ps3_neutral_report(void) {
     gamepad_state_t state = neutral_state();
-    state.left_x = -32768;
-    state.left_y = 32767;
-    state.right_x = 32767;
-    state.right_y = -32768;
-    state.left_trigger = 0x22;
-    state.right_trigger = 0xCC;
-
     dinput_report_t report;
-    dinput_build_report(&state, &report);
+    dinput_build_ps3_report(&state, &report);
 
+    CHECK(report.len == DINPUT_PS3_WIRE_REPORT_LEN);
+    CHECK(report.report_id == DINPUT_PS3_REPORT_ID);
+    CHECK(report.bytes[0] == 0x01);
     CHECK(report.bytes[2] == 0x00);
     CHECK(report.bytes[3] == 0x00);
-    CHECK(report.bytes[4] == 0xFF);
-    CHECK(report.bytes[5] == 0xFF);
-    CHECK(report.bytes[6] == 0xCC);
-    CHECK(report.bytes[7] == 0x22);
+    CHECK(report.bytes[6] == 0x7F);
+    CHECK(report.bytes[7] == 0x7F);
+    CHECK(report.bytes[8] == 0x7F);
+    CHECK(report.bytes[9] == 0x7F);
+    CHECK(report.bytes[18] == 0x00);
+    CHECK(report.bytes[19] == 0x00);
+    CHECK(report.bytes[29] == 0x02);
+    CHECK(report.bytes[30] == 0x05);
+    CHECK(report.bytes[31] == 0x10);
+    CHECK(report.bytes[41] == 0x01);
+    CHECK(report.bytes[42] == 0xFF);
+    CHECK(report.bytes[48] == 0xFF);
 }
 
-static void test_button_mapping(void) {
+static void test_ps3_buttons_and_analogs(void) {
     gamepad_state_t state = neutral_state();
     state.buttons = DINPUT_XINPUT_A | DINPUT_XINPUT_B | DINPUT_XINPUT_X | DINPUT_XINPUT_Y |
                     DINPUT_XINPUT_LEFT_SHOULDER | DINPUT_XINPUT_RIGHT_SHOULDER |
                     DINPUT_XINPUT_BACK | DINPUT_XINPUT_START | DINPUT_XINPUT_LEFT_THUMB |
-                    DINPUT_XINPUT_RIGHT_THUMB | DINPUT_XINPUT_GUIDE;
+                    DINPUT_XINPUT_RIGHT_THUMB | DINPUT_XINPUT_GUIDE | DINPUT_XINPUT_DPAD_UP |
+                    DINPUT_XINPUT_DPAD_RIGHT;
     state.left_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD - 1;
     state.right_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD;
+    state.left_x = -32768;
+    state.left_y = 32767;
+    state.right_x = 32767;
+    state.right_y = -32768;
 
     dinput_report_t report;
-    dinput_build_report(&state, &report);
+    dinput_build_ps3_report(&state, &report);
 
-    uint16_t expected = DINPUT_BUTTON_A | DINPUT_BUTTON_B | DINPUT_BUTTON_X | DINPUT_BUTTON_Y |
-                        DINPUT_BUTTON_LB | DINPUT_BUTTON_RB | DINPUT_BUTTON_BACK |
-                        DINPUT_BUTTON_START | DINPUT_BUTTON_LS | DINPUT_BUTTON_RS |
-                        DINPUT_BUTTON_RT_DIGITAL | DINPUT_BUTTON_HOME;
-    CHECK(report_buttons(&report) == expected);
-    CHECK((report_buttons(&report) & DINPUT_BUTTON_LT_DIGITAL) == 0);
+    CHECK(report.bytes[2] == 0x3F);
+    CHECK(report.bytes[3] == 0xFE);
+    CHECK(report.bytes[4] == 0x01);
+    CHECK(report.bytes[6] == 0x00);
+    CHECK(report.bytes[7] == 0x00);
+    CHECK(report.bytes[8] == 0xFF);
+    CHECK(report.bytes[9] == 0xFF);
+    CHECK(report.bytes[14] == 0xFF);
+    CHECK(report.bytes[15] == 0xFF);
+    CHECK(report.bytes[18] == DINPUT_TRIGGER_BUTTON_THRESHOLD - 1);
+    CHECK(report.bytes[19] == DINPUT_TRIGGER_BUTTON_THRESHOLD);
+    CHECK(report.bytes[22] == 0xFF);
+    CHECK(report.bytes[23] == 0xFF);
+    CHECK(report.bytes[24] == 0xFF);
+    CHECK(report.bytes[25] == 0xFF);
+}
 
+static void test_ps4_neutral_report(void) {
+    gamepad_state_t state = neutral_state();
+    dinput_report_t report;
+    dinput_build_ps4_report(&state, 0, &report);
+
+    CHECK(report.len == DINPUT_PS4_WIRE_REPORT_LEN);
+    CHECK(report.report_id == DINPUT_PS4_REPORT_ID);
+    CHECK(report.bytes[0] == 0x01);
+    CHECK(report.bytes[1] == 0x80);
+    CHECK(report.bytes[2] == 0x80);
+    CHECK(report.bytes[3] == 0x80);
+    CHECK(report.bytes[4] == 0x80);
+    CHECK(report.bytes[5] == 0x08);
+    CHECK(report.bytes[6] == 0x00);
+    CHECK(report.bytes[7] == 0x00);
+    CHECK(report.bytes[8] == 0x00);
+    CHECK(report.bytes[9] == 0x00);
+    CHECK(report.bytes[30] == 0x1B);
+}
+
+static void test_ps4_buttons_and_counter(void) {
+    gamepad_state_t state = neutral_state();
+    state.buttons = DINPUT_XINPUT_A | DINPUT_XINPUT_B | DINPUT_XINPUT_X | DINPUT_XINPUT_Y |
+                    DINPUT_XINPUT_LEFT_SHOULDER | DINPUT_XINPUT_RIGHT_SHOULDER |
+                    DINPUT_XINPUT_BACK | DINPUT_XINPUT_START | DINPUT_XINPUT_LEFT_THUMB |
+                    DINPUT_XINPUT_RIGHT_THUMB | DINPUT_XINPUT_GUIDE | DINPUT_XINPUT_DPAD_DOWN |
+                    DINPUT_XINPUT_DPAD_LEFT;
     state.left_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD;
-    dinput_build_report(&state, &report);
-    CHECK((report_buttons(&report) & DINPUT_BUTTON_LT_DIGITAL) != 0);
+    state.right_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD - 1;
+
+    dinput_report_t report;
+    dinput_build_ps4_report(&state, 9, &report);
+
+    CHECK((report.bytes[5] & 0x0F) == DINPUT_HAT_DOWN_LEFT);
+    CHECK((report.bytes[5] & 0xF0) == 0xF0);
+    CHECK(report.bytes[6] == 0xF7);
+    CHECK(report.bytes[7] == ((9u << 2) | 0x01u));
+    CHECK(report.bytes[8] == DINPUT_TRIGGER_BUTTON_THRESHOLD);
+    CHECK(report.bytes[9] == DINPUT_TRIGGER_BUTTON_THRESHOLD - 1);
 }
 
 int main(void) {
-    test_neutral_report_matches_usb4maple_sample();
     test_axis_conversion();
     test_hat_values();
-    test_report_axis_and_trigger_order();
-    test_button_mapping();
+    test_ps3_neutral_report();
+    test_ps3_buttons_and_analogs();
+    test_ps4_neutral_report();
+    test_ps4_buttons_and_counter();
     if (failures != 0)
         return 1;
     puts("dinput_report tests passed");

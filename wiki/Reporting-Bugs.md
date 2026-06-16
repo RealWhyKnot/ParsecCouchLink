@@ -1,6 +1,6 @@
 # Reporting bugs
 
-If something didn't work, the fastest way to get it fixed is to attach a bundle to the issue. The bundle is one command and it captures everything -- logs, doctor output, firmware state -- in a single ZIP with no manual log-hunting required.
+If something didn't work, the fastest way to get it fixed is to attach a bundle to the issue. The bundle is one command and it captures everything -- logs, doctor output, firmware state, USB adapter counters, and recent Windows USB events -- in a single ZIP with no manual log-hunting required.
 
 ## Make a bundle
 
@@ -20,6 +20,9 @@ The ZIP contains:
 - Setup transcripts from `%LOCALAPPDATA%\ParsecCouchLink\data\logs\`
 - Crash files, if any
 - `pico-diag.txt` -- firmware diagnostics, if the Pico is reachable by USB setup mode or run-mode Wi-Fi
+- `usb-diag.txt` -- live Pico USB counters for the active input mode, if the Pico is reachable on Wi-Fi
+- `usb-devices.txt` -- Windows USB device snapshot
+- `usb-events.txt` -- recent Windows USB event-log entries
 
 The bundle does NOT contain your Wi-Fi password or SSID.
 
@@ -31,6 +34,8 @@ The bundle does NOT contain your Wi-Fi password or SSID.
 - Setup transcripts
 - Crash files (if present)
 - `pico-diag.txt` (if firmware diagnostics are reachable)
+- `usb-diag.txt` (if run-mode USB counters are reachable)
+- `usb-devices.txt` and `usb-events.txt`
 
 ## Where to send it
 

@@ -115,7 +115,7 @@ async fn handle_running_picos(mut picos: Vec<cmd_run::PicoTarget>) -> Result<Opt
         println!("  {}. {}", idx + 1, pico.detail_label());
     }
     println!();
-    println!("That means the Pico kept saved Wi-Fi and booted as the Xbox controller.");
+    println!("That means the Pico kept saved Wi-Fi and booted into its saved input mode.");
 
     let pico = if picos.len() == 1 {
         picos.remove(0)
@@ -161,7 +161,7 @@ async fn print_discovered_pico_ips(before: BTreeSet<u32>) -> Result<()> {
     let mut next_beat = started + Duration::from_secs(10);
     // The setup-mode COM port we just rebooted lingers in the OS for a
     // second or two after REBOOT_TO_RUN, before the board re-enumerates as
-    // the XInput controller. Only treat a setup port as a genuine bounce
+    // the XInput device. Only treat a setup port as a genuine bounce
     // back to setup once it has first disappeared -- otherwise the stale
     // pre-reboot port reads as an instant "didn't join" even when the board
     // went on to join Wi-Fi normally.
