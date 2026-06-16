@@ -131,7 +131,7 @@ static const tusb_desc_device_t desc_device_ps3 = {
 
     .iManufacturer = 0x01,
     .iProduct = 0x02,
-    .iSerialNumber = 0x03,
+    .iSerialNumber = 0x00,
     .bNumConfigurations = 0x01,
 };
 
@@ -356,7 +356,7 @@ static const uint8_t desc_hid_report_ps4[] = {
 #define HID_GAMEPAD_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + 7)
 
 static const uint8_t desc_configuration_ps3[] = {
-    TUD_CONFIG_DESCRIPTOR(1, 1, 0, HID_GAMEPAD_CONFIG_TOTAL_LEN, 0x80, 250),
+    TUD_CONFIG_DESCRIPTOR(1, 1, 0, HID_GAMEPAD_CONFIG_TOTAL_LEN, 0x80, 500),
     9,
     TUSB_DESC_INTERFACE,
     GAMEPAD_HID_ITF_NUM,

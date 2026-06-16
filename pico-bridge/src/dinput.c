@@ -146,10 +146,11 @@ void dinput_task(void) {
 }
 
 static uint16_t copy_report(uint8_t *buffer, uint16_t reqlen, const uint8_t *src, uint16_t len) {
-    if (reqlen < len)
+    if (reqlen == 0)
         return 0;
-    memcpy(buffer, src, len);
-    return len;
+    uint16_t copy = reqlen < len ? reqlen : len;
+    memcpy(buffer, src, copy);
+    return copy;
 }
 
 uint16_t dinput_get_report_payload(uint8_t report_id, uint8_t report_type, uint8_t *buffer,
