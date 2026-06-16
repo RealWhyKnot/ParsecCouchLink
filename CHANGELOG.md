@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.16.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.16.0-beta) -- 2026-06-16
+
 ### Added
 - **bundle:** Fold debug capture into support bundle (2bcdcd9)
 - **diagnostics:** Capture first usb traffic events (fd8c04f)
