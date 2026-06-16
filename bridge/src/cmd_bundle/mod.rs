@@ -40,7 +40,8 @@ use usb_enum::{
     vendor_not_found_stub_text, PicoEnumState,
 };
 use usb_packet_summary::{
-    control_transfers_text_for_sources, control_transfers_text_for_text, records_jsonl_for_sources,
+    control_transfers_text_for_sources, control_transfers_text_for_text,
+    hid_reports_text_for_sources, hid_reports_text_for_text, records_jsonl_for_sources,
     records_jsonl_for_text, summarize_sources, summarize_text, UsbPacketBundleSummary,
     UsbPacketSummarySource,
 };
@@ -254,6 +255,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         records_jsonl_for_sources(&per_pico_packet_sources, &retained_packet_sources)?;
     let usb_control_transfers_text =
         control_transfers_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
+    let usb_hid_reports_text =
+        hid_reports_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
     let debug_capture_status = debug_capture_overall_status(
         &usb_packet_summary,
         &per_pico_captures,
@@ -287,6 +290,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         "included",
         usb_control_transfers_text.len(),
         "setup_and_control_in",
+    );
+    capture_log.record_duration(
+        "usb_hid_reports",
+        0,
+        "included",
+        usb_hid_reports_text.len(),
+        "hid_report_metadata",
     );
     capture_log.record_duration(
         "debug_capture_verdict",
@@ -445,6 +455,14 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
             &pico.usb_packets_text,
         );
         zip.write_all(redact_bundle_text(&control_transfers).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-hid-reports.txt"), opts)?;
+        let hid_reports = hid_reports_text_for_text(
+            &pico.manifest.uid,
+            &format!("{base}/usb-packets.txt"),
+            &pico.usb_packets_text,
+        );
+        zip.write_all(redact_bundle_text(&hid_reports).as_bytes())?;
     }
 
     zip.start_file("usb-packets.txt", opts)?;
@@ -464,6 +482,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.start_file("usb-control-transfers.txt", opts)?;
     zip.write_all(redact_bundle_text(&usb_control_transfers_text).as_bytes())?;
+
+    zip.start_file("usb-hid-reports.txt", opts)?;
+    zip.write_all(redact_bundle_text(&usb_hid_reports_text).as_bytes())?;
 
     zip.start_file("debug-capture-verdict.txt", opts)?;
     zip.write_all(redact_bundle_text(&debug_capture_verdict).as_bytes())?;
@@ -1368,6 +1389,7 @@ fn debug_capture_verdict_text(
     let endpoint_out_lines = debug_summary_direction_count(summary, "out");
     let setup_lines = debug_summary_direction_count(summary, "setup");
     let control_in_lines = debug_summary_direction_count(summary, "control-in");
+    let hid_report_lines = summary.aggregate.hid_report_lines;
     let debug_persona_captures = captures
         .iter()
         .filter(|capture| state_json_persona(&capture.state_json).as_deref() == Some("debug"))
@@ -1404,6 +1426,17 @@ fn debug_capture_verdict_text(
     let _ = writeln!(out, "endpoint_out_lines={endpoint_out_lines}");
     let _ = writeln!(out, "setup_lines={setup_lines}");
     let _ = writeln!(out, "control_in_lines={control_in_lines}");
+    let _ = writeln!(out, "hid_report_lines={hid_report_lines}");
+    let _ = writeln!(
+        out,
+        "hid_report_types={}",
+        format_count_map(&summary.aggregate.hid_report_types)
+    );
+    let _ = writeln!(
+        out,
+        "hid_report_ids={}",
+        format_count_map(&summary.aggregate.hid_report_ids)
+    );
     let _ = writeln!(out, "debug_persona_captures={debug_persona_captures}");
     let _ = writeln!(
         out,
@@ -1417,6 +1450,7 @@ fn debug_capture_verdict_text(
     out.push_str("minimum_evidence=\n");
     out.push_str("- raw_packet_lines > 0 is required before this bundle is enough for adapter reverse engineering.\n");
     out.push_str("- setup_lines or control_in_lines > 0 is preferred for enumeration/control-transfer failures.\n");
+    out.push_str("- hid_report_lines > 0 is useful for HID-class adapter report analysis.\n");
     out.push_str(
         "- endpoint_in_lines or endpoint_out_lines > 0 is preferred for runtime adapter traffic.\n",
     );
@@ -1472,7 +1506,7 @@ fn debug_capture_verdict_text(
         );
     } else {
         out.push_str(
-            "- Use usb-packets.jsonl for scripts and usb-packets-summary.json for sequence, direction, truncation, and harvest health totals.\n",
+            "- Use usb-packets.jsonl for scripts, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, and harvest health totals.\n",
         );
     }
     let _ = writeln!(out);
@@ -1511,10 +1545,11 @@ fn debug_capture_verdict_text(
             let log_summary = summarize_text(&log.text);
             let _ = writeln!(
                 out,
-                "- path=debug-packets/{} raw_packets={} stats={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_diag_bytes={}",
+                "- path=debug-packets/{} raw_packets={} stats={} hid_reports={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_diag_bytes={}",
                 log.name,
                 log_summary.packet_lines,
                 log_summary.stats_lines,
+                log_summary.hid_report_lines,
                 log_summary.harvest_lines,
                 format_count_map(&log_summary.harvest_statuses),
                 format_count_map(&log_summary.harvest_chunk_statuses),
@@ -1889,6 +1924,27 @@ mod tests {
         assert!(text.contains("setup_lines=1"));
         assert!(text.contains("endpoint_out_lines=1"));
         assert!(text.contains("- none"));
+    }
+
+    #[test]
+    fn debug_capture_verdict_includes_hid_report_metadata() {
+        let capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"debug\"}\n",
+            "usb-packet seq=1 dir=out src=hid-output report_id=0x01 report_type=2 data=050607\n",
+        );
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: &capture.usb_packets_text,
+        }];
+        let summary = summarize_sources(&per_pico, &[]);
+        let text = debug_capture_verdict_text(&[capture], &[], &summary);
+        assert!(text.contains("hid_report_lines=1"));
+        assert!(text.contains("hid_report_types=output:1"));
+        assert!(text.contains("hid_report_ids=0x01:1"));
+        assert!(text.contains("usb-hid-reports.txt"));
     }
 
     #[test]

@@ -51,6 +51,9 @@ pub(super) struct UsbPacketSummary {
     pub max_harvest_new_lines: Option<u64>,
     pub max_harvest_duplicate_lines: Option<u64>,
     pub harvest_chunk_statuses: BTreeMap<String, u64>,
+    pub hid_report_lines: u64,
+    pub hid_report_types: BTreeMap<String, u64>,
+    pub hid_report_ids: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -142,6 +145,9 @@ pub(super) struct UsbPacketRecordPacket {
     setup_descriptor_index: Option<u64>,
     setup_language_id: Option<u64>,
     setup_known_request: Option<&'static str>,
+    hid_report_id: Option<u64>,
+    hid_report_type: Option<u64>,
+    hid_report_type_name: Option<&'static str>,
     control_payload_kind: Option<&'static str>,
     control_descriptor_type: Option<&'static str>,
     control_payload_summary: Option<String>,
@@ -241,6 +247,55 @@ pub(super) fn control_transfers_text_for_sources(
     out
 }
 
+pub(super) fn hid_reports_text_for_text(label: &str, path: &str, text: &str) -> String {
+    let mut out = String::from("# USB HID report transcript\n");
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_label={label}\n"));
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_path={path}\n\n"));
+    let rows = hid_report_rows(text);
+    if rows.is_empty() {
+        out.push_str("No HID report metadata packet lines were captured.\n");
+    } else {
+        for row in rows {
+            out.push_str(&row);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+pub(super) fn hid_reports_text_for_sources(
+    per_pico: &[UsbPacketSummarySource<'_>],
+    retained_logs: &[UsbPacketSummarySource<'_>],
+) -> String {
+    let mut out = String::from(
+        "# USB HID report transcript\n\n\
+         # Includes debug input usb-packet lines with HID report id/type metadata.\n\
+         # HID GET_REPORT and SET_REPORT setup requests are decoded from wValue.\n\
+         # Use usb-packets.jsonl for machine parsing and raw packet context.\n\n",
+    );
+    let mut section_count = 0usize;
+    for source in per_pico.iter().chain(retained_logs.iter()) {
+        let rows = hid_report_rows(source.text);
+        if rows.is_empty() {
+            continue;
+        }
+        section_count += 1;
+        let _ = std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!("## {} ({})\n", source.label, source.path),
+        );
+        for row in rows {
+            out.push_str(&row);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if section_count == 0 {
+        out.push_str("No HID report metadata packet lines were captured.\n");
+    }
+    out
+}
+
 pub(super) fn summarize_sources(
     per_pico: &[UsbPacketSummarySource<'_>],
     retained_logs: &[UsbPacketSummarySource<'_>],
@@ -282,6 +337,7 @@ pub(super) fn summarize_sources(
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
             "Packet records decode USB setup direction, type, recipient, standard/class requests, descriptor types, and known CouchLink vendor requests.",
+            "Packet records expose HID report id/type metadata from HID OUT/FEATURE lines and HID GET_REPORT/SET_REPORT setup requests.",
             "Control-IN packet records identify descriptor replies, MS OS descriptor payloads, and setup-mode diag-log payloads when the captured bytes are sufficient.",
             "Harvest metadata records GET_LOG chunk completeness, missing/duplicate chunks, returned diag bytes, and duplicate packet lines.",
         ],
@@ -305,6 +361,7 @@ fn record_from_line(
         let fields = fields(line);
         let decoded_setup = decode_setup_fields(&fields);
         let decoded_control_payload = decode_control_payload_fields(&fields);
+        let hid_report = decode_hid_report_metadata(&fields);
         return Some(UsbPacketRecord::Packet(Box::new(UsbPacketRecordPacket {
             source_label: label.to_string(),
             source_path: path.to_string(),
@@ -337,6 +394,11 @@ fn record_from_line(
                 .and_then(|setup| setup.descriptor_index),
             setup_language_id: decoded_setup.as_ref().and_then(|setup| setup.language_id),
             setup_known_request: decoded_setup.as_ref().and_then(|setup| setup.known_request),
+            hid_report_id: hid_report.as_ref().and_then(|report| report.report_id),
+            hid_report_type: hid_report.as_ref().and_then(|report| report.report_type),
+            hid_report_type_name: hid_report
+                .as_ref()
+                .and_then(|report| report.report_type_name),
             control_payload_kind: decoded_control_payload.as_ref().map(|payload| payload.kind),
             control_descriptor_type: decoded_control_payload
                 .as_ref()
@@ -429,6 +491,43 @@ fn record_from_line(
         });
     }
     None
+}
+
+fn hid_report_rows(text: &str) -> Vec<String> {
+    text.lines()
+        .enumerate()
+        .filter_map(|(index, line)| hid_report_row((index + 1) as u64, line))
+        .collect()
+}
+
+fn hid_report_row(line_number: u64, line: &str) -> Option<String> {
+    if !line.starts_with("usb-packet ") {
+        return None;
+    }
+    let fields = fields(line);
+    let report = decode_hid_report_metadata(&fields)?;
+    Some(format!(
+        "hid-report line={} seq={} t={} dir={} src={} request={} report_id={} report_type={} report_type_name={} len={} captured={} wlen={} data={}",
+        line_number,
+        display_field(fields.get("seq")),
+        display_field(fields.get("t")),
+        display_field(fields.get("dir")),
+        display_field(fields.get("src")),
+        report.request_name.unwrap_or("-"),
+        report
+            .report_id
+            .map(hex_u8)
+            .unwrap_or_else(|| "-".to_string()),
+        report
+            .report_type
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string()),
+        report.report_type_name.unwrap_or("-"),
+        display_field(fields.get("len")),
+        display_field(fields.get("captured")),
+        display_field(fields.get("wlen")),
+        display_field(fields.get("data")),
+    ))
 }
 
 fn control_transfer_rows(text: &str) -> Vec<String> {
@@ -541,6 +640,56 @@ fn setup_decode_text(fields: &BTreeMap<&str, &str>) -> String {
     )
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HidReportMetadata {
+    report_id: Option<u64>,
+    report_type: Option<u64>,
+    report_type_name: Option<&'static str>,
+    request_name: Option<&'static str>,
+}
+
+fn decode_hid_report_metadata(fields: &BTreeMap<&str, &str>) -> Option<HidReportMetadata> {
+    let explicit_report_id = parsed_u64(fields.get("report_id"));
+    let explicit_report_type = parsed_u64(fields.get("report_type"));
+    if explicit_report_id.is_some() || explicit_report_type.is_some() {
+        return Some(HidReportMetadata {
+            report_id: explicit_report_id,
+            report_type: explicit_report_type,
+            report_type_name: explicit_report_type.and_then(hid_report_type_name),
+            request_name: None,
+        });
+    }
+
+    let bm = u8::try_from(parsed_u64(fields.get("bm"))? & 0xFF).ok()?;
+    let request = u8::try_from(parsed_u64(fields.get("req"))? & 0xFF).ok()?;
+    let value = parsed_u64(fields.get("value")).unwrap_or(0) & 0xFFFF;
+    if setup_request_type(bm) != "class" || !matches!(request, 0x01 | 0x09) {
+        return None;
+    }
+
+    let report_id = value & 0xFF;
+    let report_type = (value >> 8) & 0xFF;
+    Some(HidReportMetadata {
+        report_id: Some(report_id),
+        report_type: Some(report_type),
+        report_type_name: hid_report_type_name(report_type),
+        request_name: Some(match request {
+            0x01 => "hid_get_report",
+            0x09 => "hid_set_report",
+            _ => unreachable!(),
+        }),
+    })
+}
+
+fn hid_report_type_name(report_type: u64) -> Option<&'static str> {
+    match report_type {
+        1 => Some("input"),
+        2 => Some("output"),
+        3 => Some("feature"),
+        _ => None,
+    }
+}
+
 fn setup_direction(bm_request_type: u8) -> &'static str {
     if (bm_request_type & 0x80) != 0 {
         "device_to_host"
@@ -639,6 +788,10 @@ fn known_vendor_setup_request(
 
 fn hex_u16(value: u64) -> String {
     format!("0x{:04X}", value & 0xFFFF)
+}
+
+fn hex_u8(value: u64) -> String {
+    format!("0x{:02X}", value & 0xFF)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -801,6 +954,20 @@ impl UsbPacketSummary {
         if let Some(value) = fields.get("reason") {
             bump(&mut self.reasons, value);
         }
+        if let Some(report) = decode_hid_report_metadata(&fields) {
+            self.hid_report_lines += 1;
+            if let Some(report_type_name) = report.report_type_name {
+                bump(&mut self.hid_report_types, report_type_name);
+            } else if let Some(report_type) = report.report_type {
+                bump(
+                    &mut self.hid_report_types,
+                    &format!("unknown_{report_type}"),
+                );
+            }
+            if let Some(report_id) = report.report_id {
+                bump(&mut self.hid_report_ids, &hex_u8(report_id));
+            }
+        }
         max_assign(
             &mut self.max_reported_packet_len,
             parsed_u64(fields.get("len")),
@@ -945,6 +1112,9 @@ impl UsbPacketSummary {
         merge_counts(&mut self.sources, &other.sources);
         merge_counts(&mut self.reasons, &other.reasons);
         merge_counts(&mut self.harvest_statuses, &other.harvest_statuses);
+        self.hid_report_lines += other.hid_report_lines;
+        merge_counts(&mut self.hid_report_types, &other.hid_report_types);
+        merge_counts(&mut self.hid_report_ids, &other.hid_report_ids);
         if self.first_seq.is_none() {
             self.first_seq = other.first_seq;
         }
@@ -1248,6 +1418,54 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
     }
 
     #[test]
+    fn hid_report_summary_and_transcript_extract_report_metadata() {
+        let text = "\
+usb-packet seq=1 t=10 dir=setup src=hid-get-report len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xA1 req=0x01 value=0x03EF index=0x0002 wlen=64 data=A101EF0302004000
+usb-packet seq=2 t=11 dir=setup src=hid-set-report len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0x21 req=0x09 value=0x0201 index=0x0002 wlen=4 data=2109010202000400
+usb-packet seq=3 t=12 dir=out src=hid-output len=3 captured=3 dropped=0 suppressed=0 reason=host-out report_id=0x01 report_type=2 data=050607
+usb-packet seq=4 t=13 dir=out src=hid-feature len=2 captured=2 dropped=0 suppressed=0 reason=host-out report_id=0xEF report_type=3 data=AABB
+";
+        let summary = summarize_text(text);
+        assert_eq!(summary.hid_report_lines, 4);
+        assert_eq!(summary.hid_report_types["feature"], 2);
+        assert_eq!(summary.hid_report_types["output"], 2);
+        assert_eq!(summary.hid_report_ids["0xEF"], 2);
+        assert_eq!(summary.hid_report_ids["0x01"], 2);
+
+        let out = hid_reports_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("# USB HID report transcript"));
+        assert!(out.contains(
+            "request=hid_get_report report_id=0xEF report_type=3 report_type_name=feature"
+        ));
+        assert!(out.contains(
+            "request=hid_set_report report_id=0x01 report_type=2 report_type_name=output"
+        ));
+        assert!(out.contains(
+            "dir=out src=hid-output request=- report_id=0x01 report_type=2 report_type_name=output"
+        ));
+        assert!(out.contains("dir=out src=hid-feature request=- report_id=0xEF report_type=3 report_type_name=feature"));
+    }
+
+    #[test]
+    fn hid_report_sources_omit_empty_sources() {
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: "usb-packet seq=1 dir=out src=vendor reason=host-out\n",
+        }];
+        let retained = [UsbPacketSummarySource {
+            label: "usb-packets.log".to_string(),
+            path: "debug-packets/usb-packets.log".to_string(),
+            text:
+                "usb-packet seq=2 dir=out src=hid-output report_id=0x01 report_type=2 data=050607\n",
+        }];
+        let out = hid_reports_text_for_sources(&per_pico, &retained);
+        assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
+        assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
+        assert!(out.contains("hid-report line=1 seq=2"));
+    }
+
+    #[test]
     fn setup_decode_names_known_vendor_requests() {
         let text = "\
 usb-packet seq=1 t=10 dir=setup src=vendor-control bm=0xC0 req=0x20 value=0x0000 index=0x0007 wlen=38 len=8 captured=8 data=C020000007002600
@@ -1268,6 +1486,7 @@ usb-packet seq=3 t=12 dir=control-in src=ms-os-20 len=38 captured=38 dropped=0 r
         let text = "\
 usb-packet seq=7 t=10 dir=control-in src=desc-device len=18 captured=18 dropped=0 suppressed=0 reason=control-reply data=12010002
 usb-packet seq=8 t=11 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 data=C020020104030040
+usb-packet seq=9 t=12 dir=out src=hid-output len=3 captured=3 dropped=0 suppressed=0 reason=host-out report_id=0x01 report_type=2 data=050607
 usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
 # harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_count\":3,\"expected_chunks\":3,\"missing_chunk_count\":0,\"duplicate_chunk_count\":1,\"got_last\":true,\"chunk_complete\":true,\"lost_bytes\":4,\"diag_bytes\":512,\"diag_lines\":20,\"packet_lines\":8,\"raw_packet_lines\":6,\"stats_lines\":2,\"new_lines\":2,\"duplicate_lines\":6,\"total_packet_lines\":12}
 ";
@@ -1277,7 +1496,7 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(records.len(), 4);
+        assert_eq!(records.len(), 5);
         assert_eq!(records[0]["kind"], "packet");
         assert_eq!(records[0]["source_label"], "02E22DA9");
         assert_eq!(records[0]["line_number"], 1);
@@ -1306,27 +1525,32 @@ usb-packet-stats t=20 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8
         assert!(records[1]["setup_language_id"].is_null());
         assert!(records[1]["setup_known_request"].is_null());
         assert_eq!(records[1]["data_hex"], "C020020104030040");
-        assert_eq!(records[2]["kind"], "stats");
-        assert_eq!(records[2]["total"], 64);
-        assert_eq!(records[2]["in"], 4);
-        assert_eq!(records[2]["idle_in_suppressed"], 9);
-        assert_eq!(records[3]["kind"], "harvest");
-        assert_eq!(records[3]["status"], "ok");
-        assert_eq!(records[3]["duration_ms"], 14);
-        assert_eq!(records[3]["chunk_count"], 3);
-        assert_eq!(records[3]["expected_chunks"], 3);
-        assert_eq!(records[3]["missing_chunk_count"], 0);
-        assert_eq!(records[3]["duplicate_chunk_count"], 1);
-        assert_eq!(records[3]["got_last"], true);
-        assert_eq!(records[3]["chunk_complete"], true);
-        assert_eq!(records[3]["lost_bytes"], 4);
-        assert_eq!(records[3]["diag_bytes"], 512);
-        assert_eq!(records[3]["diag_lines"], 20);
-        assert_eq!(records[3]["packet_lines"], 8);
-        assert_eq!(records[3]["raw_packet_lines"], 6);
-        assert_eq!(records[3]["stats_lines"], 2);
-        assert_eq!(records[3]["new_lines"], 2);
-        assert_eq!(records[3]["duplicate_lines"], 6);
-        assert_eq!(records[3]["total_packet_lines"], 12);
+        assert_eq!(records[2]["kind"], "packet");
+        assert_eq!(records[2]["direction"], "out");
+        assert_eq!(records[2]["hid_report_id"], 1);
+        assert_eq!(records[2]["hid_report_type"], 2);
+        assert_eq!(records[2]["hid_report_type_name"], "output");
+        assert_eq!(records[3]["kind"], "stats");
+        assert_eq!(records[3]["total"], 64);
+        assert_eq!(records[3]["in"], 4);
+        assert_eq!(records[3]["idle_in_suppressed"], 9);
+        assert_eq!(records[4]["kind"], "harvest");
+        assert_eq!(records[4]["status"], "ok");
+        assert_eq!(records[4]["duration_ms"], 14);
+        assert_eq!(records[4]["chunk_count"], 3);
+        assert_eq!(records[4]["expected_chunks"], 3);
+        assert_eq!(records[4]["missing_chunk_count"], 0);
+        assert_eq!(records[4]["duplicate_chunk_count"], 1);
+        assert_eq!(records[4]["got_last"], true);
+        assert_eq!(records[4]["chunk_complete"], true);
+        assert_eq!(records[4]["lost_bytes"], 4);
+        assert_eq!(records[4]["diag_bytes"], 512);
+        assert_eq!(records[4]["diag_lines"], 20);
+        assert_eq!(records[4]["packet_lines"], 8);
+        assert_eq!(records[4]["raw_packet_lines"], 6);
+        assert_eq!(records[4]["stats_lines"], 2);
+        assert_eq!(records[4]["new_lines"], 2);
+        assert_eq!(records[4]["duplicate_lines"], 6);
+        assert_eq!(records[4]["total_packet_lines"], 12);
     }
 }
