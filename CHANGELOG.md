@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.16.2-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.16.2-beta) -- 2026-06-16
+
 ### Fixed
 - **firmware:** Match PS3 HID control reports (6d25fb8)
 - **diag:** Report fallback and USB mount states (88ca895)
