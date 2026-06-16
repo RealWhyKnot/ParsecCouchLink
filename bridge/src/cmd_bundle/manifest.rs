@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 3;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 4;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -67,6 +67,8 @@ pub(super) struct Manifest {
     bundled_log_files_per_prefix: usize,
     debug_packet_log_retention_count: usize,
     retained_debug_packet_count: usize,
+    usb_packet_summary_included: bool,
+    usb_packet_summary_path: &'static str,
     diagnostic_cache_included: bool,
     retained_debug_packet_logs: Vec<String>,
     per_pico_capture_outcomes: Vec<ManifestPicoCapture>,
@@ -132,6 +134,8 @@ pub(super) async fn build_manifest(
         bundled_log_files_per_prefix: BUNDLE_LOG_FILES_PER_PREFIX,
         debug_packet_log_retention_count: crate::debug_packets::DEBUG_PACKET_FILE_RETENTION,
         retained_debug_packet_count,
+        usb_packet_summary_included: true,
+        usb_packet_summary_path: "usb-packets-summary.json",
         diagnostic_cache_included,
         retained_debug_packet_logs: retained_debug_packet_logs.to_vec(),
         per_pico_capture_outcomes: per_pico_capture_outcomes.to_vec(),
@@ -144,6 +148,7 @@ pub(super) async fn build_manifest(
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
             "Debug input mode uses the XInput USB shape and logs raw USB IN/OUT packet samples for adapter reverse engineering.",
             "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
+            "usb-packets-summary.json summarizes packet directions, sources, reasons, sequence gaps, truncation, and firmware packet-stat checkpoints.",
         ],
         redaction_policy: vec![
             "Wi-Fi passwords are not included.",
@@ -247,6 +252,8 @@ mod tests {
             "usb-packets-20260615-214000-02E22DA9.log"
         );
         assert_eq!(json["retained_debug_packet_count"], 7);
+        assert_eq!(json["usb_packet_summary_included"], true);
+        assert_eq!(json["usb_packet_summary_path"], "usb-packets-summary.json");
         assert_eq!(json["per_pico_capture_outcomes"][0]["uid"], "02E22DA9");
         assert_eq!(
             json["per_pico_capture_outcomes"][0]["usb_packet_dump_count"],

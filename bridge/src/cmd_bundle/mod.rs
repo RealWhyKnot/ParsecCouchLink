@@ -12,6 +12,7 @@ mod pico_diag;
 mod redact;
 mod sysinfo;
 mod usb_enum;
+mod usb_packet_summary;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -36,6 +37,7 @@ use usb_enum::{
     capture_usb_devices, capture_windows_usb_events, classify_pico_enum, parent_only_stub_text,
     vendor_not_found_stub_text, PicoEnumState,
 };
+use usb_packet_summary::{summarize_sources, summarize_text, UsbPacketSummarySource};
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
 /// callers get a typed answer without
@@ -221,6 +223,34 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         .collect();
     let retained_debug_packet_count =
         count_retained_debug_packet_lines(&retained_debug_packet_logs);
+    let per_pico_packet_sources: Vec<_> = per_pico_captures
+        .iter()
+        .map(|capture| UsbPacketSummarySource {
+            label: capture.manifest.uid.clone(),
+            path: format!("{}/usb-packets.txt", capture.manifest.path),
+            text: &capture.usb_packets_text,
+        })
+        .collect();
+    let retained_packet_sources: Vec<_> = retained_debug_packet_logs
+        .iter()
+        .map(|log| UsbPacketSummarySource {
+            label: log.name.clone(),
+            path: format!("debug-packets/{}", log.name),
+            text: &log.text,
+        })
+        .collect();
+    let usb_packet_summary = summarize_sources(&per_pico_packet_sources, &retained_packet_sources);
+    let usb_packet_summary_json = serde_json::to_string_pretty(&usb_packet_summary)?;
+    capture_log.record_duration(
+        "usb_packet_summary",
+        0,
+        "included",
+        usb_packet_summary_json.len(),
+        format!(
+            "raw_packets={}; stats={}",
+            usb_packet_summary.aggregate.packet_lines, usb_packet_summary.aggregate.stats_lines
+        ),
+    );
 
     let host_snapshots = capture_host_snapshots().await;
     for snapshot in &host_snapshots {
@@ -351,6 +381,10 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
         zip.start_file(format!("{base}/usb-packets.txt"), opts)?;
         zip.write_all(redact_bundle_text(&pico.usb_packets_text).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-packets-summary.json"), opts)?;
+        let summary_json = serde_json::to_string_pretty(&summarize_text(&pico.usb_packets_text))?;
+        zip.write_all(redact_bundle_text(&summary_json).as_bytes())?;
     }
 
     zip.start_file("usb-packets.txt", opts)?;
@@ -361,6 +395,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         ))
         .as_bytes(),
     )?;
+
+    zip.start_file("usb-packets-summary.json", opts)?;
+    zip.write_all(redact_bundle_text(&usb_packet_summary_json).as_bytes())?;
 
     for log in &retained_debug_packet_logs {
         zip.start_file(format!("debug-packets/{}", log.name), opts)?;
