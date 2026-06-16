@@ -10,46 +10,6 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ---
 
-## [v2026.6.16.1-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.16.1-beta) -- 2026-06-16
-
-### Added
-- **bundle:** Fold debug capture into support bundle (2bcdcd9)
-- **diagnostics:** Capture first usb traffic events (fd8c04f)
-- **diagnostics:** Capture usb lifecycle events (2060511)
-- **bundle:** Classify usb descriptor identity (4016ad1)
-- **bundle:** Add usb enumeration analysis (6acaf9c)
-- **bundle:** Summarize usb setup behavior (18b25d4)
-- **diagnostics:** Report debug packet capture loss (f239031)
-- **diagnostics:** Record usb input block reasons (c08ed35)
-- **diagnostics:** Add debug capture evidence report (4c20885)
-- **diagnostics:** Add usb packet timeline (e987395)
-- **diagnostics:** Summarize hid report packets (b8cc004)
-- **diagnostics:** Log hid control debug packets (7dca6cb)
-- **diagnostics:** Harvest debug packets during bundle (da9e0a4)
-- **diagnostics:** Record debug harvest health (4cb55db)
-- **diagnostics:** Gate debug packet evidence (ce7f025)
-- **diagnostics:** Decode bundled usb control traffic (ae9833d)
-- **diagnostics:** Add usb control transfer transcript (9ea06e8)
-- **diagnostics:** Include harvest evidence in packet dump (75c1cb6)
-- **diagnostics:** Decode debug usb setup packets (f526282)
-- **diagnostics:** Explain debug packet capture verdict (83f7eab)
-- **diagnostics:** Record debug packet harvest health (eab01a6)
-- **diagnostics:** Emit structured usb packet records (87d075a)
-- **diagnostics:** Summarize bundled usb packets (f9abf0e)
-- **diagnostics:** Summarize debug usb packet capture (6065d90)
-- **diagnostics:** Capture debug usb control traffic (7a08b39)
-- **diagnostics:** Harvest debug packets without blocking stream (7f41d83)
-- **diagnostics:** Capture debug input reports (ac2f141)
-- **diagnostics:** Retain debug packet captures (1571e00)
-- **diagnostics:** Add debug input packet capture (02e6d33)
-- **diagnostics:** Expand bundle capture (122ce6c)
-
-### Fixed
-- **bundle:** Redact private support bundle details (8040fc1)
-- **doctor:** Use multi-interface pico discovery (09fd3cc)
-
----
-
 ## [v2026.6.15.2-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.15.2-beta) -- 2026-06-15
 
 ### Added
