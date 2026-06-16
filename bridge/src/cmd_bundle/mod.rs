@@ -41,9 +41,9 @@ use usb_enum::{
 };
 use usb_packet_summary::{
     control_transfers_text_for_sources, control_transfers_text_for_text,
-    hid_reports_text_for_sources, hid_reports_text_for_text, records_jsonl_for_sources,
-    records_jsonl_for_text, summarize_sources, summarize_text, UsbPacketBundleSummary,
-    UsbPacketSummarySource,
+    hid_reports_text_for_sources, hid_reports_text_for_text, packet_timeline_text_for_sources,
+    packet_timeline_text_for_text, records_jsonl_for_sources, records_jsonl_for_text,
+    summarize_sources, summarize_text, UsbPacketBundleSummary, UsbPacketSummarySource,
 };
 
 const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -257,6 +257,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         control_transfers_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
     let usb_hid_reports_text =
         hid_reports_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
+    let usb_packet_timeline_text =
+        packet_timeline_text_for_sources(&per_pico_packet_sources, &retained_packet_sources);
     let debug_capture_status = debug_capture_overall_status(
         &usb_packet_summary,
         &per_pico_captures,
@@ -297,6 +299,13 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         "included",
         usb_hid_reports_text.len(),
         "hid_report_metadata",
+    );
+    capture_log.record_duration(
+        "usb_packet_timeline",
+        0,
+        "included",
+        usb_packet_timeline_text.len(),
+        "packet_timing",
     );
     capture_log.record_duration(
         "debug_capture_verdict",
@@ -463,6 +472,14 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
             &pico.usb_packets_text,
         );
         zip.write_all(redact_bundle_text(&hid_reports).as_bytes())?;
+
+        zip.start_file(format!("{base}/usb-packet-timeline.txt"), opts)?;
+        let packet_timeline = packet_timeline_text_for_text(
+            &pico.manifest.uid,
+            &format!("{base}/usb-packets.txt"),
+            &pico.usb_packets_text,
+        );
+        zip.write_all(redact_bundle_text(&packet_timeline).as_bytes())?;
     }
 
     zip.start_file("usb-packets.txt", opts)?;
@@ -485,6 +502,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     zip.start_file("usb-hid-reports.txt", opts)?;
     zip.write_all(redact_bundle_text(&usb_hid_reports_text).as_bytes())?;
+
+    zip.start_file("usb-packet-timeline.txt", opts)?;
+    zip.write_all(redact_bundle_text(&usb_packet_timeline_text).as_bytes())?;
 
     zip.start_file("debug-capture-verdict.txt", opts)?;
     zip.write_all(redact_bundle_text(&debug_capture_verdict).as_bytes())?;
@@ -1404,6 +1424,21 @@ fn debug_capture_verdict_text(
     let _ = writeln!(out, "harvest_lines={}", summary.aggregate.harvest_lines);
     let _ = writeln!(
         out,
+        "packet_time_span_ms={}",
+        summary.aggregate.packet_time_span_ms.unwrap_or(0)
+    );
+    let _ = writeln!(
+        out,
+        "max_inter_packet_gap_ms={}",
+        summary.aggregate.max_inter_packet_gap_ms.unwrap_or(0)
+    );
+    let _ = writeln!(
+        out,
+        "packet_time_regressions={}",
+        summary.aggregate.packet_time_regressions
+    );
+    let _ = writeln!(
+        out,
         "harvest_chunk_statuses={}",
         format_count_map(&summary.aggregate.harvest_chunk_statuses)
     );
@@ -1506,7 +1541,7 @@ fn debug_capture_verdict_text(
         );
     } else {
         out.push_str(
-            "- Use usb-packets.jsonl for scripts, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, and harvest health totals.\n",
+            "- Use usb-packets.jsonl for scripts, usb-packet-timeline.txt for timing, usb-hid-reports.txt for HID report traffic, and usb-packets-summary.json for sequence, direction, truncation, and harvest health totals.\n",
         );
     }
     let _ = writeln!(out);
@@ -1545,11 +1580,12 @@ fn debug_capture_verdict_text(
             let log_summary = summarize_text(&log.text);
             let _ = writeln!(
                 out,
-                "- path=debug-packets/{} raw_packets={} stats={} hid_reports={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_diag_bytes={}",
+                "- path=debug-packets/{} raw_packets={} stats={} hid_reports={} max_gap_ms={} harvest_lines={} harvest_statuses={} chunk_statuses={} max_missing_chunks={} max_diag_bytes={}",
                 log.name,
                 log_summary.packet_lines,
                 log_summary.stats_lines,
                 log_summary.hid_report_lines,
+                log_summary.max_inter_packet_gap_ms.unwrap_or(0),
                 log_summary.harvest_lines,
                 format_count_map(&log_summary.harvest_statuses),
                 format_count_map(&log_summary.harvest_chunk_statuses),
@@ -1945,6 +1981,27 @@ mod tests {
         assert!(text.contains("hid_report_types=output:1"));
         assert!(text.contains("hid_report_ids=0x01:1"));
         assert!(text.contains("usb-hid-reports.txt"));
+    }
+
+    #[test]
+    fn debug_capture_verdict_includes_packet_timing() {
+        let capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"debug\"}\n",
+            "usb-packet seq=1 t=10 dir=out src=hid-output data=050607\nusb-packet seq=2 t=35 dir=in src=xinput data=00\n",
+        );
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: &capture.usb_packets_text,
+        }];
+        let summary = summarize_sources(&per_pico, &[]);
+        let text = debug_capture_verdict_text(&[capture], &[], &summary);
+        assert!(text.contains("packet_time_span_ms=25"));
+        assert!(text.contains("max_inter_packet_gap_ms=25"));
+        assert!(text.contains("packet_time_regressions=0"));
+        assert!(text.contains("usb-packet-timeline.txt"));
     }
 
     #[test]

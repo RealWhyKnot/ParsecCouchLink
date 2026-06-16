@@ -35,6 +35,13 @@ pub(super) struct UsbPacketSummary {
     pub max_stats_truncated_bytes: Option<u64>,
     pub max_stats_idle_in_suppressed: Option<u64>,
     pub stats_direction_max: BTreeMap<String, u64>,
+    pub first_packet_t_ms: Option<u64>,
+    pub last_packet_t_ms: Option<u64>,
+    pub min_packet_t_ms: Option<u64>,
+    pub max_packet_t_ms: Option<u64>,
+    pub packet_time_span_ms: Option<u64>,
+    pub max_inter_packet_gap_ms: Option<u64>,
+    pub packet_time_regressions: u64,
     pub harvest_lines: u64,
     pub harvest_statuses: BTreeMap<String, u64>,
     pub max_harvest_duration_ms: Option<u64>,
@@ -159,9 +166,15 @@ pub(super) fn summarize_text(text: &str) -> UsbPacketSummary {
     let mut summary = UsbPacketSummary::default();
     let mut seen_sequences = BTreeSet::new();
     let mut previous_seq = None;
+    let mut previous_t_ms = None;
     for line in text.lines() {
         if line.starts_with("usb-packet ") {
-            summary.add_packet_line(line, &mut seen_sequences, &mut previous_seq);
+            summary.add_packet_line(
+                line,
+                &mut seen_sequences,
+                &mut previous_seq,
+                &mut previous_t_ms,
+            );
         } else if line.starts_with("usb-packet-stats ") {
             summary.add_stats_line(line);
         } else if line.starts_with(HARVEST_PREFIX) {
@@ -296,6 +309,55 @@ pub(super) fn hid_reports_text_for_sources(
     out
 }
 
+pub(super) fn packet_timeline_text_for_text(label: &str, path: &str, text: &str) -> String {
+    let mut out = String::from("# USB packet timeline\n");
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_label={label}\n"));
+    let _ = std::fmt::Write::write_fmt(&mut out, format_args!("# source_path={path}\n\n"));
+    let rows = packet_timeline_rows(text);
+    if rows.is_empty() {
+        out.push_str("No USB packet, packet-stat, or harvest timeline rows were captured.\n");
+    } else {
+        for row in rows {
+            out.push_str(&row);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+pub(super) fn packet_timeline_text_for_sources(
+    per_pico: &[UsbPacketSummarySource<'_>],
+    retained_logs: &[UsbPacketSummarySource<'_>],
+) -> String {
+    let mut out = String::from(
+        "# USB packet timeline\n\n\
+         # Includes debug input usb-packet, usb-packet-stats, and harvest records.\n\
+         # dt_ms is measured from the previous timestamped packet/stat row in the same source.\n\
+         # Use usb-packets.jsonl for machine parsing and raw packet context.\n\n",
+    );
+    let mut section_count = 0usize;
+    for source in per_pico.iter().chain(retained_logs.iter()) {
+        let rows = packet_timeline_rows(source.text);
+        if rows.is_empty() {
+            continue;
+        }
+        section_count += 1;
+        let _ = std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!("## {} ({})\n", source.label, source.path),
+        );
+        for row in rows {
+            out.push_str(&row);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if section_count == 0 {
+        out.push_str("No USB packet, packet-stat, or harvest timeline rows were captured.\n");
+    }
+    out
+}
+
 pub(super) fn summarize_sources(
     per_pico: &[UsbPacketSummarySource<'_>],
     retained_logs: &[UsbPacketSummarySource<'_>],
@@ -334,6 +396,7 @@ pub(super) fn summarize_sources(
         notes: vec![
             "Counts are derived from bundled usb-packet and usb-packet-stats lines.",
             "Aggregate sequence gaps are summed per source; sequence numbers are not compared across different Pico/log sources.",
+            "Packet timing fields are derived from firmware t= milliseconds and gap calculations are per source.",
             "Stats lines are checkpoint summaries emitted by debug input firmware and may survive even when raw packet lines have rotated out.",
             "Harvest lines describe each retained host GET_LOG attempt used to collect debug input packets.",
             "Packet records decode USB setup direction, type, recipient, standard/class requests, descriptor types, and known CouchLink vendor requests.",
@@ -491,6 +554,128 @@ fn record_from_line(
         });
     }
     None
+}
+
+fn packet_timeline_rows(text: &str) -> Vec<String> {
+    let mut previous_t_ms = None;
+    text.lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            packet_timeline_row((index + 1) as u64, line, &mut previous_t_ms)
+        })
+        .collect()
+}
+
+fn packet_timeline_row(
+    line_number: u64,
+    line: &str,
+    previous_t_ms: &mut Option<u64>,
+) -> Option<String> {
+    if line.starts_with("usb-packet ") {
+        let fields = fields(line);
+        let t_ms = parsed_u64(fields.get("t"));
+        let dt_ms = timeline_delta(t_ms, previous_t_ms);
+        return Some(format!(
+            "packet line={} seq={} t={} dt_ms={} dir={} src={} reason={} len={} captured={} dropped={} suppressed={} data={}",
+            line_number,
+            display_field(fields.get("seq")),
+            display_field(fields.get("t")),
+            dt_ms,
+            display_field(fields.get("dir")),
+            display_field(fields.get("src")),
+            display_field(fields.get("reason")),
+            display_field(fields.get("len")),
+            display_field(fields.get("captured")),
+            display_field(fields.get("dropped")),
+            display_field(fields.get("suppressed")),
+            display_field(fields.get("data")),
+        ));
+    }
+    if line.starts_with("usb-packet-stats ") {
+        let fields = fields(line);
+        let t_ms = parsed_u64(fields.get("t"));
+        let dt_ms = timeline_delta(t_ms, previous_t_ms);
+        return Some(format!(
+            "stats line={} t={} dt_ms={} total={} in={} out={} setup={} control_in={} truncated_bytes={} idle_in_suppressed={}",
+            line_number,
+            display_field(fields.get("t")),
+            dt_ms,
+            display_field(fields.get("total")),
+            display_field(fields.get("in")),
+            display_field(fields.get("out")),
+            display_field(fields.get("setup")),
+            display_field(fields.get("control_in")),
+            display_field(fields.get("truncated_bytes")),
+            display_field(fields.get("idle_in_suppressed")),
+        ));
+    }
+    if line.starts_with(HARVEST_PREFIX) {
+        let value = harvest_value(line);
+        return Some(format!(
+            "harvest line={} at={} status={} duration_ms={} chunk_complete={} packet_lines={} raw_packet_lines={} new_lines={} error={}",
+            line_number,
+            value
+                .as_ref()
+                .and_then(|value| json_string(value, "at"))
+                .unwrap_or_else(|| "-".to_string()),
+            value
+                .as_ref()
+                .and_then(|value| json_string(value, "status"))
+                .unwrap_or_else(|| "malformed".to_string()),
+            value
+                .as_ref()
+                .and_then(|value| json_u64(value, "duration_ms"))
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            value
+                .as_ref()
+                .and_then(|value| json_bool(value, "chunk_complete"))
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            value
+                .as_ref()
+                .and_then(|value| json_u64(value, "packet_lines"))
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            value
+                .as_ref()
+                .and_then(|value| json_u64(value, "raw_packet_lines"))
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            value
+                .as_ref()
+                .and_then(|value| json_u64(value, "new_lines"))
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            value
+                .as_ref()
+                .and_then(|value| json_string(value, "error"))
+                .map(|value| sanitize_timeline_field(&value))
+                .unwrap_or_else(|| "-".to_string()),
+        ));
+    }
+    None
+}
+
+fn timeline_delta(t_ms: Option<u64>, previous_t_ms: &mut Option<u64>) -> String {
+    let Some(t_ms) = t_ms else {
+        return "-".to_string();
+    };
+    let delta = previous_t_ms
+        .map(|previous| {
+            if t_ms >= previous {
+                (t_ms - previous).to_string()
+            } else {
+                "regression".to_string()
+            }
+        })
+        .unwrap_or_else(|| "-".to_string());
+    *previous_t_ms = Some(t_ms);
+    delta
+}
+
+fn sanitize_timeline_field(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn hid_report_rows(text: &str) -> Vec<String> {
@@ -942,6 +1127,7 @@ impl UsbPacketSummary {
         line: &str,
         seen_sequences: &mut BTreeSet<u64>,
         previous_seq: &mut Option<u64>,
+        previous_t_ms: &mut Option<u64>,
     ) {
         self.packet_lines += 1;
         let fields = fields(line);
@@ -984,6 +1170,7 @@ impl UsbPacketSummary {
             &mut self.max_suppressed_idle_reports,
             parsed_u64(fields.get("suppressed")),
         );
+        self.add_packet_time(parsed_u64(fields.get("t")), previous_t_ms);
 
         let Some(seq) = parsed_u64(fields.get("seq")) else {
             return;
@@ -1005,6 +1192,29 @@ impl UsbPacketSummary {
             }
         }
         *previous_seq = Some(seq);
+    }
+
+    fn add_packet_time(&mut self, t_ms: Option<u64>, previous_t_ms: &mut Option<u64>) {
+        let Some(t_ms) = t_ms else {
+            return;
+        };
+        if self.first_packet_t_ms.is_none() {
+            self.first_packet_t_ms = Some(t_ms);
+        }
+        self.last_packet_t_ms = Some(t_ms);
+        min_assign(&mut self.min_packet_t_ms, Some(t_ms));
+        max_assign(&mut self.max_packet_t_ms, Some(t_ms));
+        if let (Some(min), Some(max)) = (self.min_packet_t_ms, self.max_packet_t_ms) {
+            self.packet_time_span_ms = max.checked_sub(min);
+        }
+        if let Some(previous) = *previous_t_ms {
+            if t_ms >= previous {
+                max_assign(&mut self.max_inter_packet_gap_ms, Some(t_ms - previous));
+            } else {
+                self.packet_time_regressions += 1;
+            }
+        }
+        *previous_t_ms = Some(t_ms);
     }
 
     fn add_stats_line(&mut self, line: &str) {
@@ -1157,6 +1367,20 @@ impl UsbPacketSummary {
                 *entry = *value;
             }
         }
+        if self.first_packet_t_ms.is_none() {
+            self.first_packet_t_ms = other.first_packet_t_ms;
+        }
+        if other.last_packet_t_ms.is_some() {
+            self.last_packet_t_ms = other.last_packet_t_ms;
+        }
+        min_assign(&mut self.min_packet_t_ms, other.min_packet_t_ms);
+        max_assign(&mut self.max_packet_t_ms, other.max_packet_t_ms);
+        max_assign(&mut self.packet_time_span_ms, other.packet_time_span_ms);
+        max_assign(
+            &mut self.max_inter_packet_gap_ms,
+            other.max_inter_packet_gap_ms,
+        );
+        self.packet_time_regressions += other.packet_time_regressions;
         max_assign(
             &mut self.max_harvest_duration_ms,
             other.max_harvest_duration_ms,
@@ -1325,6 +1549,13 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
         assert_eq!(summary.last_stats_total_packets, Some(64));
         assert_eq!(summary.max_stats_idle_in_suppressed, Some(9));
         assert_eq!(summary.stats_direction_max["setup"], 1);
+        assert_eq!(summary.first_packet_t_ms, Some(10));
+        assert_eq!(summary.last_packet_t_ms, Some(13));
+        assert_eq!(summary.min_packet_t_ms, Some(10));
+        assert_eq!(summary.max_packet_t_ms, Some(13));
+        assert_eq!(summary.packet_time_span_ms, Some(3));
+        assert_eq!(summary.max_inter_packet_gap_ms, Some(1));
+        assert_eq!(summary.packet_time_regressions, 0);
         assert_eq!(summary.harvest_lines, 0);
     }
 
@@ -1378,6 +1609,46 @@ usb-packet-stats t=14 total=64 in=2 out=1 setup=1 control_in=0 truncated_bytes=4
             summary.retained_logs[0].summary.last_stats_total_packets,
             Some(64)
         );
+    }
+
+    #[test]
+    fn packet_timeline_keeps_packets_stats_harvest_and_deltas() {
+        let text = "\
+usb-packet seq=7 t=10 dir=out src=vendor len=3 captured=3 dropped=0 suppressed=0 reason=host-out data=010203
+usb-packet seq=8 t=15 dir=setup src=vendor-control len=8 captured=8 dropped=0 suppressed=0 reason=control-setup data=C020
+usb-packet-stats t=40 total=64 in=4 out=3 setup=2 control_in=1 truncated_bytes=8 idle_in_suppressed=9
+# harvest {\"at\":\"2026-06-15T22:30:00-05:00\",\"status\":\"ok\",\"duration_ms\":14,\"chunk_complete\":true,\"packet_lines\":8,\"raw_packet_lines\":6,\"new_lines\":2}
+usb-packet seq=9 t=12 dir=in src=xinput len=20 captured=20 dropped=0 suppressed=0 reason=changed data=00
+";
+        let out = packet_timeline_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
+        assert!(out.contains("# USB packet timeline"));
+        assert!(out.contains("packet line=1 seq=7 t=10 dt_ms=- dir=out src=vendor"));
+        assert!(out.contains("packet line=2 seq=8 t=15 dt_ms=5 dir=setup"));
+        assert!(out.contains("stats line=3 t=40 dt_ms=25 total=64"));
+        assert!(out.contains("harvest line=4 at=2026-06-15T22:30:00-05:00 status=ok duration_ms=14 chunk_complete=true packet_lines=8 raw_packet_lines=6 new_lines=2 error=-"));
+        assert!(out.contains("packet line=5 seq=9 t=12 dt_ms=regression dir=in"));
+
+        let summary = summarize_text(text);
+        assert_eq!(summary.max_inter_packet_gap_ms, Some(5));
+        assert_eq!(summary.packet_time_regressions, 1);
+    }
+
+    #[test]
+    fn packet_timeline_sources_omit_empty_sources() {
+        let per_pico = [UsbPacketSummarySource {
+            label: "02E22DA9".to_string(),
+            path: "picos/02E22DA9/usb-packets.txt".to_string(),
+            text: "not packet evidence\n",
+        }];
+        let retained = [UsbPacketSummarySource {
+            label: "usb-packets.log".to_string(),
+            path: "debug-packets/usb-packets.log".to_string(),
+            text: "usb-packet seq=2 t=22 dir=out src=hid-output data=050607\n",
+        }];
+        let out = packet_timeline_text_for_sources(&per_pico, &retained);
+        assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
+        assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
+        assert!(out.contains("packet line=1 seq=2 t=22"));
     }
 
     #[test]
