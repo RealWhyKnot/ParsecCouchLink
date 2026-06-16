@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.16.1-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.16.1-beta) -- 2026-06-16
+
 ### Fixed
 - **setup:** Recover provisioned picos at wifi provisioning (c23bf39)
 - **firmware:** Bind xbox one persona as xgip (41c3ece)
