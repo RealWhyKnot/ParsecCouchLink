@@ -5,6 +5,7 @@ param(
     [string]$Tag = "",
     [string]$ReleaseStatePath = "",
     [string]$Today = "",
+    [datetime]$NowUtc = ([datetime]::UtcNow),
     [string]$OutputJsonPath = ""
 )
 
@@ -190,10 +191,13 @@ function Get-ChangedFilesSinceTag {
 }
 
 function Get-NextBetaTag {
-    param([string]$DateStamp)
+    param(
+        [string]$DateStamp,
+        [datetime]$CurrentUtc
+    )
 
     if ([string]::IsNullOrWhiteSpace($DateStamp)) {
-        $DateStamp = (Get-Date).ToUniversalTime().ToString("yyyy.M.d", [System.Globalization.CultureInfo]::InvariantCulture)
+        $DateStamp = Get-ReleaseDateStamp -NowUtc $CurrentUtc -Format "yyyy.M.d"
     }
 
     $escapedDate = [regex]::Escape($DateStamp)
@@ -211,6 +215,33 @@ function Get-NextBetaTag {
     }
 
     return "v$DateStamp.$($highest + 1)-beta"
+}
+
+function Get-CentralTimeZone {
+    foreach ($id in @("Central Standard Time", "America/Chicago")) {
+        try {
+            return [System.TimeZoneInfo]::FindSystemTimeZoneById($id)
+        } catch {
+            continue
+        }
+    }
+
+    throw "Could not resolve the America/Chicago release time zone."
+}
+
+function Get-ReleaseDateStamp {
+    param(
+        [datetime]$NowUtc,
+        [string]$Format
+    )
+
+    $utc = $NowUtc
+    if ($utc.Kind -ne [System.DateTimeKind]::Utc) {
+        $utc = $utc.ToUniversalTime()
+    }
+
+    $central = [System.TimeZoneInfo]::ConvertTimeFromUtc($utc, (Get-CentralTimeZone))
+    return $central.ToString($Format, [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
 function ConvertTo-CompactJson {
@@ -249,7 +280,7 @@ try {
 
     $releaseState = Read-ReleaseState -Path $ReleaseStatePath
     $nextTag = if ([string]::IsNullOrWhiteSpace($Tag)) {
-        Get-NextBetaTag -DateStamp $Today
+        Get-NextBetaTag -DateStamp $Today -CurrentUtc $NowUtc
     } else {
         $Tag
     }

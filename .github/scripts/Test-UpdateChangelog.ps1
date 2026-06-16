@@ -56,12 +56,15 @@ try {
         throw "Append included a docs-only commit."
     }
 
-    & $script -Mode Promote -Version "v2026.6.4.0" -Repo "owner/repo" -RepoRoot $repo
+    & $script -Mode Promote -Version "v2026.6.4.0" -Repo "owner/repo" -RepoRoot $repo -NowUtc ([datetime]::Parse("2026-06-16T01:30:00Z"))
     if ($LASTEXITCODE -ne 0) { throw "Promote failed." }
 
     $text = Get-Content -LiteralPath "CHANGELOG.md" -Raw
     if ($text -notmatch "## \[v2026\.6\.4\.0\]") {
         throw "Promote did not create a versioned section."
+    }
+    if ($text -notmatch "-- 2026-06-15") {
+        throw "Promote should date releases by America/Chicago during UTC rollover."
     }
 
     $notes = & $script -Mode Notes -ForVersion -Version "v2026.6.4.0" -RepoRoot $repo

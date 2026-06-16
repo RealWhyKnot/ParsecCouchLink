@@ -83,7 +83,8 @@ function Invoke-Plan {
         [string]$RepoRoot,
         [string]$ReleaseStatePath,
         [string]$Tag = "",
-        [string]$Today = ""
+        [string]$Today = "",
+        [string]$NowUtc = ""
     )
 
     $outputPath = Join-Path $RepoRoot "plan.json"
@@ -97,6 +98,13 @@ function Invoke-Plan {
     }
     if (-not [string]::IsNullOrWhiteSpace($Today)) {
         $arguments["Today"] = $Today
+    }
+    if (-not [string]::IsNullOrWhiteSpace($NowUtc)) {
+        $arguments["NowUtc"] = [datetime]::Parse(
+            $NowUtc,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        )
     }
 
     & $Planner @arguments | Out-Host
@@ -175,6 +183,15 @@ try {
     Invoke-TestGit -RepoRoot $repo -Arguments @("commit", "-q", "-m", "change after same-day stable release") | Out-Null
     $plan = Invoke-Plan -RepoRoot $repo -ReleaseStatePath $state -Today "2026.6.9"
     Assert-Equal -Actual $plan.next_tag -Expected "v2026.6.9.1-beta" -Message "Next beta tag should increment after a same-day stable release"
+
+    $repo = New-TestRepo
+    $tempRoots.Add($repo) | Out-Null
+    $state = Write-ReleaseState -RepoRoot $repo -Tag "v2026.6.1.0"
+    Write-TestFile -Path (Join-Path $repo "bridge/src/main.rs") -Content "fn main() { println!(`"central date`"); }`n"
+    Invoke-TestGit -RepoRoot $repo -Arguments @("add", ".") | Out-Null
+    Invoke-TestGit -RepoRoot $repo -Arguments @("commit", "-q", "-m", "change during utc rollover") | Out-Null
+    $plan = Invoke-Plan -RepoRoot $repo -ReleaseStatePath $state -NowUtc "2026-06-16T01:30:00Z"
+    Assert-Equal -Actual $plan.next_tag -Expected "v2026.6.15.0-beta" -Message "Default prerelease date should use America/Chicago, not UTC"
 
     $repo = New-TestRepo
     $tempRoots.Add($repo) | Out-Null
