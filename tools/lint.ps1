@@ -135,6 +135,7 @@ if (-not $SkipRust) {
 if (-not $SkipFirmware) {
     $clangFormat = Get-ClangFormatCommand
     Write-Host "Using $clangFormat"
+    Invoke-Native -FilePath $clangFormat -Arguments @("--version")
 
     $FirmwareRoot = Join-Path $RepoRoot "pico-bridge"
     $firmwareRoots = @(
