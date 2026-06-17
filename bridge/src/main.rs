@@ -219,7 +219,7 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Try PlayStation-family DInput modes for USB4MAPLE-style adapters.
+    /// Try PS3, generic HID, and PS4 modes for USB4MAPLE-style adapters.
     Dinput {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
         #[arg(long = "pico")]
@@ -249,6 +249,21 @@ enum Command {
     },
     /// Switch a Pico to PS4 / DualShock 4 HID mode.
     Ps4 {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to generic HID gamepad mode.
+    #[command(name = "generic-hid", alias = "generic")]
+    GenericHid {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
         #[arg(long = "pico")]
         picos: Vec<String>,
@@ -539,6 +554,11 @@ fn main() {
                 all,
                 no_stream,
             }) => cmd_persona::run(protocol::Persona::Ps4, picos, all, !no_stream).await,
+            Some(Command::GenericHid {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::GenericHid, picos, all, !no_stream).await,
             Some(Command::Setup { uf2 }) => cmd_setup::run(uf2).await,
             Some(Command::Doctor) => cmd_doctor::run().await,
             Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,
@@ -924,7 +944,7 @@ mod tests {
 
     #[test]
     fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
-        for command in ["xbox", "xbox360", "xboxone", "ps3", "ps4"] {
+        for command in ["xbox", "xbox360", "xboxone", "ps3", "ps4", "generic-hid"] {
             let cli =
                 Cli::try_parse_from(["couchlink", command, "--pico", "07D37EB6", "--no-stream"])
                     .unwrap();
@@ -964,6 +984,14 @@ mod tests {
                 | (
                     "ps4",
                     Some(Command::Ps4 {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "generic-hid",
+                    Some(Command::GenericHid {
                         picos,
                         all,
                         no_stream,

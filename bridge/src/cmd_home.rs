@@ -856,7 +856,10 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
             "try gamepad USB modes until the adapter accepts reports",
         ),
         menu_item("Xbox", "choose Xbox 360 or Xbox One USB mode"),
-        menu_item("DInput / PlayStation", "choose PS3 or PS4 HID mode"),
+        menu_item(
+            "DInput / PlayStation",
+            "choose PS3, generic HID, or PS4 mode",
+        ),
         menu_item(
             "Maple",
             "Xbox-compatible mode labelled for Dreamcast adapters",
@@ -889,13 +892,15 @@ async fn choose_xbox_input_mode() -> Result<InputModeChoice> {
 
 async fn choose_playstation_input_mode() -> Result<InputModeChoice> {
     let choices = vec![
-        menu_item("Auto DInput", "try PS3, then PS4"),
+        menu_item("Auto DInput", "try PS3, generic HID, then PS4"),
         menu_item("PS3", "DualShock 3 / PS3 HID mode"),
+        menu_item("Generic HID", "unknown-HID gamepad mode"),
         menu_item("PS4", "DualShock 4 / PS4 HID mode"),
     ];
     match select("DInput input mode", &choices, 0).await? {
         0 => Ok(InputModeChoice::Family(cmd_auto::PLAYSTATION_FAMILY)),
         1 => Ok(InputModeChoice::Persona(protocol::Persona::Ps3)),
+        2 => Ok(InputModeChoice::Persona(protocol::Persona::GenericHid)),
         _ => Ok(InputModeChoice::Persona(protocol::Persona::Ps4)),
     }
 }
@@ -1262,8 +1267,15 @@ async fn show_direct_commands() -> Result<()> {
     print_command("couchlink xbox", "try Xbox 360 and Xbox One modes");
     print_command("couchlink xbox360", "switch to wired Xbox 360 USB mode");
     print_command("couchlink xboxone", "switch to Xbox One USB mode");
-    print_command("couchlink dinput", "try PS3 and PS4 DInput-family modes");
+    print_command(
+        "couchlink dinput",
+        "try PS3, generic HID, and PS4 DInput-family modes",
+    );
     print_command("couchlink ps3", "switch to PS3 HID mode");
+    print_command(
+        "couchlink generic-hid",
+        "switch to generic HID gamepad mode",
+    );
     print_command("couchlink ps4", "switch to PS4 HID mode");
     print_command(
         "couchlink maple",

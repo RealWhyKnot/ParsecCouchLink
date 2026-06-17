@@ -43,6 +43,7 @@ static void persona_defaults_to_xinput_without_credentials(void) {
     assert(boot_mode_persona_from_flash(false, RUN_PERSONA_PS4) == RUN_PERSONA_XINPUT);
     assert(boot_mode_persona_from_flash(false, RUN_PERSONA_XBOXONE) == RUN_PERSONA_XINPUT);
     assert(boot_mode_persona_from_flash(false, RUN_PERSONA_DEBUG) == RUN_PERSONA_XINPUT);
+    assert(boot_mode_persona_from_flash(false, RUN_PERSONA_GENERIC_HID) == RUN_PERSONA_XINPUT);
     assert(boot_mode_persona_from_flash(false, 0) == RUN_PERSONA_XINPUT);
 }
 
@@ -55,6 +56,7 @@ static void persona_reads_stored_byte_with_credentials(void) {
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_PS4) == RUN_PERSONA_PS4);
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_XBOXONE) == RUN_PERSONA_XBOXONE);
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_DEBUG) == RUN_PERSONA_DEBUG);
+    assert(boot_mode_persona_from_flash(true, RUN_PERSONA_GENERIC_HID) == RUN_PERSONA_GENERIC_HID);
 }
 
 static void persona_unknown_byte_falls_back_to_xinput(void) {
@@ -71,6 +73,7 @@ static void maple_persona_uses_xinput_usb_shape(void) {
     assert(!boot_mode_persona_uses_xinput_usb(RUN_PERSONA_PS3));
     assert(!boot_mode_persona_uses_xinput_usb(RUN_PERSONA_PS4));
     assert(!boot_mode_persona_uses_xinput_usb(RUN_PERSONA_XBOXONE));
+    assert(!boot_mode_persona_uses_xinput_usb(RUN_PERSONA_GENERIC_HID));
 }
 
 static void playstation_personas_use_hid_gamepad_shape(void) {
@@ -79,6 +82,7 @@ static void playstation_personas_use_hid_gamepad_shape(void) {
     assert(!boot_mode_persona_uses_gamepad_hid(RUN_PERSONA_MAPLE));
     assert(boot_mode_persona_uses_gamepad_hid(RUN_PERSONA_PS3));
     assert(boot_mode_persona_uses_gamepad_hid(RUN_PERSONA_PS4));
+    assert(boot_mode_persona_uses_gamepad_hid(RUN_PERSONA_GENERIC_HID));
     assert(!boot_mode_persona_uses_gamepad_hid(RUN_PERSONA_XBOXONE));
 }
 

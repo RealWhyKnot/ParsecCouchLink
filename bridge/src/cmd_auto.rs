@@ -10,7 +10,8 @@ use crate::{cmd_persona, cmd_run, cmd_usb_diag, pico_mode, support};
 pub(crate) const USB_SETTLE: Duration = Duration::from_secs(5);
 pub(crate) const USB_PROBE: Duration = Duration::from_secs(5);
 pub(crate) const XBOX_FAMILY: &[Persona] = &[Persona::Xinput, Persona::XboxOne];
-pub(crate) const PLAYSTATION_FAMILY: &[Persona] = &[Persona::Ps4, Persona::Ps3];
+pub(crate) const PLAYSTATION_FAMILY: &[Persona] =
+    &[Persona::Ps3, Persona::GenericHid, Persona::Ps4];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AutoScore {
@@ -262,9 +263,10 @@ pub(crate) fn auto_candidates(current: Persona) -> Vec<Persona> {
         out.push(current);
     }
     for candidate in [
+        Persona::Ps3,
+        Persona::GenericHid,
         Persona::Ps4,
         Persona::Xinput,
-        Persona::Ps3,
         Persona::XboxOne,
         Persona::Maple,
     ] {
@@ -278,7 +280,12 @@ pub(crate) fn auto_candidates(current: Persona) -> Vec<Persona> {
 fn is_gamepad_persona(persona: Persona) -> bool {
     matches!(
         persona,
-        Persona::Xinput | Persona::XboxOne | Persona::Ps3 | Persona::Ps4 | Persona::Maple
+        Persona::Xinput
+            | Persona::XboxOne
+            | Persona::Ps3
+            | Persona::Ps4
+            | Persona::Maple
+            | Persona::GenericHid
     )
 }
 
@@ -402,6 +409,7 @@ mod tests {
             auto_candidates(Persona::Ps3),
             vec![
                 Persona::Ps3,
+                Persona::GenericHid,
                 Persona::Ps4,
                 Persona::Xinput,
                 Persona::XboxOne,
@@ -411,9 +419,10 @@ mod tests {
         assert_eq!(
             auto_candidates(Persona::Keyboard),
             vec![
+                Persona::Ps3,
+                Persona::GenericHid,
                 Persona::Ps4,
                 Persona::Xinput,
-                Persona::Ps3,
                 Persona::XboxOne,
                 Persona::Maple
             ]
@@ -421,9 +430,10 @@ mod tests {
         assert_eq!(
             auto_candidates(Persona::Debug),
             vec![
+                Persona::Ps3,
+                Persona::GenericHid,
                 Persona::Ps4,
                 Persona::Xinput,
-                Persona::Ps3,
                 Persona::XboxOne,
                 Persona::Maple
             ]
@@ -437,8 +447,11 @@ mod tests {
             vec![Persona::XboxOne, Persona::Xinput]
         );
         assert_eq!(
-            family_candidates(Persona::Maple, &[Persona::Ps4, Persona::Ps3]),
-            vec![Persona::Ps4, Persona::Ps3]
+            family_candidates(
+                Persona::Maple,
+                &[Persona::Ps3, Persona::GenericHid, Persona::Ps4]
+            ),
+            vec![Persona::Ps3, Persona::GenericHid, Persona::Ps4]
         );
     }
 

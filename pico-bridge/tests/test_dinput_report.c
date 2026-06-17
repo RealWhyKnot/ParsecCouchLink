@@ -57,10 +57,10 @@ static void test_ps3_neutral_report(void) {
     CHECK(report.bytes[0] == 0x01);
     CHECK(report.bytes[2] == 0x00);
     CHECK(report.bytes[3] == 0x00);
-    CHECK(report.bytes[6] == 0x7F);
-    CHECK(report.bytes[7] == 0x7F);
-    CHECK(report.bytes[8] == 0x7F);
-    CHECK(report.bytes[9] == 0x7F);
+    CHECK(report.bytes[6] == 0x80);
+    CHECK(report.bytes[7] == 0x80);
+    CHECK(report.bytes[8] == 0x80);
+    CHECK(report.bytes[9] == 0x80);
     CHECK(report.bytes[18] == 0x00);
     CHECK(report.bytes[19] == 0x00);
     CHECK(report.bytes[29] == 0x02);
@@ -146,6 +146,49 @@ static void test_ps4_buttons_and_counter(void) {
     CHECK(report.bytes[9] == DINPUT_TRIGGER_BUTTON_THRESHOLD - 1);
 }
 
+static void test_generic_hid_neutral_report(void) {
+    gamepad_state_t state = neutral_state();
+    dinput_report_t report;
+    dinput_build_generic_hid_report(&state, &report);
+
+    CHECK(report.len == DINPUT_GENERIC_HID_WIRE_REPORT_LEN);
+    CHECK(report.report_id == DINPUT_GENERIC_HID_REPORT_ID);
+    CHECK(report.bytes[0] == 0x00);
+    CHECK(report.bytes[1] == 0x00);
+    CHECK(report.bytes[2] == 0x80);
+    CHECK(report.bytes[3] == 0x80);
+    CHECK(report.bytes[4] == 0x80);
+    CHECK(report.bytes[5] == 0x80);
+    CHECK(report.bytes[6] == 0x00);
+    CHECK(report.bytes[7] == 0x00);
+}
+
+static void test_generic_hid_buttons_and_axes(void) {
+    gamepad_state_t state = neutral_state();
+    state.buttons = DINPUT_XINPUT_X | DINPUT_XINPUT_A | DINPUT_XINPUT_B | DINPUT_XINPUT_Y |
+                    DINPUT_XINPUT_LEFT_SHOULDER | DINPUT_XINPUT_RIGHT_SHOULDER |
+                    DINPUT_XINPUT_BACK | DINPUT_XINPUT_START | DINPUT_XINPUT_LEFT_THUMB |
+                    DINPUT_XINPUT_RIGHT_THUMB;
+    state.left_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD;
+    state.right_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD - 1;
+    state.left_x = -32768;
+    state.left_y = 32767;
+    state.right_x = 32767;
+    state.right_y = -32768;
+
+    dinput_report_t report;
+    dinput_build_generic_hid_report(&state, &report);
+
+    CHECK(report.bytes[0] == 0x7F);
+    CHECK(report.bytes[1] == 0x0F);
+    CHECK(report.bytes[2] == 0x00);
+    CHECK(report.bytes[3] == 0x00);
+    CHECK(report.bytes[4] == 0xFF);
+    CHECK(report.bytes[5] == 0xFF);
+    CHECK(report.bytes[6] == DINPUT_TRIGGER_BUTTON_THRESHOLD);
+    CHECK(report.bytes[7] == DINPUT_TRIGGER_BUTTON_THRESHOLD - 1);
+}
+
 int main(void) {
     test_axis_conversion();
     test_hat_values();
@@ -153,6 +196,8 @@ int main(void) {
     test_ps3_buttons_and_analogs();
     test_ps4_neutral_report();
     test_ps4_buttons_and_counter();
+    test_generic_hid_neutral_report();
+    test_generic_hid_buttons_and_axes();
     if (failures != 0)
         return 1;
     puts("dinput_report tests passed");

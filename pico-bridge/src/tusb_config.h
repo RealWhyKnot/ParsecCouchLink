@@ -54,8 +54,8 @@ extern "C" {
 #define CFG_TUD_VENDOR_TX_BUFSIZE 64
 
 // HID runtime personas share one TinyUSB HID class instance. The boot
-// keyboard sends 8-byte reports; PlayStation HID reports are up to
-// 64 bytes including TinyUSB's prepended report ID.
+// keyboard and generic HID persona send 8-byte reports; PS4 HID reports
+// are up to 64 bytes including TinyUSB's prepended report ID.
 #define CFG_TUD_HID_EP_BUFSIZE 64
 
 #ifdef __cplusplus

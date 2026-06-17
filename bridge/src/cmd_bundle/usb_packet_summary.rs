@@ -1447,6 +1447,7 @@ fn known_device_identity(
         (0x2E8A, 0xCAF0, 0xEF, 0x02, 0x01) => "couchlink_setup_cdc_winusb",
         (0x045E, 0x028E, 0xFF, 0xFF, 0xFF) => "couchlink_xinput_maple_debug_shape",
         (0x2E8A, 0xCAF1, 0x00, 0x00, 0x00) => "couchlink_keyboard_hid_boot_shape",
+        (0x2E8A, 0xCAF2, 0x00, 0x00, 0x00) => "couchlink_generic_hid_gamepad_shape",
         (0x054C, 0x0268, 0x00, 0x00, 0x00) => "couchlink_ps3_hid_shape",
         (0x054C, 0x09CC, 0x00, 0x00, 0x00) => "couchlink_ps4_hid_shape",
         (0x0E6F, 0x02A4, 0xFF, 0xFF, 0xFF) => "couchlink_xboxone_xgip_shape",
@@ -2471,6 +2472,10 @@ usb-event t=31 event=first-host-out src=vendor len=3
         assert_eq!(
             known_device_identity(0x2E8A, 0xCAF1, 0x00, 0x00, 0x00),
             "couchlink_keyboard_hid_boot_shape"
+        );
+        assert_eq!(
+            known_device_identity(0x2E8A, 0xCAF2, 0x00, 0x00, 0x00),
+            "couchlink_generic_hid_gamepad_shape"
         );
         assert_eq!(
             known_device_identity(0x054C, 0x0268, 0x00, 0x00, 0x00),

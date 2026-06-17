@@ -88,10 +88,12 @@ pub const ACK_FLAG_KEYBOARD_PERSONA: u8 = 1 << 3;
 pub const ACK_FLAG_FULL_VERSION_SUPPORTED: u8 = 1 << 4;
 /// Set in the ACK flags byte when the Pico is presenting the Dreamcast
 /// Maple adapter persona. Combined with `ACK_FLAG_ALT_PERSONA` for the
-/// Xbox One-compatible persona.
+/// Xbox One-compatible persona, and with `ACK_FLAG_DINPUT_PERSONA` for the
+/// generic HID gamepad persona.
 pub const ACK_FLAG_MAPLE_PERSONA: u8 = 1 << 5;
 /// Set in the ACK flags byte when the Pico is presenting the PS3 HID
-/// persona. Combined with `ACK_FLAG_ALT_PERSONA` for the PS4 HID persona.
+/// persona. Combined with `ACK_FLAG_ALT_PERSONA` for the PS4 HID persona,
+/// and with `ACK_FLAG_MAPLE_PERSONA` for the generic HID gamepad persona.
 pub const ACK_FLAG_DINPUT_PERSONA: u8 = 1 << 6;
 /// Extends the persona bits without changing the fixed ACK packet shape.
 pub const ACK_FLAG_ALT_PERSONA: u8 = 1 << 7;
@@ -181,6 +183,7 @@ pub enum Persona {
     Ps4,
     XboxOne,
     Debug,
+    GenericHid,
 }
 
 impl Persona {
@@ -194,6 +197,8 @@ impl Persona {
             Persona::XboxOne
         } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
             Persona::Ps4
+        } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 && flags & ACK_FLAG_MAPLE_PERSONA != 0 {
+            Persona::GenericHid
         } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 {
             Persona::Ps3
         } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 {
@@ -214,6 +219,7 @@ impl Persona {
             Persona::Ps4 => 4,
             Persona::XboxOne => 5,
             Persona::Debug => 6,
+            Persona::GenericHid => 7,
         }
     }
 
@@ -226,6 +232,7 @@ impl Persona {
             Persona::Ps4 => "ps4",
             Persona::XboxOne => "xboxone",
             Persona::Debug => "debug",
+            Persona::GenericHid => "generic-hid",
         }
     }
 
@@ -238,6 +245,7 @@ impl Persona {
             Persona::Ps4 => "PS4 / DualShock 4",
             Persona::XboxOne => "Xbox One",
             Persona::Debug => "Debug packet capture",
+            Persona::GenericHid => "Generic HID gamepad",
         }
     }
 }
@@ -1117,6 +1125,7 @@ impl PicoStateDiag {
             4 => Some(Persona::Ps4),
             5 => Some(Persona::XboxOne),
             6 => Some(Persona::Debug),
+            7 => Some(Persona::GenericHid),
             _ => None,
         }
     }
@@ -1584,6 +1593,7 @@ mod tests {
         assert_eq!(buf[16], crc8(&buf[..16]));
         assert_eq!(encode_set_persona(0, Persona::Xinput)[4], 0);
         assert_eq!(encode_set_persona(0, Persona::Debug)[4], 6);
+        assert_eq!(encode_set_persona(0, Persona::GenericHid)[4], 7);
         // Decode is lenient on unknown types; SET_PERSONA isn't a PacketKind.
         assert_eq!(
             Packet::decode(&buf),
@@ -1664,7 +1674,7 @@ mod tests {
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA),
-            Persona::Ps3
+            Persona::GenericHid
         );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA),
@@ -1677,6 +1687,7 @@ mod tests {
         assert_eq!(Persona::Ps4.flash_byte(), 4);
         assert_eq!(Persona::XboxOne.flash_byte(), 5);
         assert_eq!(Persona::Debug.flash_byte(), 6);
+        assert_eq!(Persona::GenericHid.flash_byte(), 7);
     }
 
     #[test]
@@ -2073,9 +2084,12 @@ mod tests {
         let back = PicoStateDiag::decode(&buf).unwrap();
         assert_eq!(back, diag);
         assert_eq!(back.persona(), Some(Persona::Maple));
-        let mut debug_diag = diag;
+        let mut debug_diag = diag.clone();
         debug_diag.persona_byte = Persona::Debug.flash_byte();
         assert_eq!(debug_diag.persona(), Some(Persona::Debug));
+        let mut generic_diag = diag;
+        generic_diag.persona_byte = Persona::GenericHid.flash_byte();
+        assert_eq!(generic_diag.persona(), Some(Persona::GenericHid));
         let json = back.to_json_map();
         assert_eq!(json["malformed_udp_count"], serde_json::json!(42));
         assert_eq!(json["in_blocked_not_ready"], serde_json::json!(11));

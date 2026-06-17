@@ -87,13 +87,17 @@ static void read_gamepad_state(gamepad_state_t *out) {
 static void build_current_report(dinput_report_t *out) {
     gamepad_state_t state;
     read_gamepad_state(&state);
-    if (boot_mode_run_persona() == RUN_PERSONA_PS4)
+    if (boot_mode_run_persona() == RUN_PERSONA_GENERIC_HID)
+        dinput_build_generic_hid_report(&state, out);
+    else if (boot_mode_run_persona() == RUN_PERSONA_PS4)
         dinput_build_ps4_report(&state, ps4_report_counter, out);
     else
         dinput_build_ps3_report(&state, out);
 }
 
 static uint16_t expected_wire_report_len(void) {
+    if (boot_mode_run_persona() == RUN_PERSONA_GENERIC_HID)
+        return DINPUT_GENERIC_HID_WIRE_REPORT_LEN;
     return (boot_mode_run_persona() == RUN_PERSONA_PS4) ? DINPUT_PS4_WIRE_REPORT_LEN
                                                         : DINPUT_PS3_WIRE_REPORT_LEN;
 }
@@ -132,8 +136,9 @@ void dinput_task(void) {
         return;
     }
 
-    uint8_t payload_len = (uint8_t)(rep.len - 1u);
-    if (tud_hid_report(rep.report_id, &rep.bytes[1], payload_len)) {
+    uint8_t const *payload = rep.report_id == 0 ? rep.bytes : &rep.bytes[1];
+    uint8_t payload_len = rep.report_id == 0 ? rep.len : (uint8_t)(rep.len - 1u);
+    if (tud_hid_report(rep.report_id, payload, payload_len)) {
         usb_diag_note_xinput_in_queued(rep.len);
         last_sent = rep;
         have_last_sent = true;
@@ -161,6 +166,8 @@ uint16_t dinput_get_report_payload(uint8_t report_id, uint8_t report_type, uint8
         build_current_report(&rep);
         if (report_id != rep.report_id)
             return 0;
+        if (rep.report_id == 0)
+            return copy_report(buffer, reqlen, rep.bytes, rep.len);
         return copy_report(buffer, reqlen, &rep.bytes[1], (uint16_t)(rep.len - 1u));
     }
     if (report_type != HID_REPORT_TYPE_FEATURE)

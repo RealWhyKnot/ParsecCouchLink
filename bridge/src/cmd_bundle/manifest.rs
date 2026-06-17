@@ -196,7 +196,7 @@ pub(super) async fn build_manifest(
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
             "adapter-connection.txt warns when live Pico USB counters show no console/adapter USB host enumeration traffic.",
             "initial-usb-capture.txt preserves USB packet lines harvested before bundle switches personas.",
-            "adapter-survey.txt and adapter-survey.json record live persona checks for PS4, keyboard, PS3, XInput, Xbox One, and Maple shapes without prompting.",
+            "adapter-survey.txt and adapter-survey.json record live persona checks for PS3, generic HID, PS4, keyboard, XInput, Xbox One, and Maple shapes without prompting.",
             "Bundle restores the original persona after the adapter survey pass.",
             "Debug input mode uses the XInput USB shape; debug evidence is not treated as proof that a HID persona works with an adapter.",
             "When a surveyed persona gets descriptor traffic but does not configure, bundle requests a one-shot USB packet capture boot for that same persona.",

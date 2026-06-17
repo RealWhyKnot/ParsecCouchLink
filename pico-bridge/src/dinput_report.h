@@ -12,6 +12,10 @@
 #define DINPUT_PS4_WIRE_REPORT_LEN 64u
 #define DINPUT_PS4_PAYLOAD_REPORT_LEN 63u
 
+#define DINPUT_GENERIC_HID_REPORT_ID 0x00u
+#define DINPUT_GENERIC_HID_WIRE_REPORT_LEN 8u
+#define DINPUT_GENERIC_HID_PAYLOAD_REPORT_LEN 8u
+
 #define DINPUT_MAX_WIRE_REPORT_LEN 64u
 
 #define DINPUT_HAT_UP 0x00u
@@ -70,3 +74,4 @@ uint16_t dinput_buttons_from_gamepad(const gamepad_state_t *state);
 void dinput_build_ps3_report(const gamepad_state_t *state, dinput_report_t *out);
 void dinput_build_ps4_report(const gamepad_state_t *state, uint8_t report_counter,
                              dinput_report_t *out);
+void dinput_build_generic_hid_report(const gamepad_state_t *state, dinput_report_t *out);

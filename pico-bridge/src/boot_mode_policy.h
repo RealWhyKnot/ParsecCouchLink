@@ -25,6 +25,7 @@ typedef enum {
     RUN_PERSONA_PS4 = 4,      // Sony DualShock 4 / PS4 HID gamepad
     RUN_PERSONA_XBOXONE = 5,  // Xbox One-compatible XGIP gamepad
     RUN_PERSONA_DEBUG = 6,    // XInput shape with raw USB packet capture
+    RUN_PERSONA_GENERIC_HID = 7, // Generic HID gamepad for unknown-HID adapters
 } run_persona_t;
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);
@@ -39,8 +40,8 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
 // True for runtime personas that present the wired Xbox 360 USB device
 // shape. Maple mode keeps a separate persisted label, but deliberately
 // matches this USB shape for Dreamcast Maple adapters that already
-// support Xbox 360 controllers. PlayStation HID and Xbox One XGIP
-// personas use distinct USB shapes and return false.
+// support Xbox 360 controllers. HID gamepad and Xbox One XGIP personas
+// use distinct USB shapes and return false.
 bool boot_mode_persona_uses_xinput_usb(run_persona_t persona);
 
 // True for runtime personas that present a HID gamepad interface.

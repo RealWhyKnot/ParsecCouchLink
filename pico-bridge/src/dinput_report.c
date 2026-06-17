@@ -26,6 +26,16 @@ uint8_t dinput_axis_y_to_hid(int16_t value) {
     return (uint8_t)scaled;
 }
 
+static uint8_t centered_axis_x_to_hid(int16_t value) {
+    uint8_t scaled = dinput_axis_x_to_hid(value);
+    return value == 0 ? 0x80 : scaled;
+}
+
+static uint8_t centered_axis_y_to_hid(int16_t value) {
+    uint8_t scaled = dinput_axis_y_to_hid(value);
+    return value == 0 ? 0x80 : scaled;
+}
+
 uint8_t dinput_hat_from_buttons(uint16_t buttons) {
     bool up = (buttons & DINPUT_XINPUT_DPAD_UP) != 0;
     bool down = (buttons & DINPUT_XINPUT_DPAD_DOWN) != 0;
@@ -130,10 +140,10 @@ void dinput_build_ps3_report(const gamepad_state_t *state, dinput_report_t *out)
     if (buttons & DINPUT_XINPUT_GUIDE)
         out->bytes[4] |= 1u << 0; // PS
 
-    out->bytes[6] = dinput_axis_x_to_hid(state->left_x);
-    out->bytes[7] = dinput_axis_y_to_hid(state->left_y);
-    out->bytes[8] = dinput_axis_x_to_hid(state->right_x);
-    out->bytes[9] = dinput_axis_y_to_hid(state->right_y);
+    out->bytes[6] = centered_axis_x_to_hid(state->left_x);
+    out->bytes[7] = centered_axis_y_to_hid(state->left_y);
+    out->bytes[8] = centered_axis_x_to_hid(state->right_x);
+    out->bytes[9] = centered_axis_y_to_hid(state->right_y);
     out->bytes[14] = (buttons & DINPUT_XINPUT_DPAD_UP) ? 0xFF : 0x00;
     out->bytes[15] = (buttons & DINPUT_XINPUT_DPAD_RIGHT) ? 0xFF : 0x00;
     out->bytes[16] = (buttons & DINPUT_XINPUT_DPAD_DOWN) ? 0xFF : 0x00;
@@ -155,38 +165,16 @@ void dinput_build_ps3_report(const gamepad_state_t *state, dinput_report_t *out)
     }
 }
 
-static uint8_t ps4_axis_x_to_hid(int16_t value) {
-    int32_t scaled = ((int32_t)value + 32768) * 255 / 65535;
-    if (scaled < 0)
-        return 0;
-    if (scaled > 255)
-        return 255;
-    if (value == 0)
-        return 0x80;
-    return (uint8_t)scaled;
-}
-
-static uint8_t ps4_axis_y_to_hid(int16_t value) {
-    int32_t scaled = ((int32_t)32767 - value) * 255 / 65535;
-    if (scaled < 0)
-        return 0;
-    if (scaled > 255)
-        return 255;
-    if (value == 0)
-        return 0x80;
-    return (uint8_t)scaled;
-}
-
 void dinput_build_ps4_report(const gamepad_state_t *state, uint8_t report_counter,
                              dinput_report_t *out) {
     memset(out, 0, sizeof(*out));
     out->len = DINPUT_PS4_WIRE_REPORT_LEN;
     out->report_id = DINPUT_PS4_REPORT_ID;
     out->bytes[0] = DINPUT_PS4_REPORT_ID;
-    out->bytes[1] = ps4_axis_x_to_hid(state->left_x);
-    out->bytes[2] = ps4_axis_y_to_hid(state->left_y);
-    out->bytes[3] = ps4_axis_x_to_hid(state->right_x);
-    out->bytes[4] = ps4_axis_y_to_hid(state->right_y);
+    out->bytes[1] = centered_axis_x_to_hid(state->left_x);
+    out->bytes[2] = centered_axis_y_to_hid(state->left_y);
+    out->bytes[3] = centered_axis_x_to_hid(state->right_x);
+    out->bytes[4] = centered_axis_y_to_hid(state->right_y);
 
     uint16_t buttons = state->buttons;
     out->bytes[5] = dinput_hat_from_buttons(buttons);
@@ -229,4 +217,45 @@ void dinput_build_ps4_report(const gamepad_state_t *state, uint8_t report_counte
     put_le16(&out->bytes[12], 0x0000); // battery / timing baseline
     out->bytes[30] = 0x1B;             // full battery, charging over USB
     out->bytes[33] = 0x01;             // no extension data
+}
+
+void dinput_build_generic_hid_report(const gamepad_state_t *state, dinput_report_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->len = DINPUT_GENERIC_HID_WIRE_REPORT_LEN;
+    out->report_id = DINPUT_GENERIC_HID_REPORT_ID;
+
+    uint16_t buttons = state->buttons;
+    uint16_t generic = 0;
+    if (buttons & DINPUT_XINPUT_X)
+        generic |= 1u << 0;
+    if (buttons & DINPUT_XINPUT_A)
+        generic |= 1u << 1;
+    if (buttons & DINPUT_XINPUT_B)
+        generic |= 1u << 2;
+    if (buttons & DINPUT_XINPUT_Y)
+        generic |= 1u << 3;
+    if (buttons & DINPUT_XINPUT_LEFT_SHOULDER)
+        generic |= 1u << 4;
+    if (buttons & DINPUT_XINPUT_RIGHT_SHOULDER)
+        generic |= 1u << 5;
+    if (state->left_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD)
+        generic |= 1u << 6;
+    if (state->right_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD)
+        generic |= 1u << 7;
+    if (buttons & DINPUT_XINPUT_BACK)
+        generic |= 1u << 8;
+    if (buttons & DINPUT_XINPUT_START)
+        generic |= 1u << 9;
+    if (buttons & DINPUT_XINPUT_LEFT_THUMB)
+        generic |= 1u << 10;
+    if (buttons & DINPUT_XINPUT_RIGHT_THUMB)
+        generic |= 1u << 11;
+
+    put_le16(&out->bytes[0], generic);
+    out->bytes[2] = centered_axis_x_to_hid(state->left_x);
+    out->bytes[3] = centered_axis_y_to_hid(state->left_y);
+    out->bytes[4] = centered_axis_x_to_hid(state->right_x);
+    out->bytes[5] = centered_axis_y_to_hid(state->right_y);
+    out->bytes[6] = state->left_trigger;
+    out->bytes[7] = state->right_trigger;
 }

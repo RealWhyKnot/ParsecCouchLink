@@ -190,6 +190,8 @@ static void run_mode_main_loop(void) {
         dinput_init();
         if (persona == RUN_PERSONA_PS4)
             diag_log_msg("run: USB persona = Sony DualShock 4 / PS4 HID");
+        else if (persona == RUN_PERSONA_GENERIC_HID)
+            diag_log_msg("run: USB persona = generic HID gamepad");
         else
             diag_log_msg("run: USB persona = Sony DualShock 3 / PS3 HID");
     } else if (persona == RUN_PERSONA_XBOXONE) {
@@ -370,6 +372,9 @@ int main(void) {
             break;
         case RUN_PERSONA_DEBUG:
             persona_name = "debug packet capture";
+            break;
+        case RUN_PERSONA_GENERIC_HID:
+            persona_name = "generic HID gamepad";
             break;
         }
     }

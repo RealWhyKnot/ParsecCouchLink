@@ -7,6 +7,7 @@
 //   run / ps3:        Sony DualShock 3 HID gamepad (Sony VID 0x054C, PID 0x0268)
 //   run / ps4:        Sony DualShock 4 HID gamepad (Sony VID 0x054C, PID 0x09CC)
 //   run / xboxone:    Xbox One-compatible XGIP vendor-class gamepad
+//   run / generic-hid: generic HID gamepad (Raspberry Pi VID 0x2E8A, PID 0xCAF2)
 //
 // Only one persona is presented at a time. main() calls boot_mode_decide()
 // before tusb_init(), so D+ is raised exactly once with the final mode
@@ -116,6 +117,25 @@ static const tusb_desc_device_t desc_device_keyboard = {
     .bNumConfigurations = 0x01,
 };
 
+static const tusb_desc_device_t desc_device_generic_hid = {
+    .bLength = sizeof(tusb_desc_device_t),
+    .bDescriptorType = TUSB_DESC_DEVICE,
+    .bcdUSB = 0x0200,
+    .bDeviceClass = 0x00,
+    .bDeviceSubClass = 0x00,
+    .bDeviceProtocol = 0x00,
+    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
+
+    .idVendor = 0x2E8A,  // Raspberry Pi
+    .idProduct = 0xCAF2, // CouchLink generic HID gamepad persona
+    .bcdDevice = BCD_DEVICE_VERSION,
+
+    .iManufacturer = 0x01,
+    .iProduct = 0x02,
+    .iSerialNumber = 0x03,
+    .bNumConfigurations = 0x01,
+};
+
 static const tusb_desc_device_t desc_device_ps3 = {
     .bLength = sizeof(tusb_desc_device_t),
     .bDescriptorType = TUSB_DESC_DEVICE,
@@ -195,6 +215,9 @@ uint8_t const *tud_descriptor_device_cb(void) {
         break;
     case RUN_PERSONA_XBOXONE:
         desc = (uint8_t const *)&desc_device_xboxone;
+        break;
+    case RUN_PERSONA_GENERIC_HID:
+        desc = (uint8_t const *)&desc_device_generic_hid;
         break;
     case RUN_PERSONA_KEYBOARD:
         desc = (uint8_t const *)&desc_device_keyboard;
@@ -321,7 +344,7 @@ static const uint8_t desc_configuration_keyboard[] = {
                        KBD_IN_EP_ADDR, CFG_TUD_HID_EP_BUFSIZE, 10),
 };
 
-// -------- run mode: PlayStation HID gamepad configurations -------------
+// -------- run mode: HID gamepad configurations -------------------------
 
 #define GAMEPAD_HID_ITF_NUM 0
 #define GAMEPAD_HID_IN_EP_ADDR 0x81
@@ -355,7 +378,41 @@ static const uint8_t desc_hid_report_ps4[] = {
     0xB1, 0x02, 0x85, 0xF3, 0x0A, 0x01, 0x47, 0x95, 0x07, 0xB1, 0x02, 0xC0,
 };
 
+// Generic HID gamepad report, no report ID:
+//   byte 0..1: 12 buttons, b0..b11 = X,A,B,Y,LB,RB,LT,RT,SELECT,START,L3,R3
+//   byte 2..7: X,Y,Rx,Ry,Z,Rz axes (Z/Rz carry analog LT/RT)
+static const uint8_t desc_hid_report_generic_hid[] = {
+    0x05, 0x01,       // Usage Page (Generic Desktop)
+    0x09, 0x05,       // Usage (Game Pad)
+    0xA1, 0x01,       // Collection (Application)
+    0x05, 0x09,       //   Usage Page (Button)
+    0x19, 0x01,       //   Usage Minimum (Button 1)
+    0x29, 0x0C,       //   Usage Maximum (Button 12)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x25, 0x01,       //   Logical Maximum (1)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x0C,       //   Report Count (12)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0x75, 0x01,       //   Report Size (1)
+    0x95, 0x04,       //   Report Count (4)
+    0x81, 0x03,       //   Input (Const,Var,Abs)
+    0x05, 0x01,       //   Usage Page (Generic Desktop)
+    0x15, 0x00,       //   Logical Minimum (0)
+    0x26, 0xFF, 0x00, //   Logical Maximum (255)
+    0x75, 0x08,       //   Report Size (8)
+    0x95, 0x06,       //   Report Count (6)
+    0x09, 0x30,       //   Usage (X)
+    0x09, 0x31,       //   Usage (Y)
+    0x09, 0x33,       //   Usage (Rx)
+    0x09, 0x34,       //   Usage (Ry)
+    0x09, 0x32,       //   Usage (Z)
+    0x09, 0x35,       //   Usage (Rz)
+    0x81, 0x02,       //   Input (Data,Var,Abs)
+    0xC0,             // End Collection
+};
+
 #define HID_GAMEPAD_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + 7)
+#define GENERIC_HID_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
 
 static const uint8_t desc_configuration_ps3[] = {
     TUD_CONFIG_DESCRIPTOR(1, 1, 0, HID_GAMEPAD_CONFIG_TOTAL_LEN, 0x80, 500),
@@ -421,6 +478,13 @@ static const uint8_t desc_configuration_ps4[] = {
     1,
 };
 
+static const uint8_t desc_configuration_generic_hid[] = {
+    TUD_CONFIG_DESCRIPTOR(1, 1, 0, GENERIC_HID_CONFIG_TOTAL_LEN, 0x80, 100),
+    TUD_HID_DESCRIPTOR(GAMEPAD_HID_ITF_NUM, 0, HID_ITF_PROTOCOL_NONE,
+                       sizeof(desc_hid_report_generic_hid), GAMEPAD_HID_IN_EP_ADDR,
+                       CFG_TUD_HID_EP_BUFSIZE, 1),
+};
+
 // -------- run mode: Xbox One-compatible XGIP configuration -------------
 
 #define XBONE_CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 9 + 7 + 7)
@@ -465,13 +529,15 @@ _Static_assert(sizeof(desc_configuration_ps3) == HID_GAMEPAD_CONFIG_TOTAL_LEN,
                "PS3 configuration descriptor length mismatch");
 _Static_assert(sizeof(desc_configuration_ps4) == HID_GAMEPAD_CONFIG_TOTAL_LEN,
                "PS4 configuration descriptor length mismatch");
+_Static_assert(sizeof(desc_configuration_generic_hid) == GENERIC_HID_CONFIG_TOTAL_LEN,
+               "generic HID configuration descriptor length mismatch");
 _Static_assert(sizeof(desc_configuration_xboxone) == XBONE_CONFIG_TOTAL_LEN,
                "Xbox One configuration descriptor length mismatch");
 // The boot keyboard IN report is 8 bytes; the endpoint buffer must hold it.
 _Static_assert(CFG_TUD_HID_EP_BUFSIZE >= 8,
                "CFG_TUD_HID_EP_BUFSIZE too small for the 8-byte boot keyboard report");
 _Static_assert(CFG_TUD_HID_EP_BUFSIZE >= DINPUT_PS4_WIRE_REPORT_LEN,
-               "CFG_TUD_HID_EP_BUFSIZE too small for the PlayStation HID report");
+               "CFG_TUD_HID_EP_BUFSIZE too small for the HID gamepad report");
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index;
@@ -497,6 +563,9 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
         break;
     case RUN_PERSONA_XBOXONE:
         desc = desc_configuration_xboxone;
+        break;
+    case RUN_PERSONA_GENERIC_HID:
+        desc = desc_configuration_generic_hid;
         break;
     case RUN_PERSONA_KEYBOARD:
         desc = desc_configuration_keyboard;
@@ -557,6 +626,13 @@ static const char *const string_desc_arr_ps4[] = {
     [STRID_SERIAL] = serial_str,
 };
 
+static const char *const string_desc_arr_generic_hid[] = {
+    [STRID_LANGID] = (const char[]){0x09, 0x04},
+    [STRID_MANUFACTURER] = "Parsec CouchLink",
+    [STRID_PRODUCT] = "Generic HID Gamepad",
+    [STRID_SERIAL] = serial_str,
+};
+
 static const char *const string_desc_arr_xboxone[] = {
     [STRID_LANGID] = (const char[]){0x09, 0x04},
     [STRID_MANUFACTURER] = "Performance Designed Products",
@@ -612,6 +688,9 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         } else if (boot_mode_run_persona() == RUN_PERSONA_PS4) {
             arr = string_desc_arr_ps4;
             arr_count = sizeof(string_desc_arr_ps4) / sizeof(string_desc_arr_ps4[0]);
+        } else if (boot_mode_run_persona() == RUN_PERSONA_GENERIC_HID) {
+            arr = string_desc_arr_generic_hid;
+            arr_count = sizeof(string_desc_arr_generic_hid) / sizeof(string_desc_arr_generic_hid[0]);
         } else if (boot_mode_run_persona() == RUN_PERSONA_XBOXONE) {
             arr = string_desc_arr_xboxone;
             arr_count = sizeof(string_desc_arr_xboxone) / sizeof(string_desc_arr_xboxone[0]);
@@ -668,7 +747,7 @@ void tud_vendor_tx_cb(uint8_t itf, uint32_t sent_bytes) {
     usb_packet_debug_note_in_accepted("xinput", sent_bytes);
 }
 
-// -------- HID glue (keyboard and PlayStation HID personas) -------------
+// -------- HID glue (keyboard and HID gamepad personas) -----------------
 //
 // These callbacks are part of the HID class driver and are linked in for
 // every persona (CFG_TUD_HID is always 1), but only fire while a HID
@@ -683,6 +762,8 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance) {
         return desc_hid_report_ps3;
     if (boot_mode_run_persona() == RUN_PERSONA_PS4)
         return desc_hid_report_ps4;
+    if (boot_mode_run_persona() == RUN_PERSONA_GENERIC_HID)
+        return desc_hid_report_generic_hid;
     return desc_hid_report_keyboard;
 }
 
@@ -700,7 +781,7 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type,
                            uint8_t const *buffer, uint16_t bufsize) {
     usb_packet_debug_note_hid_set_report(instance, report_id, (uint8_t)report_type, bufsize);
-    // Keyboard LEDs and PlayStation output reports are ignored, but noted
+    // Keyboard LEDs and gamepad output reports are ignored, but noted
     // so OUT-activity diagnostics still light up.
     if (report_type == HID_REPORT_TYPE_OUTPUT && bufsize >= 1) {
         usb_diag_note_xinput_out(buffer, bufsize);

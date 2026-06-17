@@ -234,6 +234,8 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
         ack_flags |= ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_ALT_PERSONA;
     if (boot_mode_run_persona() == RUN_PERSONA_XBOXONE)
         ack_flags |= ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA;
+    if (boot_mode_run_persona() == RUN_PERSONA_GENERIC_HID)
+        ack_flags |= ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA;
     buf[3] = ack_flags;
     // body[0..11]
     buf[4] = PICO_BRIDGE_UDP_PROTO_VERSION;
@@ -433,6 +435,8 @@ static uint8_t current_persona_byte(void) {
         return FLASH_PERSONA_XBOXONE;
     case RUN_PERSONA_DEBUG:
         return FLASH_PERSONA_DEBUG;
+    case RUN_PERSONA_GENERIC_HID:
+        return FLASH_PERSONA_GENERIC_HID;
     case RUN_PERSONA_XINPUT:
     default:
         return FLASH_PERSONA_XINPUT;
@@ -599,6 +603,8 @@ static uint8_t normalize_persona_byte(uint8_t persona) {
         want = FLASH_PERSONA_XBOXONE;
     else if (persona == FLASH_PERSONA_DEBUG)
         want = FLASH_PERSONA_DEBUG;
+    else if (persona == FLASH_PERSONA_GENERIC_HID)
+        want = FLASH_PERSONA_GENERIC_HID;
     return want;
 }
 

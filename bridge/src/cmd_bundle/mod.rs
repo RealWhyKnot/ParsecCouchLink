@@ -54,9 +54,10 @@ const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
 const BUNDLE_PERSONA_WAIT: Duration = Duration::from_secs(60);
 const BUNDLE_RESTORE_PERSONA_WAIT: Duration = Duration::from_secs(60);
 const ADAPTER_SURVEY_PERSONAS: &[protocol::Persona] = &[
+    protocol::Persona::Ps3,
+    protocol::Persona::GenericHid,
     protocol::Persona::Ps4,
     protocol::Persona::Keyboard,
-    protocol::Persona::Ps3,
     protocol::Persona::Xinput,
     protocol::Persona::XboxOne,
     protocol::Persona::Maple,
@@ -1527,6 +1528,7 @@ async fn bundle_usb_packets_for_target(
         best_candidate,
         attempts,
         notes: vec![
+            "PS3 is tested first for USB-to-Maple adapters, followed by a generic HID gamepad fallback.",
             "Debug mode uses the XInput USB shape and is not selected as adapter proof.",
             "Polling or configured means the adapter accepted that persona.",
             "device_desc_count=0 means the adapter did not enumerate that persona.",
@@ -2206,7 +2208,7 @@ fn adapter_connection_next_steps(status: &str) -> Vec<&'static str> {
         "no_usb_host_traffic" => vec![
             "Plug the Pico into the console adapter and console USB host you want it to work on, then run couchlink bundle again.",
             "If the adapter only handshakes once, power-cycle or physically replug the console-side adapter path before running bundle.",
-            "A bundle taken with no USB host traffic cannot prove whether PS4, keyboard, PS3, XInput, Xbox One, or Maple personas work with the adapter.",
+            "A bundle taken with no USB host traffic cannot prove whether PS3, generic HID, PS4, keyboard, XInput, Xbox One, or Maple personas work with the adapter.",
         ],
         "descriptor_or_report_rejected" => vec![
             "Keep the full bundle; descriptor traffic was seen, so adapter firmware or report-shape work can use this evidence.",
@@ -2928,7 +2930,7 @@ fn debug_capture_verdict_text(
     out.push_str(
         "- endpoint_in_lines or endpoint_out_lines > 0 is preferred for runtime adapter traffic.\n",
     );
-    out.push_str("- debug_persona_captures > 0 proves the Pico was in debug input mode when bundle captured current state; it does not prove PS4, keyboard, PS3, Xbox One, or Maple acceptance.\n");
+    out.push_str("- debug_persona_captures > 0 proves the Pico was in debug input mode when bundle captured current state; it does not prove PS3, generic HID, PS4, keyboard, Xbox One, or Maple acceptance.\n");
     let _ = writeln!(out);
 
     out.push_str("missing_evidence=\n");
