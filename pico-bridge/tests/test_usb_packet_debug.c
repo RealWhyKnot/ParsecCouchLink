@@ -55,6 +55,7 @@ static void require_log_contains(const char *needle) {
 static void normal_persona_does_not_log_packets(void) {
     uint8_t data[] = {0x01, 0x02};
     current_persona = RUN_PERSONA_XINPUT;
+    usb_packet_debug_set_capture_enabled(false);
     reset_log();
     usb_packet_debug_note_out("vendor", data, sizeof(data));
     usb_packet_debug_note_in("xinput", data, sizeof(data), true);
@@ -232,6 +233,26 @@ static void debug_packet_stats_repeat_periodically(void) {
     require_log_contains("idle_in_suppressed=1");
 }
 
+static void capture_enabled_normal_persona_logs_packets(void) {
+    uint8_t data[] = {0x12, 0x34};
+    current_persona = RUN_PERSONA_PS4;
+    usb_packet_debug_set_capture_enabled(true);
+    fake_ms = 1400;
+    reset_log();
+    usb_packet_debug_note_setup("desc-device", 0x80, 0x06, 0x0100, 0, 18);
+    assert(line_count >= 1);
+    require_log_contains("dir=setup");
+    require_log_contains("src=desc-device");
+    require_log_contains("data=8006000100001200");
+    assert(usb_packet_debug_capture_enabled());
+
+    usb_packet_debug_set_capture_enabled(false);
+    reset_log();
+    usb_packet_debug_note_out("vendor", data, sizeof(data));
+    assert(line_count == 0);
+    current_persona = RUN_PERSONA_DEBUG;
+}
+
 int main(void) {
     normal_persona_does_not_log_packets();
     debug_out_packet_logs_hex_payload();
@@ -244,6 +265,7 @@ int main(void) {
     debug_packet_logs_per_packet_truncation();
     debug_usb_event_logs_lifecycle_without_packet_stats();
     debug_packet_stats_repeat_periodically();
+    capture_enabled_normal_persona_logs_packets();
     puts("usb_packet_debug tests passed");
     return 0;
 }

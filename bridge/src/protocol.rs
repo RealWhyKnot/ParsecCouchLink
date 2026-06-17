@@ -46,6 +46,11 @@ pub const TYPE_GET_VERSION: u8 = 0x0B;
 /// firmware. Optional: older firmware ignores it and the bridge falls back
 /// to ACK/version/USB-diag/log/cache evidence.
 pub const TYPE_GET_PICO_STATE: u8 = 0x0C;
+/// Request a run-mode Pico to reboot into a persona with one-shot raw USB
+/// packet capture enabled before TinyUSB starts. `body[0]` carries the
+/// persona flash byte and `body[1]` is 1 to enable capture or 0 to clear
+/// runtime capture without rebooting.
+pub const TYPE_SET_USB_CAPTURE: u8 = 0x0D;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
@@ -539,6 +544,22 @@ pub fn encode_set_persona(seq: u8, persona: Persona) -> [u8; PACKET_SIZE] {
     buf[2] = seq;
     buf[3] = 0;
     buf[4] = persona.flash_byte();
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+/// Build a `TYPE_SET_USB_CAPTURE` request datagram. When `enabled` is true,
+/// firmware persists the requested persona if needed, marks the next boot for
+/// one-shot raw USB packet capture, and reboots. When false, firmware clears
+/// capture for the current boot without changing persona.
+pub fn encode_set_usb_capture(seq: u8, persona: Persona, enabled: bool) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_SET_USB_CAPTURE;
+    buf[2] = seq;
+    buf[3] = 0;
+    buf[4] = persona.flash_byte();
+    buf[5] = u8::from(enabled);
     buf[16] = crc8(&buf[..16]);
     buf
 }
@@ -1567,6 +1588,32 @@ mod tests {
         assert_eq!(
             Packet::decode(&buf),
             Err(DecodeError::UnknownType(TYPE_SET_PERSONA))
+        );
+    }
+
+    #[test]
+    fn set_usb_capture_encode_shape() {
+        let buf = encode_set_usb_capture(7, Persona::Ps4, true);
+        assert_eq!(buf.len(), PACKET_SIZE);
+        assert_eq!(buf[0], MAGIC);
+        assert_eq!(buf[1], TYPE_SET_USB_CAPTURE);
+        assert_eq!(buf[2], 7);
+        assert_eq!(buf[3], 0);
+        assert_eq!(buf[4], 4); // PS4 flash byte
+        assert_eq!(buf[5], 1); // enable capture
+        for b in &buf[6..16] {
+            assert_eq!(*b, 0);
+        }
+        assert_eq!(buf[16], crc8(&buf[..16]));
+
+        let clear = encode_set_usb_capture(8, Persona::Xinput, false);
+        assert_eq!(clear[1], TYPE_SET_USB_CAPTURE);
+        assert_eq!(clear[4], 0);
+        assert_eq!(clear[5], 0);
+        assert_eq!(clear[16], crc8(&clear[..16]));
+        assert_eq!(
+            Packet::decode(&buf),
+            Err(DecodeError::UnknownType(TYPE_SET_USB_CAPTURE))
         );
     }
 

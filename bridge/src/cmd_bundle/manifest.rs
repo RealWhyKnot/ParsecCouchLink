@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 20;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 21;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -63,6 +63,10 @@ pub(super) struct Manifest {
     pico_usb_mode: Option<String>,
     pico_usb_diag_captured: bool,
     pico_usb_diag_target_count: usize,
+    adapter_survey_included: bool,
+    adapter_survey_path: &'static str,
+    adapter_survey_json_included: bool,
+    adapter_survey_json_path: &'static str,
     app_log_retention_count: usize,
     bundled_log_files_per_prefix: usize,
     debug_packet_log_retention_count: usize,
@@ -144,6 +148,10 @@ pub(super) async fn build_manifest(
         pico_usb_mode: pico_usb_mode.map(|s| s.to_string()),
         pico_usb_diag_captured,
         pico_usb_diag_target_count,
+        adapter_survey_included: true,
+        adapter_survey_path: "adapter-survey.txt",
+        adapter_survey_json_included: true,
+        adapter_survey_json_path: "adapter-survey.json",
         app_log_retention_count: logfile::LOG_FILE_RETENTION,
         bundled_log_files_per_prefix: BUNDLE_LOG_FILES_PER_PREFIX,
         debug_packet_log_retention_count: crate::debug_packets::DEBUG_PACKET_FILE_RETENTION,
@@ -174,9 +182,11 @@ pub(super) async fn build_manifest(
             "Setup-mode Pico boards are queried over USB CDC and WinUSB vendor diagnostics when available.",
             "BOOTSEL drives are inventoried when present.",
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
-            "Debug input mode uses the XInput USB shape and logs raw USB IN/OUT packet samples for adapter reverse engineering.",
-            "For each live Pico, bundle attempts an automatic debug input capture cycle: switch to debug mode, wait for USB polling, harvest GET_LOG, then restore the original persona.",
-            "If the automatic debug input cycle cannot complete, bundle-capture.txt records the failed step, duration, and reason.",
+            "adapter-survey.txt and adapter-survey.json record live persona checks for PS4, keyboard, PS3, XInput, Xbox One, and Maple shapes without prompting.",
+            "Bundle restores the original persona after the adapter survey pass.",
+            "Debug input mode uses the XInput USB shape; debug evidence is not treated as proof that a HID persona works with an adapter.",
+            "When a surveyed persona gets descriptor traffic but does not configure, bundle requests a one-shot USB packet capture boot for that same persona.",
+            "If persona switching, USB diagnostic queries, packet capture, or persona restore cannot complete, bundle-capture.txt records the failed step, duration, and reason.",
             "While debug input mode is streaming, the bridge periodically drains the Pico diag ring into retained host packet logs so later bundles can include them.",
             "When bundle finds a live Pico already in debug input mode, it performs a bundle-time GET_LOG harvest and records the harvest health in that Pico's usb-packets.txt.",
             "Retained debug packet logs include per-harvest health records for GET_LOG duration, chunks, lost bytes, packet counts, and failures.",
@@ -196,7 +206,7 @@ pub(super) async fn build_manifest(
             "Private LAN IP addresses, MAC addresses, Windows user profile paths, hostnames, and usernames are redacted from bundle text.",
             "Lengths, ports, failure codes, timings, device names, driver names, and firmware IDs may be included for diagnosis.",
             "Raw per-key keyboard traces require trace logging and are not enabled by default.",
-            "Raw USB packet dumps are only captured when the Pico is deliberately switched into debug input mode.",
+            "Raw USB packet dumps are captured only in debug input mode or a bundle-requested one-shot USB capture boot.",
             "Retained debug packet logs are redacted by the same bundle filter before they are written into the ZIP.",
         ],
         crash_files: crash_files.to_vec(),
@@ -287,6 +297,10 @@ mod tests {
             crate::debug_packets::DEBUG_PACKET_FILE_RETENTION
         );
         assert_eq!(json["diagnostic_cache_included"], true);
+        assert_eq!(json["adapter_survey_included"], true);
+        assert_eq!(json["adapter_survey_path"], "adapter-survey.txt");
+        assert_eq!(json["adapter_survey_json_included"], true);
+        assert_eq!(json["adapter_survey_json_path"], "adapter-survey.json");
         assert_eq!(
             json["retained_debug_packet_logs"][0],
             "usb-packets-20260615-214000-02E22DA9.log"

@@ -17,6 +17,7 @@
 // layout grew (force_setup_after_reboot field added). An old breadcrumb
 // from a prior build will fail the magic check and be ignored.
 #define BREADCRUMB_MAGIC 0xC0DEBE13u
+#define USB_CAPTURE_MAGIC 0xC0A7CAFEu
 
 // CRC-protected fault context persisted across resets via
 // `__uninitialized_ram`. Survives watchdog reset on both chips, and
@@ -245,6 +246,24 @@ void reset_reason_request_setup_with_note(const char *note) {
 
 void reset_reason_request_setup_after_reboot(void) {
     reset_reason_request_setup_with_note(NULL);
+}
+
+void reset_reason_request_usb_capture_after_reboot(uint8_t persona) {
+    watchdog_hw->scratch[5] = USB_CAPTURE_MAGIC;
+    watchdog_hw->scratch[6] = (uint32_t)persona;
+    watchdog_hw->scratch[0] = RESET_REASON_MAGIC_NORMAL_EXIT;
+}
+
+bool reset_reason_consume_usb_capture_request(uint8_t *persona) {
+    if (watchdog_hw->scratch[5] != USB_CAPTURE_MAGIC) {
+        return false;
+    }
+    if (persona) {
+        *persona = (uint8_t)(watchdog_hw->scratch[6] & 0xFFu);
+    }
+    watchdog_hw->scratch[5] = 0;
+    watchdog_hw->scratch[6] = 0;
+    return true;
 }
 
 void reset_reason_record_fault(const uint32_t *frame, uint32_t sp_at_fault) {

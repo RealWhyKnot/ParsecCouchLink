@@ -77,6 +77,83 @@ pub async fn request_set_persona(
     Ok(())
 }
 
+/// Ask a run-mode Pico to reboot into `persona` with one-shot USB packet
+/// capture active from before `tusb_init()`.
+pub async fn request_set_usb_capture_persona(
+    pico: &cmd_run::PicoTarget,
+    persona: protocol::Persona,
+) -> Result<()> {
+    tracing::info!(
+        "pico-mode: request usb-capture persona {} for {}",
+        persona.label(),
+        pico.short_label(),
+    );
+    let socket = net::bind_udp("0.0.0.0:0")
+        .await
+        .context("binding UDP usb-capture socket")?;
+    let mut seq = 0xC0u8;
+    for _ in 0..6 {
+        let req = protocol::encode_set_usb_capture(seq, persona, true);
+        tracing::debug!(
+            "pico-mode: send usb-capture seq=0x{:02X} persona={} to {}",
+            seq,
+            persona.label(),
+            pico.peer,
+        );
+        seq = seq.wrapping_add(1);
+        match socket.send_to(&req, pico.peer).await {
+            Ok(_) => {}
+            Err(e) if net::is_transient(&e) => {
+                tracing::debug!(
+                    "pico-mode: transient usb-capture send error after reboot start: {e}"
+                );
+                break;
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("sending usb-capture request to {}", pico.peer))
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Ok(())
+}
+
+/// Clear raw USB packet capture for the current boot. This does not reboot or
+/// change the persisted persona.
+pub async fn request_clear_usb_capture(pico: &cmd_run::PicoTarget) -> Result<()> {
+    tracing::info!(
+        "pico-mode: request clear usb-capture for {}",
+        pico.short_label()
+    );
+    let socket = net::bind_udp("0.0.0.0:0")
+        .await
+        .context("binding UDP clear usb-capture socket")?;
+    let mut seq = 0xB0u8;
+    for _ in 0..4 {
+        let req = protocol::encode_set_usb_capture(seq, pico.persona, false);
+        tracing::debug!(
+            "pico-mode: send clear usb-capture seq=0x{:02X} to {}",
+            seq,
+            pico.peer,
+        );
+        seq = seq.wrapping_add(1);
+        match socket.send_to(&req, pico.peer).await {
+            Ok(_) => {}
+            Err(e) if net::is_transient(&e) => {
+                tracing::debug!("pico-mode: transient clear usb-capture send error: {e}");
+                break;
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("sending clear usb-capture request to {}", pico.peer))
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    Ok(())
+}
+
 pub async fn wait_for_setup_port(timeout: Duration) -> Result<String> {
     let started = Instant::now();
     let deadline = started + timeout;

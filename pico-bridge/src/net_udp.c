@@ -17,6 +17,7 @@
 #include "keyboard_state.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
+#include "usb_packet_debug.h"
 #include "version.h"
 
 // Translate an lwIP err_t to a short name. Without this every
@@ -82,6 +83,7 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_SET_PERSONA 0x0A
 #define TYPE_GET_VERSION 0x0B
 #define TYPE_GET_PICO_STATE 0x0C
+#define TYPE_SET_USB_CAPTURE 0x0D
 #define TYPE_LOG_CHUNK 0x85
 #define TYPE_USB_DIAG 0x86
 #define TYPE_VERSION 0x87
@@ -148,6 +150,9 @@ static uint32_t rx_count; // received datagrams (including malformed)
 static bool reboot_to_setup_pending;
 static bool set_persona_pending;
 static uint8_t set_persona_value;
+static bool set_usb_capture_pending;
+static uint8_t set_usb_capture_persona;
+static bool set_usb_capture_enabled;
 static uint32_t malformed_count;
 
 // CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
@@ -580,12 +585,7 @@ static void apply_key_body(const uint8_t *body, uint8_t flags) {
     g_last_packet_ms = to_ms_since_boot(get_absolute_time());
 }
 
-// Persist a new output persona and reboot so the correct runtime path comes
-// up at the next boot. Called from the main loop (net_udp_task), never the
-// lwIP callback, so flash_safe_execute can coordinate with the cyw43 core.
-// A no-op when the persona already matches, to avoid needless flash wear
-// and a session-dropping reboot.
-static void apply_set_persona(uint8_t persona) {
+static uint8_t normalize_persona_byte(uint8_t persona) {
     uint8_t want = FLASH_PERSONA_XINPUT;
     if (persona == FLASH_PERSONA_KEYBOARD)
         want = FLASH_PERSONA_KEYBOARD;
@@ -599,6 +599,16 @@ static void apply_set_persona(uint8_t persona) {
         want = FLASH_PERSONA_XBOXONE;
     else if (persona == FLASH_PERSONA_DEBUG)
         want = FLASH_PERSONA_DEBUG;
+    return want;
+}
+
+// Persist a new output persona and reboot so the correct runtime path comes
+// up at the next boot. Called from the main loop (net_udp_task), never the
+// lwIP callback, so flash_safe_execute can coordinate with the cyw43 core.
+// A no-op when the persona already matches, to avoid needless flash wear
+// and a session-dropping reboot.
+static void apply_set_persona(uint8_t persona) {
+    uint8_t want = normalize_persona_byte(persona);
 
     flash_creds_t rec;
     if (!flash_creds_load(&rec)) {
@@ -619,6 +629,40 @@ static void apply_set_persona(uint8_t persona) {
         return;
     }
     diag_log_printf("net_udp: persona set to %u; rebooting to apply", (unsigned)want);
+    watchdog_reboot(0, 0, 100);
+    for (;;)
+        tight_loop_contents();
+}
+
+static void apply_set_usb_capture(uint8_t persona, bool enabled) {
+    if (!enabled) {
+        usb_packet_debug_set_capture_enabled(false);
+        diag_log_msg("net_udp: usb_capture disabled for current boot");
+        return;
+    }
+
+    uint8_t want = normalize_persona_byte(persona);
+    flash_creds_t rec;
+    if (!flash_creds_load(&rec)) {
+        diag_log_msg("net_udp: usb_capture with no stored credentials -- ignoring");
+        return;
+    }
+    bool changed = rec.usb_persona != want;
+    if (changed) {
+        rec.usb_persona = want;
+        int rc = flash_creds_store(&rec);
+        memset(&rec, 0, sizeof(rec)); // scrub the cleartext password copy
+        if (rc != 0) {
+            diag_log_printf("net_udp: usb_capture persona store failed rc=%d", rc);
+            return;
+        }
+    } else {
+        memset(&rec, 0, sizeof(rec));
+    }
+
+    reset_reason_request_usb_capture_after_reboot(want);
+    diag_log_printf("net_udp: usb_capture persona=%u changed=%d; rebooting",
+                    (unsigned)want, changed ? 1 : 0);
     watchdog_reboot(0, 0, 100);
     for (;;)
         tight_loop_contents();
@@ -689,6 +733,16 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
         set_persona_pending = true;
         diag_log_printf("net_udp: set_persona=%u requested by %u.%u.%u.%u:%u",
                         (unsigned)set_persona_value, ip4_addr1(ip_2_ip4(addr)),
+                        ip4_addr2(ip_2_ip4(addr)), ip4_addr3(ip_2_ip4(addr)),
+                        ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
+    } else if (type == TYPE_SET_USB_CAPTURE) {
+        send_ack(addr, port, seq);
+        set_usb_capture_persona = buf[4]; // body[0] = desired FLASH_PERSONA_*
+        set_usb_capture_enabled = (buf[5] != 0);
+        set_usb_capture_pending = true;
+        diag_log_printf("net_udp: usb_capture persona=%u enabled=%u requested by %u.%u.%u.%u:%u",
+                        (unsigned)set_usb_capture_persona,
+                        set_usb_capture_enabled ? 1u : 0u, ip4_addr1(ip_2_ip4(addr)),
                         ip4_addr2(ip_2_ip4(addr)), ip4_addr3(ip_2_ip4(addr)),
                         ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
     } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT || type == TYPE_KEY_STATE ||
@@ -767,6 +821,7 @@ bool net_udp_init(void) {
     malformed_count = 0;
     reboot_to_setup_pending = false;
     set_persona_pending = false;
+    set_usb_capture_pending = false;
     next_keepalive = make_timeout_time_ms(1000);
     diag_log_msg("net_udp: listening on UDP/4242");
     return true;
@@ -783,6 +838,10 @@ void net_udp_task(void) {
     if (set_persona_pending) {
         set_persona_pending = false;
         apply_set_persona(set_persona_value);
+    }
+    if (set_usb_capture_pending) {
+        set_usb_capture_pending = false;
+        apply_set_usb_capture(set_usb_capture_persona, set_usb_capture_enabled);
     }
     if (!have_peer)
         return;

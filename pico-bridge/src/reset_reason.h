@@ -27,9 +27,11 @@
 // RP2350 (pico-sdk issue #2203). The two together give the best
 // available post-mortem.
 //
-// scratch[4..7] are intentionally not used by this module:
+// scratch[4..7] usage:
 //   - scratch[4] is owned by the SDK's watchdog_enable_caused_reboot().
-//   - scratch[5..7] are kept available for SDK bootrom helpers.
+//   - scratch[5] carries a one-shot USB capture magic for the next boot.
+//   - scratch[6] carries the one-shot USB capture persona byte.
+//   - scratch[7] is kept available for SDK bootrom helpers.
 
 #define RESET_REASON_MAGIC_NORMAL_EXIT 0xB007C1EAu
 #define RESET_REASON_MAGIC_FAULT 0xFA0FAEDDu
@@ -111,6 +113,17 @@ void reset_reason_request_setup_with_note(const char *note);
 // flag in the breadcrumb. Stable after reset_reason_classify() returns;
 // the underlying breadcrumb field is cleared (one-shot) at that point.
 bool reset_reason_force_setup_requested(void);
+
+// Request that the next run-mode boot enables raw USB packet capture before
+// tusb_init(). The marker is stored in watchdog scratch and consumed by
+// reset_reason_consume_usb_capture_request(), so it is one-shot and does not
+// wear flash.
+void reset_reason_request_usb_capture_after_reboot(uint8_t persona);
+
+// Consume the one-shot USB capture marker, if present. Returns true and writes
+// the requested persona byte to `persona` when a request was found. The marker
+// is cleared before returning.
+bool reset_reason_consume_usb_capture_request(uint8_t *persona);
 
 // Called from the fault handler context (interrupts effectively
 // disabled). Writes scratch[0..3] + the breadcrumb so the next boot

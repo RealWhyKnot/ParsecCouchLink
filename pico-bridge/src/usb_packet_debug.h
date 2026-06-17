@@ -4,7 +4,10 @@
 #include <stdint.h>
 
 // Log raw USB packets while the debug input persona is active. Normal
-// personas never emit raw packet dumps.
+// personas emit raw packet dumps only during a bundle-requested one-shot
+// capture boot.
+void usb_packet_debug_set_capture_enabled(bool enabled);
+bool usb_packet_debug_capture_enabled(void);
 void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16_t len);
 void usb_packet_debug_note_out_report(const char *source, uint8_t report_id, uint8_t report_type,
                                       uint8_t const *buffer, uint16_t len);

@@ -27,8 +27,8 @@ use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
 use crate::{
-    cmd_persona, cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache, pico_mode,
-    pico_state, protocol,
+    cmd_auto, cmd_persona, cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache,
+    pico_mode, pico_state, protocol,
 };
 
 use collect::{bundle_log_prefix, collect_crash_file_names, collect_setup_transcript_names};
@@ -51,9 +51,16 @@ use usb_packet_summary::{
 };
 
 const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
-const BUNDLE_DEBUG_PERSONA_WAIT: Duration = Duration::from_secs(60);
-const BUNDLE_DEBUG_USB_SETTLE: Duration = Duration::from_secs(3);
+const BUNDLE_PERSONA_WAIT: Duration = Duration::from_secs(60);
 const BUNDLE_RESTORE_PERSONA_WAIT: Duration = Duration::from_secs(60);
+const ADAPTER_SURVEY_PERSONAS: &[protocol::Persona] = &[
+    protocol::Persona::Ps4,
+    protocol::Persona::Keyboard,
+    protocol::Persona::Ps3,
+    protocol::Persona::Xinput,
+    protocol::Persona::XboxOne,
+    protocol::Persona::Maple,
+];
 
 /// Structured result of a bundle build. Returned by `build_bundle` so
 /// callers get a typed answer without
@@ -94,6 +101,9 @@ struct PicoBundleCapture {
     pico_diag_text: String,
     usb_diag_text: String,
     usb_packets_text: String,
+    adapter_survey_text: String,
+    adapter_survey_json: String,
+    adapter_survey_report: Option<AdapterSurveyReport>,
 }
 
 #[derive(Clone, Debug)]
@@ -114,7 +124,62 @@ struct RetainedDebugPacketLog {
 #[derive(Clone, Debug)]
 struct BundleUsbPacketCapture {
     text: String,
-    debug_target: Option<cmd_run::PicoTarget>,
+    capture_target: Option<cmd_run::PicoTarget>,
+    adapter_survey_text: String,
+    adapter_survey_json: String,
+    adapter_survey_report: Option<AdapterSurveyReport>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AdapterSurveyReport {
+    artifact_schema_version: u8,
+    uid: String,
+    original_persona: String,
+    restore_status: String,
+    restored_persona: Option<String>,
+    best_candidate: Option<AdapterSurveyBest>,
+    attempts: Vec<AdapterSurveyAttempt>,
+    notes: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AdapterSurveyBest {
+    persona: String,
+    score_rank: u8,
+    score: String,
+    accepted: bool,
+    verdict: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AdapterSurveyAttempt {
+    persona: String,
+    current_at_start: bool,
+    switched: bool,
+    usb_diag_captured: bool,
+    score_rank: u8,
+    score: String,
+    accepted: bool,
+    verdict: String,
+    device_desc_count: u32,
+    config_desc_count: u32,
+    mount_count: u32,
+    umount_count: u32,
+    suspend_count: u32,
+    resume_count: u32,
+    input_report_sent_count: u32,
+    host_out_count: u32,
+    raw_capture: AdapterSurveyRawCapture,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AdapterSurveyRawCapture {
+    attempted: bool,
+    status: String,
+    raw_packet_lines: usize,
+    packet_stats_lines: usize,
+    usb_event_lines: usize,
+    harvest_lines: usize,
 }
 
 #[derive(Default)]
@@ -239,6 +304,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         .iter()
         .map(|capture| capture.manifest.clone())
         .collect();
+    let adapter_survey_text = aggregate_adapter_survey_text(&per_pico_captures);
+    let adapter_survey_json = adapter_survey_bundle_json(&per_pico_captures)?;
     let retained_debug_packet_logs = collect_retained_debug_packet_logs(&mut capture_log);
     let retained_debug_packet_log_names: Vec<String> = retained_debug_packet_logs
         .iter()
@@ -298,6 +365,15 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
             "raw_packets={}; stats={}",
             usb_packet_summary.aggregate.packet_lines, usb_packet_summary.aggregate.stats_lines
         ),
+    );
+    capture_log.record_duration(
+        "adapter_survey",
+        0,
+        "included",
+        adapter_survey_text
+            .len()
+            .saturating_add(adapter_survey_json.len()),
+        "txt_and_json",
     );
     capture_log.record_duration(
         "usb_packet_records",
@@ -465,6 +541,12 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     zip.start_file("usb-diag.txt", opts)?;
     zip.write_all(redact_bundle_text(&usb_diag.text).as_bytes())?;
 
+    zip.start_file("adapter-survey.txt", opts)?;
+    zip.write_all(redact_bundle_text(&adapter_survey_text).as_bytes())?;
+
+    zip.start_file("adapter-survey.json", opts)?;
+    zip.write_all(redact_bundle_text(&adapter_survey_json).as_bytes())?;
+
     for pico in &per_pico_captures {
         let base = pico.manifest.path.trim_end_matches('/');
         zip.start_file(format!("{base}/state.json"), opts)?;
@@ -475,6 +557,16 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
         zip.start_file(format!("{base}/usb-diag.txt"), opts)?;
         zip.write_all(redact_bundle_text(&pico.usb_diag_text).as_bytes())?;
+
+        if !pico.adapter_survey_text.is_empty() {
+            zip.start_file(format!("{base}/adapter-survey.txt"), opts)?;
+            zip.write_all(redact_bundle_text(&pico.adapter_survey_text).as_bytes())?;
+        }
+
+        if !pico.adapter_survey_json.is_empty() {
+            zip.start_file(format!("{base}/adapter-survey.json"), opts)?;
+            zip.write_all(redact_bundle_text(&pico.adapter_survey_json).as_bytes())?;
+        }
 
         zip.start_file(format!("{base}/usb-packets.txt"), opts)?;
         zip.write_all(redact_bundle_text(&pico.usb_packets_text).as_bytes())?;
@@ -993,12 +1085,16 @@ async fn capture_one_pico(
     let pico_diag_text: String;
     let usb_diag_text: String;
     let usb_packets_text: String;
+    let adapter_survey_text: String;
+    let adapter_survey_json: String;
+    let adapter_survey_report: Option<AdapterSurveyReport>;
 
     let state_json = if let Some(target) = seed.target.as_ref() {
         state_captured = true;
         let mut snapshot = pico_cache::PicoStateSnapshot::from_target("bundle", target);
         let target_pico_state_status;
         let target_usb_diag_status;
+        let mut target_usb_diag_data: Option<protocol::UsbDiag> = None;
 
         let started = Instant::now();
         match pico_state::query_pico_state(target, Duration::from_millis(900)).await {
@@ -1044,6 +1140,7 @@ async fn capture_one_pico(
                     target_usb_diag_status = "captured".to_string();
                     let text = cmd_usb_diag::format_usb_diag(&diag, target.persona);
                     snapshot = snapshot.with_usb_diag(&diag, target.persona);
+                    target_usb_diag_data = Some(diag);
                     capture_log.record(
                         format!("per_pico.{}.usb_diag", seed.uid),
                         started,
@@ -1077,15 +1174,24 @@ async fn capture_one_pico(
         pico_state_status = target_pico_state_status;
         pico_diag_status = target_pico_diag_status;
         pico_diag_text = target_pico_diag_text;
-        let packet_capture =
-            bundle_usb_packets_for_target(&seed.uid, target, &pico_diag_text, capture_log).await;
-        if let Some(debug_target) = packet_capture.debug_target.as_ref() {
-            snapshot =
-                pico_cache::PicoStateSnapshot::from_target("bundle-debug-capture", debug_target)
-                    .with_outcome("bundle: automatic debug input capture");
-            pico_cache::record(snapshot.clone());
+        let packet_capture = bundle_usb_packets_for_target(
+            &seed.uid,
+            target,
+            &pico_diag_text,
+            target_usb_diag_data.as_ref(),
+            capture_log,
+        )
+        .await;
+        if let Some(capture_target) = packet_capture.capture_target.as_ref() {
+            pico_cache::record(
+                pico_cache::PicoStateSnapshot::from_target("bundle-usb-capture", capture_target)
+                    .with_outcome("bundle: persona USB capture"),
+            );
         }
         usb_packets_text = packet_capture.text;
+        adapter_survey_text = packet_capture.adapter_survey_text;
+        adapter_survey_json = packet_capture.adapter_survey_json;
+        adapter_survey_report = packet_capture.adapter_survey_report;
         usb_diag_status = target_usb_diag_status;
         usb_diag_text = target_usb_diag_text;
         state_json_from_snapshot(&snapshot)
@@ -1099,6 +1205,9 @@ async fn capture_one_pico(
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
         usb_packets_text = offline_pico_text(&seed, "USB packet dump");
+        adapter_survey_text = String::new();
+        adapter_survey_json = String::new();
+        adapter_survey_report = None;
         state_json_from_snapshot(&snapshot)
     } else if let Some(cached) = seed.cached_state_json.as_ref() {
         state_captured = true;
@@ -1108,6 +1217,9 @@ async fn capture_one_pico(
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
         usb_packets_text = offline_pico_text(&seed, "USB packet dump");
+        adapter_survey_text = String::new();
+        adapter_survey_json = String::new();
+        adapter_survey_report = None;
         cached.clone()
     } else {
         state_captured = false;
@@ -1117,6 +1229,9 @@ async fn capture_one_pico(
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
         usb_packets_text = offline_pico_text(&seed, "USB packet dump");
+        adapter_survey_text = String::new();
+        adapter_survey_json = String::new();
+        adapter_survey_report = None;
         "{}\n".to_string()
     };
     let usb_packet_count = count_usb_packet_lines(&usb_packets_text);
@@ -1165,6 +1280,9 @@ async fn capture_one_pico(
         pico_diag_text,
         usb_diag_text,
         usb_packets_text,
+        adapter_survey_text,
+        adapter_survey_json,
+        adapter_survey_report,
     }
 }
 
@@ -1172,47 +1290,343 @@ async fn bundle_usb_packets_for_target(
     uid: &str,
     target: &cmd_run::PicoTarget,
     fallback_diag_text: &str,
+    current_diag: Option<&protocol::UsbDiag>,
     capture_log: &mut CaptureLog,
 ) -> BundleUsbPacketCapture {
-    if target.persona == protocol::Persona::Debug {
-        return BundleUsbPacketCapture {
-            text: harvest_debug_packets_for_target(uid, target, fallback_diag_text, capture_log)
-                .await,
-            debug_target: Some(target.clone()),
+    let original_persona = target.persona;
+    let mut current = target.clone();
+    let mut attempts = Vec::new();
+    let mut capture_sections = Vec::new();
+    let mut capture_target = None;
+    let mut current_accepted = false;
+
+    let mut current_raw_capture = AdapterSurveyRawCapture::not_attempted("not_needed");
+    let current_needs_capture = current_diag
+        .map(|diag| diag.device_desc_count > 0 && !survey_diag_accepted(target.persona, diag))
+        .unwrap_or(false);
+    if current_needs_capture {
+        let captured = if target.persona == protocol::Persona::Debug {
+            let text =
+                harvest_usb_packets_for_target(uid, target, fallback_diag_text, capture_log).await;
+            PersonaPacketCapture {
+                raw_capture: AdapterSurveyRawCapture {
+                    attempted: true,
+                    status: "captured".to_string(),
+                    raw_packet_lines: count_usb_packet_lines(&text),
+                    packet_stats_lines: count_usb_packet_stats_lines(&text),
+                    usb_event_lines: count_usb_packet_event_lines(&text),
+                    harvest_lines: count_usb_packet_harvest_lines(&text),
+                },
+                text,
+                capture_target: Some(target.clone()),
+            }
+        } else {
+            capture_persona_usb_packets(
+                uid,
+                target,
+                target.persona,
+                fallback_diag_text,
+                capture_log,
+            )
+            .await
         };
+        current_raw_capture = captured.raw_capture;
+        if let Some(target) = captured.capture_target {
+            current = target.clone();
+            capture_target = Some(target);
+        }
+        if !captured.text.is_empty() {
+            capture_sections.push(captured.text);
+        }
     }
 
-    let original_persona = target.persona;
-    let started = Instant::now();
-    let mut note = String::new();
-    match pico_mode::request_set_persona(target, protocol::Persona::Debug).await {
-        Ok(()) => {
-            capture_log.record(
-                format!("per_pico.{uid}.debug_cycle_request"),
-                started,
-                "sent",
-                1,
-                format!("from={} to=debug", original_persona.label()),
-            );
+    let current_attempt = survey_attempt_from_diag(
+        target.persona,
+        true,
+        false,
+        current_diag.cloned(),
+        current_raw_capture,
+    );
+    if current_attempt.accepted {
+        current_accepted = true;
+    }
+    attempts.push(current_attempt);
+
+    let mut candidates = Vec::new();
+    if !current_accepted || target.persona == protocol::Persona::Debug {
+        for persona in ADAPTER_SURVEY_PERSONAS {
+            if !candidates.contains(persona) && *persona != target.persona {
+                candidates.push(*persona);
+            }
         }
+    }
+
+    for candidate in candidates {
+        let switched = current.persona != candidate;
+        let Some(active) =
+            switch_to_survey_persona(uid, current.clone(), candidate, capture_log).await
+        else {
+            attempts.push(survey_attempt_from_diag(
+                candidate,
+                false,
+                switched,
+                None,
+                AdapterSurveyRawCapture::not_attempted("switch_failed"),
+            ));
+            continue;
+        };
+        current = active.clone();
+
+        capture_log.record_duration(
+            format!(
+                "per_pico.{uid}.adapter_survey.{}.usb_settle",
+                candidate.label()
+            ),
+            cmd_auto::USB_SETTLE.as_millis() as u64,
+            "sleep",
+            0,
+            "allow adapter USB host detection",
+        );
+        tokio::time::sleep(cmd_auto::USB_SETTLE).await;
+
+        let diag = query_survey_usb_diag(uid, &active, candidate, capture_log).await;
+        let needs_capture = diag
+            .as_ref()
+            .map(|diag| diag.device_desc_count > 0 && !survey_diag_accepted(candidate, diag))
+            .unwrap_or(false);
+        let mut raw_capture = AdapterSurveyRawCapture::not_attempted("not_needed");
+        if needs_capture {
+            let captured = capture_persona_usb_packets(
+                uid,
+                &active,
+                candidate,
+                fallback_diag_text,
+                capture_log,
+            )
+            .await;
+            raw_capture = captured.raw_capture;
+            if let Some(target) = captured.capture_target {
+                current = target.clone();
+                capture_target = Some(target);
+            }
+            if !captured.text.is_empty() {
+                capture_sections.push(captured.text);
+            }
+        }
+
+        attempts.push(survey_attempt_from_diag(
+            candidate,
+            false,
+            switched,
+            diag,
+            raw_capture,
+        ));
+    }
+
+    let restore_status =
+        restore_persona_after_bundle(uid, &current, original_persona, capture_log).await;
+    let restored_persona = if restore_status == "confirmed" || restore_status == "already_current" {
+        Some(original_persona.label().to_string())
+    } else {
+        None
+    };
+    let best_candidate = best_adapter_survey_candidate(&attempts);
+    let report = AdapterSurveyReport {
+        artifact_schema_version: 1,
+        uid: uid.to_string(),
+        original_persona: original_persona.label().to_string(),
+        restore_status,
+        restored_persona,
+        best_candidate,
+        attempts,
+        notes: vec![
+            "Debug mode uses the XInput USB shape and is not selected as adapter proof.",
+            "Polling or configured means the adapter accepted that persona.",
+            "device_desc_count=0 means the adapter did not enumerate that persona.",
+            "Descriptor traffic without configuration points to descriptor or report rejection.",
+        ],
+    };
+
+    let adapter_survey_text = adapter_survey_text(&report);
+    let adapter_survey_json = adapter_survey_report_json(&report);
+    let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
+    for section in capture_sections {
+        text.push('\n');
+        text.push_str(&section);
+    }
+    BundleUsbPacketCapture {
+        text,
+        capture_target,
+        adapter_survey_text,
+        adapter_survey_json,
+        adapter_survey_report: Some(report),
+    }
+}
+
+async fn switch_to_survey_persona(
+    uid: &str,
+    current: cmd_run::PicoTarget,
+    candidate: protocol::Persona,
+    capture_log: &mut CaptureLog,
+) -> Option<cmd_run::PicoTarget> {
+    if current.persona == candidate {
+        return Some(current);
+    }
+
+    let started = Instant::now();
+    match pico_mode::request_set_persona(&current, candidate).await {
+        Ok(()) => capture_log.record(
+            format!(
+                "per_pico.{uid}.adapter_survey.{}.switch_request",
+                candidate.label()
+            ),
+            started,
+            "sent",
+            1,
+            format!("from={} to={}", current.persona.label(), candidate.label()),
+        ),
         Err(e) => {
             capture_log.record(
-                format!("per_pico.{uid}.debug_cycle_request"),
+                format!(
+                    "per_pico.{uid}.adapter_survey.{}.switch_request",
+                    candidate.label()
+                ),
                 started,
                 "error",
                 0,
                 format!("{e:#}"),
             );
-            let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
-            let _ = writeln!(
-                text,
-                "# bundle-debug-cycle status=request_failed from={} error={}",
-                original_persona.label(),
-                sanitize_log_field(&format!("{e:#}"))
+            return None;
+        }
+    }
+
+    let started = Instant::now();
+    let matched = match cmd_persona::wait_for_persona(
+        &[current.info.unique_id_short],
+        candidate,
+        BUNDLE_PERSONA_WAIT,
+    )
+    .await
+    {
+        Ok(matched) => matched,
+        Err(e) => {
+            capture_log.record(
+                format!(
+                    "per_pico.{uid}.adapter_survey.{}.switch_wait",
+                    candidate.label()
+                ),
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
             );
-            return BundleUsbPacketCapture {
-                text,
-                debug_target: None,
+            return None;
+        }
+    };
+    let found = matched
+        .iter()
+        .find(|pico| pico.info.unique_id_short == current.info.unique_id_short)
+        .cloned();
+    capture_log.record(
+        format!(
+            "per_pico.{uid}.adapter_survey.{}.switch_wait",
+            candidate.label()
+        ),
+        started,
+        if found
+            .as_ref()
+            .map(|pico| pico.persona == candidate)
+            .unwrap_or(false)
+        {
+            "confirmed"
+        } else {
+            "not_confirmed"
+        },
+        matched.len(),
+        format!("observed={}", format_observed_personas(&matched)),
+    );
+    match found {
+        Some(pico) if pico.persona == candidate => Some(pico),
+        _ => None,
+    }
+}
+
+async fn query_survey_usb_diag(
+    uid: &str,
+    target: &cmd_run::PicoTarget,
+    persona: protocol::Persona,
+    capture_log: &mut CaptureLog,
+) -> Option<protocol::UsbDiag> {
+    let started = Instant::now();
+    match cmd_usb_diag::query_usb_diag(target, cmd_auto::USB_PROBE).await {
+        Ok(diag) => {
+            capture_log.record(
+                format!("per_pico.{uid}.adapter_survey.{}.usb_diag", persona.label()),
+                started,
+                "captured",
+                protocol::USB_DIAG_WIRE_SIZE,
+                format!(
+                    "score={}; device_desc_count={}; config_desc_count={}",
+                    cmd_auto::score_label(cmd_auto::score_usb_diag(&diag)),
+                    diag.device_desc_count,
+                    diag.config_desc_count
+                ),
+            );
+            Some(diag)
+        }
+        Err(e) => {
+            capture_log.record(
+                format!("per_pico.{uid}.adapter_survey.{}.usb_diag", persona.label()),
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
+            );
+            None
+        }
+    }
+}
+
+struct PersonaPacketCapture {
+    text: String,
+    raw_capture: AdapterSurveyRawCapture,
+    capture_target: Option<cmd_run::PicoTarget>,
+}
+
+async fn capture_persona_usb_packets(
+    uid: &str,
+    target: &cmd_run::PicoTarget,
+    persona: protocol::Persona,
+    fallback_diag_text: &str,
+    capture_log: &mut CaptureLog,
+) -> PersonaPacketCapture {
+    let started = Instant::now();
+    match pico_mode::request_set_usb_capture_persona(target, persona).await {
+        Ok(()) => capture_log.record(
+            format!(
+                "per_pico.{uid}.adapter_survey.{}.capture_request",
+                persona.label()
+            ),
+            started,
+            "sent",
+            1,
+            "usb_capture=enabled",
+        ),
+        Err(e) => {
+            capture_log.record(
+                format!(
+                    "per_pico.{uid}.adapter_survey.{}.capture_request",
+                    persona.label()
+                ),
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
+            );
+            return PersonaPacketCapture {
+                text: String::new(),
+                raw_capture: AdapterSurveyRawCapture::not_attempted("request_failed"),
+                capture_target: None,
             };
         }
     }
@@ -1220,101 +1634,120 @@ async fn bundle_usb_packets_for_target(
     let started = Instant::now();
     let matched = match cmd_persona::wait_for_persona(
         &[target.info.unique_id_short],
-        protocol::Persona::Debug,
-        BUNDLE_DEBUG_PERSONA_WAIT,
+        persona,
+        BUNDLE_PERSONA_WAIT,
     )
     .await
     {
         Ok(matched) => matched,
         Err(e) => {
             capture_log.record(
-                format!("per_pico.{uid}.debug_cycle_wait"),
+                format!(
+                    "per_pico.{uid}.adapter_survey.{}.capture_wait",
+                    persona.label()
+                ),
                 started,
                 "error",
                 0,
                 format!("{e:#}"),
             );
-            let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
-            let _ = writeln!(
-                text,
-                "# bundle-debug-cycle status=wait_failed from={} error={}",
-                original_persona.label(),
-                sanitize_log_field(&format!("{e:#}"))
-            );
-            return BundleUsbPacketCapture {
-                text,
-                debug_target: None,
+            return PersonaPacketCapture {
+                text: String::new(),
+                raw_capture: AdapterSurveyRawCapture::not_attempted("wait_failed"),
+                capture_target: None,
             };
         }
     };
-    let observed = format_observed_personas(&matched);
-    let debug_target = matched
+    let found = matched
         .iter()
-        .find(|pico| pico.persona == protocol::Persona::Debug)
+        .find(|pico| pico.info.unique_id_short == target.info.unique_id_short)
         .cloned();
     capture_log.record(
-        format!("per_pico.{uid}.debug_cycle_wait"),
+        format!(
+            "per_pico.{uid}.adapter_survey.{}.capture_wait",
+            persona.label()
+        ),
         started,
-        if debug_target.is_some() {
+        if found
+            .as_ref()
+            .map(|pico| pico.persona == persona)
+            .unwrap_or(false)
+        {
             "confirmed"
         } else {
             "not_confirmed"
         },
         matched.len(),
-        format!("observed={observed}"),
+        format!("observed={}", format_observed_personas(&matched)),
     );
-
-    let Some(debug_target) = debug_target else {
-        if let Some(current) = matched.first() {
-            if current.persona != original_persona {
-                restore_persona_after_bundle(uid, current, original_persona, capture_log).await;
-            }
-        }
-        let mut text = usb_packets_text_from_diag(uid, fallback_diag_text);
-        let _ = writeln!(
-            text,
-            "# bundle-debug-cycle status=not_confirmed from={} observed={}",
-            original_persona.label(),
-            observed
-        );
-        return BundleUsbPacketCapture {
-            text,
-            debug_target: None,
+    let Some(capture_target) = found.filter(|pico| pico.persona == persona) else {
+        return PersonaPacketCapture {
+            text: String::new(),
+            raw_capture: AdapterSurveyRawCapture::not_attempted("not_confirmed"),
+            capture_target: None,
         };
     };
 
     capture_log.record_duration(
-        format!("per_pico.{uid}.debug_usb_settle"),
-        BUNDLE_DEBUG_USB_SETTLE.as_millis() as u64,
+        format!(
+            "per_pico.{uid}.adapter_survey.{}.capture_settle",
+            persona.label()
+        ),
+        cmd_auto::USB_SETTLE.as_millis() as u64,
         "sleep",
         0,
-        "allow USB host to enumerate and poll debug input persona",
+        "allow capture-enabled persona to enumerate",
     );
-    tokio::time::sleep(BUNDLE_DEBUG_USB_SETTLE).await;
+    tokio::time::sleep(cmd_auto::USB_SETTLE).await;
 
-    let text =
-        harvest_debug_packets_for_target(uid, &debug_target, fallback_diag_text, capture_log).await;
-
-    if original_persona != protocol::Persona::Debug {
-        restore_persona_after_bundle(uid, &debug_target, original_persona, capture_log).await;
-        let _ = writeln!(
-            note,
-            "# bundle-debug-cycle restore_requested persona={}",
-            original_persona.label()
-        );
-    }
-
-    let mut text = text;
-    if !note.is_empty() {
-        text.push_str(&note);
-    }
-    BundleUsbPacketCapture {
+    let mut text =
+        harvest_usb_packets_for_target(uid, &capture_target, fallback_diag_text, capture_log).await;
+    let _ = writeln!(
         text,
-        debug_target: Some(debug_target),
+        "# adapter-survey-capture persona={} status=attempted",
+        persona.label()
+    );
+    let raw_capture = AdapterSurveyRawCapture {
+        attempted: true,
+        status: "captured".to_string(),
+        raw_packet_lines: count_usb_packet_lines(&text),
+        packet_stats_lines: count_usb_packet_stats_lines(&text),
+        usb_event_lines: count_usb_packet_event_lines(&text),
+        harvest_lines: count_usb_packet_harvest_lines(&text),
+    };
+
+    let started = Instant::now();
+    match pico_mode::request_clear_usb_capture(&capture_target).await {
+        Ok(()) => capture_log.record(
+            format!(
+                "per_pico.{uid}.adapter_survey.{}.capture_clear",
+                persona.label()
+            ),
+            started,
+            "sent",
+            1,
+            "usb_capture=disabled",
+        ),
+        Err(e) => capture_log.record(
+            format!(
+                "per_pico.{uid}.adapter_survey.{}.capture_clear",
+                persona.label()
+            ),
+            started,
+            "error",
+            0,
+            format!("{e:#}"),
+        ),
+    }
+
+    PersonaPacketCapture {
+        text,
+        raw_capture,
+        capture_target: Some(capture_target),
     }
 }
 
-async fn harvest_debug_packets_for_target(
+async fn harvest_usb_packets_for_target(
     uid: &str,
     target: &cmd_run::PicoTarget,
     fallback_diag_text: &str,
@@ -1328,7 +1761,7 @@ async fn harvest_debug_packets_for_target(
             let duration_ms = duration_ms_u64(started.elapsed());
             let text = usb_packets_text_from_debug_snapshot(uid, &snapshot, duration_ms);
             capture_log.record(
-                format!("per_pico.{uid}.debug_packet_harvest"),
+                format!("per_pico.{uid}.usb_packet_harvest"),
                 started,
                 "captured",
                 text.len(),
@@ -1351,7 +1784,7 @@ async fn harvest_debug_packets_for_target(
             ));
             text.push('\n');
             capture_log.record(
-                format!("per_pico.{uid}.debug_packet_harvest"),
+                format!("per_pico.{uid}.usb_packet_harvest"),
                 started,
                 "error",
                 text.len(),
@@ -1362,12 +1795,303 @@ async fn harvest_debug_packets_for_target(
     }
 }
 
+impl AdapterSurveyRawCapture {
+    fn not_attempted(status: &str) -> Self {
+        Self {
+            attempted: false,
+            status: status.to_string(),
+            raw_packet_lines: 0,
+            packet_stats_lines: 0,
+            usb_event_lines: 0,
+            harvest_lines: 0,
+        }
+    }
+}
+
+fn survey_attempt_from_diag(
+    persona: protocol::Persona,
+    current_at_start: bool,
+    switched: bool,
+    diag: Option<protocol::UsbDiag>,
+    raw_capture: AdapterSurveyRawCapture,
+) -> AdapterSurveyAttempt {
+    let score = diag
+        .as_ref()
+        .map(cmd_auto::score_usb_diag)
+        .unwrap_or(cmd_auto::AutoScore::NoUsbTraffic);
+    let accepted = diag
+        .as_ref()
+        .map(|diag| survey_diag_accepted(persona, diag))
+        .unwrap_or(false);
+    AdapterSurveyAttempt {
+        persona: persona.label().to_string(),
+        current_at_start,
+        switched,
+        usb_diag_captured: diag.is_some(),
+        score_rank: score as u8,
+        score: cmd_auto::score_label(score).to_string(),
+        accepted,
+        verdict: adapter_survey_verdict(persona, diag.as_ref(), score, accepted).to_string(),
+        device_desc_count: diag
+            .as_ref()
+            .map(|diag| diag.device_desc_count)
+            .unwrap_or(0),
+        config_desc_count: diag
+            .as_ref()
+            .map(|diag| diag.config_desc_count)
+            .unwrap_or(0),
+        mount_count: diag.as_ref().map(|diag| diag.mount_count).unwrap_or(0),
+        umount_count: diag.as_ref().map(|diag| diag.umount_count).unwrap_or(0),
+        suspend_count: diag.as_ref().map(|diag| diag.suspend_count).unwrap_or(0),
+        resume_count: diag.as_ref().map(|diag| diag.resume_count).unwrap_or(0),
+        input_report_sent_count: diag
+            .as_ref()
+            .map(|diag| diag.xinput_in_sent_count)
+            .unwrap_or(0),
+        host_out_count: diag.as_ref().map(|diag| diag.xinput_out_count).unwrap_or(0),
+        raw_capture,
+    }
+}
+
+fn survey_diag_accepted(persona: protocol::Persona, diag: &protocol::UsbDiag) -> bool {
+    persona != protocol::Persona::Debug
+        && cmd_auto::adapter_accepts_score(cmd_auto::score_usb_diag(diag))
+}
+
+fn adapter_survey_verdict(
+    persona: protocol::Persona,
+    diag: Option<&protocol::UsbDiag>,
+    score: cmd_auto::AutoScore,
+    accepted: bool,
+) -> &'static str {
+    if accepted {
+        return "accepted_by_adapter";
+    }
+    let Some(diag) = diag else {
+        return "usb_diag_not_captured";
+    };
+    if persona == protocol::Persona::Debug && cmd_auto::adapter_accepts_score(score) {
+        return "debug_xinput_evidence_only";
+    }
+    if diag.device_desc_count == 0 {
+        return "adapter_did_not_enumerate";
+    }
+    "descriptor_or_report_rejected"
+}
+
+fn best_adapter_survey_candidate(attempts: &[AdapterSurveyAttempt]) -> Option<AdapterSurveyBest> {
+    let mut best: Option<&AdapterSurveyAttempt> = None;
+    for attempt in attempts {
+        if attempt.persona == protocol::Persona::Debug.label() || !attempt.usb_diag_captured {
+            continue;
+        }
+        let replace = best
+            .map(|existing| {
+                (attempt.accepted && !existing.accepted)
+                    || (attempt.accepted == existing.accepted
+                        && attempt.score_rank > existing.score_rank)
+            })
+            .unwrap_or(true);
+        if replace {
+            best = Some(attempt);
+        }
+    }
+    best.map(|attempt| AdapterSurveyBest {
+        persona: attempt.persona.clone(),
+        score_rank: attempt.score_rank,
+        score: attempt.score.clone(),
+        accepted: attempt.accepted,
+        verdict: attempt.verdict.clone(),
+    })
+}
+
+fn adapter_survey_text(report: &AdapterSurveyReport) -> String {
+    let mut out = String::from("Adapter persona survey\n\n");
+    let _ = writeln!(out, "uid={}", report.uid);
+    let _ = writeln!(out, "original_persona={}", report.original_persona);
+    let _ = writeln!(out, "restore_status={}", report.restore_status);
+    let _ = writeln!(
+        out,
+        "restored_persona={}",
+        report.restored_persona.as_deref().unwrap_or("unknown")
+    );
+    if let Some(best) = report.best_candidate.as_ref() {
+        let _ = writeln!(
+            out,
+            "selected_best={} accepted={} score_rank={} score={} verdict={}",
+            best.persona, best.accepted, best.score_rank, best.score, best.verdict
+        );
+    } else {
+        out.push_str(
+            "selected_best=none accepted=false score_rank=0 score=none verdict=no_usb_diag\n",
+        );
+    }
+    let _ = writeln!(out);
+    out.push_str("attempts=\n");
+    for attempt in &report.attempts {
+        let _ = writeln!(
+            out,
+            "- persona={} current_at_start={} switched={} usb_diag_captured={} accepted={} verdict={} score_rank={} score={} device_desc_count={} config_desc_count={} mounts={} unmounts={} suspends={} resumes={} input_report_sent_count={} host_out_count={} raw_capture_attempted={} raw_packets={} events={} stats={} harvests={} raw_capture_status={}",
+            attempt.persona,
+            attempt.current_at_start,
+            attempt.switched,
+            attempt.usb_diag_captured,
+            attempt.accepted,
+            attempt.verdict,
+            attempt.score_rank,
+            attempt.score,
+            attempt.device_desc_count,
+            attempt.config_desc_count,
+            attempt.mount_count,
+            attempt.umount_count,
+            attempt.suspend_count,
+            attempt.resume_count,
+            attempt.input_report_sent_count,
+            attempt.host_out_count,
+            attempt.raw_capture.attempted,
+            attempt.raw_capture.raw_packet_lines,
+            attempt.raw_capture.usb_event_lines,
+            attempt.raw_capture.packet_stats_lines,
+            attempt.raw_capture.harvest_lines,
+            attempt.raw_capture.status
+        );
+    }
+    let _ = writeln!(out);
+    out.push_str("meaning=\n");
+    out.push_str(
+        "- accepted_by_adapter: adapter reached configured or polling state for that persona.\n",
+    );
+    out.push_str("- adapter_did_not_enumerate: device_desc_count was zero for that persona.\n");
+    out.push_str("- descriptor_or_report_rejected: the adapter requested descriptors but did not keep the persona configured.\n");
+    out.push_str("- debug_xinput_evidence_only: debug mode was observed, but it only proves the debug/XInput USB shape.\n");
+    out
+}
+
+fn adapter_survey_report_json(report: &AdapterSurveyReport) -> String {
+    serde_json::to_string_pretty(report).unwrap_or_else(|e| {
+        format!(
+            "{{\"artifact_schema_version\":1,\"error\":\"adapter survey serialization failed: {}\"}}\n",
+            e
+        )
+    })
+}
+
+fn aggregate_adapter_survey_text(captures: &[PicoBundleCapture]) -> String {
+    let mut out = String::from("Aggregate adapter persona survey\n\n");
+    let mut count = 0usize;
+    for capture in captures {
+        if capture.adapter_survey_text.is_empty() {
+            continue;
+        }
+        count += 1;
+        let _ = writeln!(
+            out,
+            "## uid={} path={}/adapter-survey.txt",
+            capture.manifest.uid, capture.manifest.path
+        );
+        out.push_str(&capture.adapter_survey_text);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if count == 0 {
+        out.push_str("No live Pico adapter survey was captured.\n");
+    }
+    out
+}
+
+#[derive(Serialize)]
+struct AdapterSurveyBundleReport<'a> {
+    artifact_schema_version: u8,
+    survey_count: usize,
+    best_candidate: Option<AdapterSurveyBundleBest>,
+    per_pico: Vec<&'a AdapterSurveyReport>,
+    notes: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct AdapterSurveyBundleBest {
+    uid: String,
+    path: String,
+    persona: String,
+    score_rank: u8,
+    score: String,
+    accepted: bool,
+    verdict: String,
+}
+
+fn adapter_survey_bundle_json(captures: &[PicoBundleCapture]) -> Result<String> {
+    let per_pico = captures
+        .iter()
+        .filter_map(|capture| capture.adapter_survey_report.as_ref())
+        .collect::<Vec<_>>();
+    let report = AdapterSurveyBundleReport {
+        artifact_schema_version: 1,
+        survey_count: per_pico.len(),
+        best_candidate: best_adapter_survey_bundle_candidate(captures),
+        per_pico,
+        notes: vec![
+            "The survey is non-interactive and restores the original persona after the bundle pass.",
+            "Accepted personas reached configured or polling state according to firmware USB counters.",
+            "Debug mode is retained only as debug/XInput evidence and is not selected as adapter proof.",
+        ],
+    };
+    Ok(serde_json::to_string_pretty(&report)?)
+}
+
+fn best_adapter_survey_bundle_candidate(
+    captures: &[PicoBundleCapture],
+) -> Option<AdapterSurveyBundleBest> {
+    let mut best: Option<AdapterSurveyBundleBest> = None;
+    for capture in captures {
+        let Some(report) = capture.adapter_survey_report.as_ref() else {
+            continue;
+        };
+        let Some(candidate) = report.best_candidate.as_ref() else {
+            continue;
+        };
+        let candidate = AdapterSurveyBundleBest {
+            uid: capture.manifest.uid.clone(),
+            path: capture.manifest.path.clone(),
+            persona: candidate.persona.clone(),
+            score_rank: candidate.score_rank,
+            score: candidate.score.clone(),
+            accepted: candidate.accepted,
+            verdict: candidate.verdict.clone(),
+        };
+        let replace = best
+            .as_ref()
+            .map(|existing| {
+                (candidate.accepted && !existing.accepted)
+                    || (candidate.accepted == existing.accepted
+                        && candidate.score_rank > existing.score_rank)
+            })
+            .unwrap_or(true);
+        if replace {
+            best = Some(candidate);
+        }
+    }
+    best
+}
+
 async fn restore_persona_after_bundle(
     uid: &str,
     target: &cmd_run::PicoTarget,
     persona: protocol::Persona,
     capture_log: &mut CaptureLog,
-) {
+) -> String {
+    if target.persona == persona {
+        capture_log.record_duration(
+            format!("per_pico.{uid}.restore_persona_request"),
+            0,
+            "already_current",
+            0,
+            format!("persona={}", persona.label()),
+        );
+        return "already_current".to_string();
+    }
+
     let started = Instant::now();
     match pico_mode::request_set_persona(target, persona).await {
         Ok(()) => capture_log.record(
@@ -1385,7 +2109,7 @@ async fn restore_persona_after_bundle(
                 0,
                 format!("{e:#}"),
             );
-            return;
+            return "request_failed".to_string();
         }
     }
 
@@ -1399,14 +2123,15 @@ async fn restore_persona_after_bundle(
     {
         Ok(matched) => {
             let restored = matched.iter().find(|pico| pico.persona == persona);
+            let status = if restored.is_some() {
+                "confirmed"
+            } else {
+                "not_confirmed"
+            };
             capture_log.record(
                 format!("per_pico.{uid}.restore_persona_wait"),
                 started,
-                if restored.is_some() {
-                    "confirmed"
-                } else {
-                    "not_confirmed"
-                },
+                status,
                 matched.len(),
                 format!("observed={}", format_observed_personas(&matched)),
             );
@@ -1416,14 +2141,18 @@ async fn restore_persona_after_bundle(
                         .with_outcome(format!("restored_{}", persona.label())),
                 );
             }
+            status.to_string()
         }
-        Err(e) => capture_log.record(
-            format!("per_pico.{uid}.restore_persona_wait"),
-            started,
-            "error",
-            0,
-            format!("{e:#}"),
-        ),
+        Err(e) => {
+            capture_log.record(
+                format!("per_pico.{uid}.restore_persona_wait"),
+                started,
+                "error",
+                0,
+                format!("{e:#}"),
+            );
+            "wait_failed".to_string()
+        }
     }
 }
 
@@ -1554,7 +2283,7 @@ fn usb_packets_text_from_lines(uid: &str, lines: &[String], harvest_line: Option
     let _ = writeln!(out, "# uid={uid}");
     let _ = writeln!(
         out,
-        "# These lines are present only when the Pico is in debug input mode."
+        "# These lines are present when debug input mode or bundle USB capture is active."
     );
     let _ = writeln!(out);
     for line in lines {
@@ -1564,7 +2293,7 @@ fn usb_packets_text_from_lines(uid: &str, lines: &[String], harvest_line: Option
     if lines.is_empty() {
         let _ = writeln!(
             out,
-            "No usb-packet, usb-event, or usb-packet-stats lines were present. Switch the Pico to debug input mode, reproduce the adapter traffic, then run bundle again."
+            "No usb-packet, usb-event, or usb-packet-stats lines were present in this diagnostic source."
         );
     }
     if let Some(line) = harvest_line {
@@ -1674,7 +2403,7 @@ fn aggregate_usb_packets(
         }
     }
     if diagnostic_total == 0 {
-        out.push_str("No debug input USB packet, lifecycle event, stat, or harvest lines were captured in this bundle.\n");
+        out.push_str("No USB packet, lifecycle event, stat, or harvest lines were captured in this bundle.\n");
     } else if raw_total == 0 {
         let mut kinds = Vec::new();
         if stats_total > 0 {
@@ -1717,6 +2446,9 @@ fn debug_capture_verdict_text(
         .filter(|capture| state_json_persona(&capture.state_json).as_deref() == Some("debug"))
         .count();
     let mut out = String::from("Debug input packet capture verdict\n\n");
+    out.push_str(
+        "scope=debug_xinput_only; use adapter-survey.txt for persona-specific adapter acceptance.\n",
+    );
     let _ = writeln!(out, "overall_status={status}");
     let _ = writeln!(out, "evidence_grade={evidence_grade}");
     let _ = writeln!(out, "capture_quality={capture_quality}");
@@ -1856,7 +2588,7 @@ fn debug_capture_verdict_text(
     out.push_str(
         "- endpoint_in_lines or endpoint_out_lines > 0 is preferred for runtime adapter traffic.\n",
     );
-    out.push_str("- debug_persona_captures > 0 proves the Pico was in debug input mode when bundle captured current state.\n");
+    out.push_str("- debug_persona_captures > 0 proves the Pico was in debug input mode when bundle captured current state; it does not prove PS4, keyboard, PS3, Xbox One, or Maple acceptance.\n");
     let _ = writeln!(out);
 
     out.push_str("missing_evidence=\n");
@@ -1873,7 +2605,7 @@ fn debug_capture_verdict_text(
     out.push_str("meaning=");
     match status {
         "raw_packets_captured" => out.push_str(
-            "This bundle contains raw debug input USB packets for adapter reverse engineering.",
+            "This bundle contains raw debug input USB packets. That evidence uses the debug/XInput USB shape; adapter-survey.txt records persona-specific acceptance.",
         ),
         "debug_stats_only" => out.push_str(
             "Debug input packet counters were present, but raw packet payload lines were not retained.",
@@ -1901,10 +2633,10 @@ fn debug_capture_verdict_text(
     out.push_str("next_steps=\n");
     if summary.aggregate.packet_lines == 0 {
         out.push_str(
-            "- Run bundle again with the Pico powered and connected to the adapter; bundle switches to debug input mode and restores the original mode automatically.\n",
+            "- Check adapter-survey.txt for persona-specific USB verdicts. If raw capture was needed, bundle attempted capture in that same persona.\n",
         );
         out.push_str(
-            "- If bundle-capture.txt shows debug_cycle_request, debug_cycle_wait, debug_packet_harvest, or GET_LOG failures, use that row's reason as the failure point.\n",
+            "- If bundle-capture.txt shows adapter_survey, usb_packet_harvest, or GET_LOG failures, use that row's reason as the failure point.\n",
         );
         out.push_str(
             "- If retained debug-packets/*.log files are present, include the whole bundle; those files contain prior stream-time harvest evidence.\n",
@@ -2085,9 +2817,10 @@ fn debug_capture_evidence_report_json(
         notes: vec![
             "This file is machine-readable evidence for debug input packet capture quality.",
             "adapter_reverse_engineering_gate=pass requires raw debug input packet payload lines.",
+            "Debug mode uses the XInput USB shape; adapter-survey.json records persona-specific adapter acceptance.",
             "capture_quality is lossy when packet payloads are truncated or GET_LOG harvests report lost bytes or missing chunks.",
             "Per-source summary counts are calculated independently; aggregate sequence gaps are summed per source.",
-            "Raw packet dumps are only present when the Pico was intentionally switched into debug input mode.",
+            "Raw packet dumps can come from debug input mode or a bundle-requested one-shot USB capture boot.",
             "USB lifecycle event rows can show mount, unmount, suspend, or resume even when raw packet payloads are absent.",
         ],
     };
@@ -2319,6 +3052,10 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
     } else {
         println!("  usb-diag.txt: not captured -- see the file for details");
     }
+    println!(
+        "  adapter-survey.txt: included for {} Pico capture(s)",
+        summary.per_pico_capture_count
+    );
     let total_packet_count = summary.usb_packet_dump_count + summary.retained_debug_packet_count;
     if total_packet_count > 0 {
         println!(
@@ -2326,7 +3063,7 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
             total_packet_count
         );
     } else {
-        println!("  usb-packets.txt: no raw packets captured (debug input mode only)");
+        println!("  usb-packets.txt: no raw packets captured");
     }
     println!(
         "  debug-capture-verdict.txt: {}",
@@ -2389,11 +3126,13 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        aggregate_usb_packets, count_usb_packet_event_lines, count_usb_packet_harvest_lines,
-        count_usb_packet_lines, count_usb_packet_stats_lines, debug_capture_evidence_report_json,
+        adapter_survey_bundle_json, adapter_survey_report_json, adapter_survey_text,
+        aggregate_adapter_survey_text, aggregate_usb_packets, best_adapter_survey_candidate,
+        count_usb_packet_event_lines, count_usb_packet_harvest_lines, count_usb_packet_lines,
+        count_usb_packet_stats_lines, debug_capture_evidence_report_json,
         debug_capture_overall_status, debug_capture_verdict_text, sanitize_path_component,
-        usb_packets_text_from_debug_snapshot, usb_packets_text_from_diag, PicoBundleCapture,
-        RetainedDebugPacketLog,
+        usb_packets_text_from_debug_snapshot, usb_packets_text_from_diag, AdapterSurveyAttempt,
+        AdapterSurveyRawCapture, AdapterSurveyReport, PicoBundleCapture, RetainedDebugPacketLog,
     };
     use super::{summarize_sources, ManifestPicoCapture, UsbPacketSummarySource};
 
@@ -2751,6 +3490,98 @@ mod tests {
         assert!(text.contains("debug-packets/usb-packets-20260615-214000-02E22DA9.log"));
     }
 
+    #[test]
+    fn adapter_survey_text_selects_accepted_ps4_candidate() {
+        let attempts = vec![
+            survey_attempt("debug", false, "debug_xinput_evidence_only", 4, 1),
+            survey_attempt("ps4", true, "accepted_by_adapter", 5, 2),
+            survey_attempt("keyboard", false, "adapter_did_not_enumerate", 0, 0),
+        ];
+        let report = AdapterSurveyReport {
+            artifact_schema_version: 1,
+            uid: "02E22DA9".to_string(),
+            original_persona: "debug".to_string(),
+            restore_status: "confirmed".to_string(),
+            restored_persona: Some("debug".to_string()),
+            best_candidate: best_adapter_survey_candidate(&attempts),
+            attempts,
+            notes: vec![],
+        };
+
+        let text = adapter_survey_text(&report);
+        assert!(text.contains("selected_best=ps4 accepted=true"));
+        assert!(text.contains("persona=keyboard"));
+        assert!(text.contains("verdict=adapter_did_not_enumerate"));
+        assert!(text.contains("debug_xinput_evidence_only"));
+
+        let json = adapter_survey_report_json(&report);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["best_candidate"]["persona"], "ps4");
+        assert_eq!(value["best_candidate"]["accepted"], true);
+        assert_eq!(value["attempts"][2]["device_desc_count"], 0);
+    }
+
+    #[test]
+    fn aggregate_adapter_survey_json_reports_bundle_best() {
+        let attempts = vec![
+            survey_attempt("ps4", false, "descriptor_or_report_rejected", 1, 1),
+            survey_attempt("keyboard", true, "accepted_by_adapter", 4, 1),
+        ];
+        let report = AdapterSurveyReport {
+            artifact_schema_version: 1,
+            uid: "02E22DA9".to_string(),
+            original_persona: "xinput".to_string(),
+            restore_status: "already_current".to_string(),
+            restored_persona: Some("xinput".to_string()),
+            best_candidate: best_adapter_survey_candidate(&attempts),
+            attempts,
+            notes: vec![],
+        };
+        let mut capture = pico_capture("02E22DA9", true, "{\"persona\":\"xinput\"}\n", "");
+        capture.adapter_survey_text = adapter_survey_text(&report);
+        capture.adapter_survey_json = adapter_survey_report_json(&report);
+        capture.adapter_survey_report = Some(report);
+
+        let text = aggregate_adapter_survey_text(std::slice::from_ref(&capture));
+        assert!(text.contains("path=picos/02E22DA9/adapter-survey.txt"));
+        assert!(text.contains("selected_best=keyboard accepted=true"));
+
+        let json = adapter_survey_bundle_json(&[capture]).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["survey_count"], 1);
+        assert_eq!(value["best_candidate"]["persona"], "keyboard");
+        assert_eq!(value["best_candidate"]["accepted"], true);
+        assert_eq!(value["per_pico"][0]["original_persona"], "xinput");
+    }
+
+    fn survey_attempt(
+        persona: &str,
+        accepted: bool,
+        verdict: &str,
+        score_rank: u8,
+        device_desc_count: u32,
+    ) -> AdapterSurveyAttempt {
+        AdapterSurveyAttempt {
+            persona: persona.to_string(),
+            current_at_start: false,
+            switched: true,
+            usb_diag_captured: true,
+            score_rank,
+            score: "test score".to_string(),
+            accepted,
+            verdict: verdict.to_string(),
+            device_desc_count,
+            config_desc_count: if accepted { 1 } else { 0 },
+            mount_count: if accepted { 1 } else { 0 },
+            umount_count: 0,
+            suspend_count: 0,
+            resume_count: 0,
+            input_report_sent_count: 0,
+            host_out_count: 0,
+            raw_capture: AdapterSurveyRawCapture::not_attempted("not_needed"),
+        }
+    }
+
     fn pico_capture(
         uid: &str,
         live: bool,
@@ -2783,6 +3614,9 @@ mod tests {
             pico_diag_text: String::new(),
             usb_diag_text: String::new(),
             usb_packets_text: usb_packets_text.to_string(),
+            adapter_survey_text: String::new(),
+            adapter_survey_json: String::new(),
+            adapter_survey_report: None,
         }
     }
 }

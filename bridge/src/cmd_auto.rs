@@ -7,10 +7,10 @@ use anyhow::{bail, Result};
 use crate::protocol::{Persona, UsbDiag};
 use crate::{cmd_persona, cmd_run, cmd_usb_diag, pico_mode, support};
 
-const USB_SETTLE: Duration = Duration::from_secs(2);
-const USB_PROBE: Duration = Duration::from_secs(3);
+pub(crate) const USB_SETTLE: Duration = Duration::from_secs(5);
+pub(crate) const USB_PROBE: Duration = Duration::from_secs(5);
 pub(crate) const XBOX_FAMILY: &[Persona] = &[Persona::Xinput, Persona::XboxOne];
-pub(crate) const PLAYSTATION_FAMILY: &[Persona] = &[Persona::Ps3, Persona::Ps4];
+pub(crate) const PLAYSTATION_FAMILY: &[Persona] = &[Persona::Ps4, Persona::Ps3];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AutoScore {
@@ -262,10 +262,10 @@ pub(crate) fn auto_candidates(current: Persona) -> Vec<Persona> {
         out.push(current);
     }
     for candidate in [
-        Persona::Xinput,
-        Persona::XboxOne,
-        Persona::Ps3,
         Persona::Ps4,
+        Persona::Xinput,
+        Persona::Ps3,
+        Persona::XboxOne,
         Persona::Maple,
     ] {
         if !out.contains(&candidate) {
@@ -326,7 +326,11 @@ pub(crate) fn is_success_score(score: AutoScore) -> bool {
     score >= AutoScore::Polling
 }
 
-fn score_label(score: AutoScore) -> &'static str {
+pub(crate) fn adapter_accepts_score(score: AutoScore) -> bool {
+    score >= AutoScore::Configured
+}
+
+pub(crate) fn score_label(score: AutoScore) -> &'static str {
     match score {
         AutoScore::NoUsbTraffic => "no USB host enumeration traffic",
         AutoScore::EnumerationStarted => "USB host started enumeration but did not configure",
@@ -398,29 +402,29 @@ mod tests {
             auto_candidates(Persona::Ps3),
             vec![
                 Persona::Ps3,
+                Persona::Ps4,
                 Persona::Xinput,
                 Persona::XboxOne,
-                Persona::Ps4,
                 Persona::Maple
             ]
         );
         assert_eq!(
             auto_candidates(Persona::Keyboard),
             vec![
-                Persona::Xinput,
-                Persona::XboxOne,
-                Persona::Ps3,
                 Persona::Ps4,
+                Persona::Xinput,
+                Persona::Ps3,
+                Persona::XboxOne,
                 Persona::Maple
             ]
         );
         assert_eq!(
             auto_candidates(Persona::Debug),
             vec![
-                Persona::Xinput,
-                Persona::XboxOne,
-                Persona::Ps3,
                 Persona::Ps4,
+                Persona::Xinput,
+                Persona::Ps3,
+                Persona::XboxOne,
                 Persona::Maple
             ]
         );
@@ -433,8 +437,8 @@ mod tests {
             vec![Persona::XboxOne, Persona::Xinput]
         );
         assert_eq!(
-            family_candidates(Persona::Maple, &[Persona::Ps3, Persona::Ps4]),
-            vec![Persona::Ps3, Persona::Ps4]
+            family_candidates(Persona::Maple, &[Persona::Ps4, Persona::Ps3]),
+            vec![Persona::Ps4, Persona::Ps3]
         );
     }
 
@@ -473,5 +477,12 @@ mod tests {
         assert!(!is_success_score(AutoScore::Configured));
         assert!(is_success_score(AutoScore::Polling));
         assert!(is_success_score(AutoScore::PollingWithOut));
+    }
+
+    #[test]
+    fn adapter_acceptance_includes_configured() {
+        assert!(!adapter_accepts_score(AutoScore::EnumerationStarted));
+        assert!(adapter_accepts_score(AutoScore::Configured));
+        assert!(adapter_accepts_score(AutoScore::Polling));
     }
 }

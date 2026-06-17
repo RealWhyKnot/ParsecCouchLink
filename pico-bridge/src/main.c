@@ -28,6 +28,7 @@
 #include "net_udp.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
+#include "usb_packet_debug.h"
 #include "version.h"
 #include "watchdog.h"
 #include "wifi.h"
@@ -370,6 +371,18 @@ int main(void) {
         case RUN_PERSONA_DEBUG:
             persona_name = "debug packet capture";
             break;
+        }
+    }
+    uint8_t usb_capture_persona = 0;
+    if (reset_reason_consume_usb_capture_request(&usb_capture_persona)) {
+        if (mode == BOOT_MODE_RUN && usb_capture_persona == (uint8_t)boot_mode_run_persona()) {
+            usb_packet_debug_set_capture_enabled(true);
+            diag_log_printf("usb_capture: enabled for persona=%u before tusb_init",
+                            (unsigned)usb_capture_persona);
+        } else {
+            diag_log_printf("usb_capture: ignored marker persona=%u mode=%d active_persona=%u",
+                            (unsigned)usb_capture_persona, (int)mode,
+                            (unsigned)boot_mode_run_persona());
         }
     }
     diag_log_printf("boot: mode decided: %s persona will be advertised", persona_name);

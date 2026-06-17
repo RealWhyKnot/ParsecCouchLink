@@ -26,6 +26,19 @@ static uint32_t setup_packet_lines;
 static uint32_t control_in_packet_lines;
 static bool logged_first_host_out;
 static bool logged_first_in_accepted;
+static bool capture_enabled;
+
+void usb_packet_debug_set_capture_enabled(bool enabled) {
+    capture_enabled = enabled;
+}
+
+bool usb_packet_debug_capture_enabled(void) {
+    return capture_enabled;
+}
+
+static bool packet_debug_active(void) {
+    return capture_enabled || boot_mode_run_persona() == RUN_PERSONA_DEBUG;
+}
 
 static void note_event_at(uint32_t now_ms, const char *event, const char *fields) {
     if (fields && fields[0]) {
@@ -70,7 +83,7 @@ static void maybe_log_stats(uint32_t now_ms) {
 static void note_packet_extra(const char *direction, const char *source, uint8_t const *buffer,
                               uint16_t len, const char *reason, uint32_t suppressed,
                               const char *extra_fields) {
-    if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
+    if (!packet_debug_active())
         return;
 
     uint16_t capture_len = len;
@@ -127,7 +140,7 @@ void usb_packet_debug_note_out_report(const char *source, uint8_t report_id, uin
 
 void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_t len,
                               bool changed) {
-    if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
+    if (!packet_debug_active())
         return;
 
     uint32_t now = to_ms_since_boot(get_absolute_time());
@@ -146,7 +159,7 @@ void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_
 }
 
 void usb_packet_debug_note_in_accepted(const char *source, uint32_t bytes) {
-    if (bytes == 0 || boot_mode_run_persona() != RUN_PERSONA_DEBUG || logged_first_in_accepted)
+    if (bytes == 0 || !packet_debug_active() || logged_first_in_accepted)
         return;
 
     logged_first_in_accepted = true;
@@ -193,7 +206,7 @@ void usb_packet_debug_note_control_in(const char *source, uint8_t const *buffer,
 }
 
 void usb_packet_debug_note_event(const char *event, const char *fields) {
-    if (boot_mode_run_persona() != RUN_PERSONA_DEBUG)
+    if (!packet_debug_active())
         return;
 
     uint32_t now_ms = to_ms_since_boot(get_absolute_time());
