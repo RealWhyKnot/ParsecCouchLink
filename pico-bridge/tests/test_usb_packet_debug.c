@@ -52,7 +52,14 @@ static void require_log_contains(const char *needle) {
     }
 }
 
-static void normal_persona_does_not_log_packets(void) {
+static void require_log_not_contains(const char *needle) {
+    if (strstr(log_text, needle) != NULL) {
+        printf("unexpected `%s` in `%s`\n", needle, log_text);
+        assert(false);
+    }
+}
+
+static void normal_persona_retains_boot_snapshot_without_in_payloads(void) {
     uint8_t data[] = {0x01, 0x02};
     current_persona = RUN_PERSONA_XINPUT;
     usb_packet_debug_set_capture_enabled(false);
@@ -64,9 +71,12 @@ static void normal_persona_does_not_log_packets(void) {
     usb_packet_debug_note_hid_get_report(2, 0xEF, 3, 64);
     usb_packet_debug_note_hid_set_report(2, 0x01, 2, sizeof(data));
     usb_packet_debug_note_out_report("hid-output", 0x01, 2, data, sizeof(data));
-    usb_packet_debug_note_in_accepted("xinput", sizeof(data));
     usb_packet_debug_note_event("mount", "");
-    assert(line_count == 0);
+    require_log_contains("dir=out");
+    require_log_contains("dir=setup");
+    require_log_contains("dir=control-in");
+    require_log_contains("event=mount");
+    require_log_not_contains("dir=in");
     current_persona = RUN_PERSONA_DEBUG;
 }
 
@@ -248,13 +258,12 @@ static void capture_enabled_normal_persona_logs_packets(void) {
 
     usb_packet_debug_set_capture_enabled(false);
     reset_log();
-    usb_packet_debug_note_out("vendor", data, sizeof(data));
+    usb_packet_debug_note_in("ps4", data, sizeof(data), true);
     assert(line_count == 0);
     current_persona = RUN_PERSONA_DEBUG;
 }
 
 int main(void) {
-    normal_persona_does_not_log_packets();
     debug_out_packet_logs_hex_payload();
     debug_in_packets_keep_changed_and_summarize_idle_suppression();
     debug_in_accepted_logs_once();
@@ -265,6 +274,7 @@ int main(void) {
     debug_packet_logs_per_packet_truncation();
     debug_usb_event_logs_lifecycle_without_packet_stats();
     debug_packet_stats_repeat_periodically();
+    normal_persona_retains_boot_snapshot_without_in_payloads();
     capture_enabled_normal_persona_logs_packets();
     puts("usb_packet_debug tests passed");
     return 0;

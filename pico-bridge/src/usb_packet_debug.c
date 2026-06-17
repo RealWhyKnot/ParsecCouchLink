@@ -12,6 +12,7 @@
 #define USB_PACKET_DEBUG_MAX_BYTES 64u
 #define USB_PACKET_DEBUG_IDLE_SAMPLE_MS 1000u
 #define USB_PACKET_DEBUG_STATS_EVERY_PACKETS 64u
+#define USB_PACKET_DEBUG_BOOT_SNAPSHOT_MAX_PACKETS 48u
 
 static uint32_t seq;
 static uint32_t dropped_bytes;
@@ -24,6 +25,7 @@ static uint32_t in_packet_lines;
 static uint32_t out_packet_lines;
 static uint32_t setup_packet_lines;
 static uint32_t control_in_packet_lines;
+static uint32_t boot_snapshot_packet_lines;
 static bool logged_first_host_out;
 static bool logged_first_in_accepted;
 static bool capture_enabled;
@@ -38,6 +40,20 @@ bool usb_packet_debug_capture_enabled(void) {
 
 static bool packet_debug_active(void) {
     return capture_enabled || boot_mode_run_persona() == RUN_PERSONA_DEBUG;
+}
+
+static bool boot_snapshot_packet_active(const char *direction) {
+    if (packet_debug_active())
+        return true;
+    if (boot_snapshot_packet_lines >= USB_PACKET_DEBUG_BOOT_SNAPSHOT_MAX_PACKETS)
+        return false;
+    return strcmp(direction, "setup") == 0 || strcmp(direction, "control-in") == 0 ||
+           strcmp(direction, "out") == 0;
+}
+
+static bool boot_snapshot_event_active(void) {
+    return packet_debug_active() ||
+           boot_snapshot_packet_lines < USB_PACKET_DEBUG_BOOT_SNAPSHOT_MAX_PACKETS;
 }
 
 static void note_event_at(uint32_t now_ms, const char *event, const char *fields) {
@@ -83,7 +99,8 @@ static void maybe_log_stats(uint32_t now_ms) {
 static void note_packet_extra(const char *direction, const char *source, uint8_t const *buffer,
                               uint16_t len, const char *reason, uint32_t suppressed,
                               const char *extra_fields) {
-    if (!packet_debug_active())
+    bool full_capture = packet_debug_active();
+    if (!full_capture && !boot_snapshot_packet_active(direction))
         return;
 
     uint16_t capture_len = len;
@@ -112,6 +129,9 @@ static void note_packet_extra(const char *direction, const char *source, uint8_t
         note_event_at(now_ms, "first-host-out", fields);
     }
     count_direction(direction);
+    if (!full_capture) {
+        boot_snapshot_packet_lines++;
+    }
     diag_log_printf(
         "usb-packet seq=%u t=%u dir=%s src=%s len=%u captured=%u truncated=%u dropped=%u "
         "suppressed=%u reason=%s %sdata=%s",
@@ -159,7 +179,7 @@ void usb_packet_debug_note_in(const char *source, uint8_t const *buffer, uint16_
 }
 
 void usb_packet_debug_note_in_accepted(const char *source, uint32_t bytes) {
-    if (bytes == 0 || !packet_debug_active() || logged_first_in_accepted)
+    if (bytes == 0 || !boot_snapshot_event_active() || logged_first_in_accepted)
         return;
 
     logged_first_in_accepted = true;
@@ -206,7 +226,7 @@ void usb_packet_debug_note_control_in(const char *source, uint8_t const *buffer,
 }
 
 void usb_packet_debug_note_event(const char *event, const char *fields) {
-    if (!packet_debug_active())
+    if (!boot_snapshot_event_active())
         return;
 
     uint32_t now_ms = to_ms_since_boot(get_absolute_time());

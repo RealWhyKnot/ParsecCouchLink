@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 21;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 22;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -63,6 +63,12 @@ pub(super) struct Manifest {
     pico_usb_mode: Option<String>,
     pico_usb_diag_captured: bool,
     pico_usb_diag_target_count: usize,
+    adapter_connection_included: bool,
+    adapter_connection_path: &'static str,
+    adapter_connection_json_included: bool,
+    adapter_connection_json_path: &'static str,
+    initial_usb_capture_included: bool,
+    initial_usb_capture_path: &'static str,
     adapter_survey_included: bool,
     adapter_survey_path: &'static str,
     adapter_survey_json_included: bool,
@@ -148,6 +154,12 @@ pub(super) async fn build_manifest(
         pico_usb_mode: pico_usb_mode.map(|s| s.to_string()),
         pico_usb_diag_captured,
         pico_usb_diag_target_count,
+        adapter_connection_included: true,
+        adapter_connection_path: "adapter-connection.txt",
+        adapter_connection_json_included: true,
+        adapter_connection_json_path: "adapter-connection.json",
+        initial_usb_capture_included: true,
+        initial_usb_capture_path: "initial-usb-capture.txt",
         adapter_survey_included: true,
         adapter_survey_path: "adapter-survey.txt",
         adapter_survey_json_included: true,
@@ -182,6 +194,8 @@ pub(super) async fn build_manifest(
             "Setup-mode Pico boards are queried over USB CDC and WinUSB vendor diagnostics when available.",
             "BOOTSEL drives are inventoried when present.",
             "Offline Pico boards are represented from the local diagnostic cache and saved config when available.",
+            "adapter-connection.txt warns when live Pico USB counters show no console/adapter USB host enumeration traffic.",
+            "initial-usb-capture.txt preserves USB packet lines harvested before bundle switches personas.",
             "adapter-survey.txt and adapter-survey.json record live persona checks for PS4, keyboard, PS3, XInput, Xbox One, and Maple shapes without prompting.",
             "Bundle restores the original persona after the adapter survey pass.",
             "Debug input mode uses the XInput USB shape; debug evidence is not treated as proof that a HID persona works with an adapter.",
@@ -297,6 +311,15 @@ mod tests {
             crate::debug_packets::DEBUG_PACKET_FILE_RETENTION
         );
         assert_eq!(json["diagnostic_cache_included"], true);
+        assert_eq!(json["adapter_connection_included"], true);
+        assert_eq!(json["adapter_connection_path"], "adapter-connection.txt");
+        assert_eq!(json["adapter_connection_json_included"], true);
+        assert_eq!(
+            json["adapter_connection_json_path"],
+            "adapter-connection.json"
+        );
+        assert_eq!(json["initial_usb_capture_included"], true);
+        assert_eq!(json["initial_usb_capture_path"], "initial-usb-capture.txt");
         assert_eq!(json["adapter_survey_included"], true);
         assert_eq!(json["adapter_survey_path"], "adapter-survey.txt");
         assert_eq!(json["adapter_survey_json_included"], true);

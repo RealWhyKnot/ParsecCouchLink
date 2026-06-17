@@ -82,6 +82,8 @@ pub struct BundleSummary {
     pub retained_debug_packet_log_count: usize,
     pub retained_debug_packet_count: usize,
     pub debug_capture_status: String,
+    pub adapter_connection_status: String,
+    pub adapter_connection_warning: bool,
     pub per_pico_capture_count: usize,
     pub host_snapshot_count: usize,
     pub diagnostic_cache_included: bool,
@@ -100,6 +102,7 @@ struct PicoBundleCapture {
     state_json: String,
     pico_diag_text: String,
     usb_diag_text: String,
+    initial_usb_capture_text: String,
     usb_packets_text: String,
     adapter_survey_text: String,
     adapter_survey_json: String,
@@ -180,6 +183,40 @@ struct AdapterSurveyRawCapture {
     packet_stats_lines: usize,
     usb_event_lines: usize,
     harvest_lines: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AdapterConnectionReport {
+    artifact_schema_version: u8,
+    status: &'static str,
+    warning: bool,
+    surveyed_live_pico_count: usize,
+    live_pico_count: usize,
+    no_usb_host_pico_count: usize,
+    host_traffic_pico_count: usize,
+    accepted_pico_count: usize,
+    descriptor_or_report_rejected_pico_count: usize,
+    per_pico: Vec<AdapterConnectionPico>,
+    next_steps: Vec<&'static str>,
+    notes: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct AdapterConnectionPico {
+    uid: String,
+    path: String,
+    live: bool,
+    status: &'static str,
+    warning: bool,
+    attempts: usize,
+    accepted: bool,
+    host_traffic_seen: bool,
+    descriptor_or_report_rejected: bool,
+    usb_diag_missing: bool,
+    device_desc_total: u64,
+    config_desc_total: u64,
+    mount_total: u64,
+    raw_packet_lines: usize,
 }
 
 #[derive(Default)]
@@ -304,6 +341,10 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         .iter()
         .map(|capture| capture.manifest.clone())
         .collect();
+    let adapter_connection_report = adapter_connection_report(&per_pico_captures);
+    let adapter_connection_text = adapter_connection_text(&adapter_connection_report);
+    let adapter_connection_json = adapter_connection_json(&adapter_connection_report)?;
+    let initial_usb_capture_text = aggregate_initial_usb_capture_text(&per_pico_captures);
     let adapter_survey_text = aggregate_adapter_survey_text(&per_pico_captures);
     let adapter_survey_json = adapter_survey_bundle_json(&per_pico_captures)?;
     let retained_debug_packet_logs = collect_retained_debug_packet_logs(&mut capture_log);
@@ -373,6 +414,15 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         adapter_survey_text
             .len()
             .saturating_add(adapter_survey_json.len()),
+        "txt_and_json",
+    );
+    capture_log.record_duration(
+        "adapter_connection",
+        0,
+        adapter_connection_report.status,
+        adapter_connection_text
+            .len()
+            .saturating_add(adapter_connection_json.len()),
         "txt_and_json",
     );
     capture_log.record_duration(
@@ -541,6 +591,15 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
     zip.start_file("usb-diag.txt", opts)?;
     zip.write_all(redact_bundle_text(&usb_diag.text).as_bytes())?;
 
+    zip.start_file("adapter-connection.txt", opts)?;
+    zip.write_all(redact_bundle_text(&adapter_connection_text).as_bytes())?;
+
+    zip.start_file("adapter-connection.json", opts)?;
+    zip.write_all(redact_bundle_text(&adapter_connection_json).as_bytes())?;
+
+    zip.start_file("initial-usb-capture.txt", opts)?;
+    zip.write_all(redact_bundle_text(&initial_usb_capture_text).as_bytes())?;
+
     zip.start_file("adapter-survey.txt", opts)?;
     zip.write_all(redact_bundle_text(&adapter_survey_text).as_bytes())?;
 
@@ -557,6 +616,9 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
         zip.start_file(format!("{base}/usb-diag.txt"), opts)?;
         zip.write_all(redact_bundle_text(&pico.usb_diag_text).as_bytes())?;
+
+        zip.start_file(format!("{base}/initial-usb-capture.txt"), opts)?;
+        zip.write_all(redact_bundle_text(&pico.initial_usb_capture_text).as_bytes())?;
 
         if !pico.adapter_survey_text.is_empty() {
             zip.start_file(format!("{base}/adapter-survey.txt"), opts)?;
@@ -815,6 +877,8 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
         retained_debug_packet_log_count: retained_debug_packet_logs.len(),
         retained_debug_packet_count,
         debug_capture_status: debug_capture_status.to_string(),
+        adapter_connection_status: adapter_connection_report.status.to_string(),
+        adapter_connection_warning: adapter_connection_report.warning,
         per_pico_capture_count: per_pico_captures.len(),
         host_snapshot_count: host_snapshots.len(),
         diagnostic_cache_included,
@@ -1084,6 +1148,7 @@ async fn capture_one_pico(
     let pico_state_status: String;
     let pico_diag_text: String;
     let usb_diag_text: String;
+    let initial_usb_capture_text: String;
     let usb_packets_text: String;
     let adapter_survey_text: String;
     let adapter_survey_json: String;
@@ -1174,6 +1239,7 @@ async fn capture_one_pico(
         pico_state_status = target_pico_state_status;
         pico_diag_status = target_pico_diag_status;
         pico_diag_text = target_pico_diag_text;
+        initial_usb_capture_text = usb_packets_text_from_diag(&seed.uid, &pico_diag_text);
         let packet_capture = bundle_usb_packets_for_target(
             &seed.uid,
             target,
@@ -1204,6 +1270,7 @@ async fn capture_one_pico(
         pico_state_status = "offline_not_attempted".to_string();
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
+        initial_usb_capture_text = offline_pico_text(&seed, "initial USB packet dump");
         usb_packets_text = offline_pico_text(&seed, "USB packet dump");
         adapter_survey_text = String::new();
         adapter_survey_json = String::new();
@@ -1216,6 +1283,7 @@ async fn capture_one_pico(
         pico_state_status = "cache_only".to_string();
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
+        initial_usb_capture_text = offline_pico_text(&seed, "initial USB packet dump");
         usb_packets_text = offline_pico_text(&seed, "USB packet dump");
         adapter_survey_text = String::new();
         adapter_survey_json = String::new();
@@ -1228,6 +1296,7 @@ async fn capture_one_pico(
         pico_state_status = "no_state".to_string();
         pico_diag_text = offline_pico_text(&seed, "firmware diag log");
         usb_diag_text = offline_pico_text(&seed, "USB counters");
+        initial_usb_capture_text = offline_pico_text(&seed, "initial USB packet dump");
         usb_packets_text = offline_pico_text(&seed, "USB packet dump");
         adapter_survey_text = String::new();
         adapter_survey_json = String::new();
@@ -1279,6 +1348,7 @@ async fn capture_one_pico(
         state_json,
         pico_diag_text,
         usb_diag_text,
+        initial_usb_capture_text,
         usb_packets_text,
         adapter_survey_text,
         adapter_survey_json,
@@ -1350,10 +1420,21 @@ async fn bundle_usb_packets_for_target(
     if current_attempt.accepted {
         current_accepted = true;
     }
+    let current_has_no_usb_host = current_diag
+        .map(|diag| !diag_has_usb_host_traffic(diag))
+        .unwrap_or(false);
     attempts.push(current_attempt);
 
     let mut candidates = Vec::new();
-    if !current_accepted || target.persona == protocol::Persona::Debug {
+    if current_has_no_usb_host {
+        capture_log.record_duration(
+            format!("per_pico.{uid}.adapter_survey.skip"),
+            0,
+            "no_usb_host_traffic",
+            0,
+            "current USB diagnostic had no descriptor, mount, suspend, report, or OUT traffic",
+        );
+    } else if !current_accepted || target.persona == protocol::Persona::Debug {
         for persona in ADAPTER_SURVEY_PERSONAS {
             if !candidates.contains(persona) && *persona != target.persona {
                 candidates.push(*persona);
@@ -1414,13 +1495,19 @@ async fn bundle_usb_packets_for_target(
             }
         }
 
-        attempts.push(survey_attempt_from_diag(
-            candidate,
-            false,
-            switched,
-            diag,
-            raw_capture,
-        ));
+        let attempt = survey_attempt_from_diag(candidate, false, switched, diag, raw_capture);
+        let accepted = attempt.accepted;
+        attempts.push(attempt);
+        if accepted {
+            capture_log.record_duration(
+                format!("per_pico.{uid}.adapter_survey.stop"),
+                0,
+                "accepted",
+                0,
+                format!("persona={}", candidate.label()),
+            );
+            break;
+        }
     }
 
     let restore_status =
@@ -1858,6 +1945,28 @@ fn survey_diag_accepted(persona: protocol::Persona, diag: &protocol::UsbDiag) ->
         && cmd_auto::adapter_accepts_score(cmd_auto::score_usb_diag(diag))
 }
 
+fn diag_has_usb_host_traffic(diag: &protocol::UsbDiag) -> bool {
+    diag.device_desc_count > 0
+        || diag.config_desc_count > 0
+        || diag.mount_count > 0
+        || diag.umount_count > 0
+        || diag.suspend_count > 0
+        || diag.resume_count > 0
+        || diag.xinput_in_sent_count > 0
+        || diag.xinput_out_count > 0
+}
+
+fn attempt_has_usb_host_traffic(attempt: &AdapterSurveyAttempt) -> bool {
+    attempt.device_desc_count > 0
+        || attempt.config_desc_count > 0
+        || attempt.mount_count > 0
+        || attempt.umount_count > 0
+        || attempt.suspend_count > 0
+        || attempt.resume_count > 0
+        || attempt.input_report_sent_count > 0
+        || attempt.host_out_count > 0
+}
+
 fn adapter_survey_verdict(
     persona: protocol::Persona,
     diag: Option<&protocol::UsbDiag>,
@@ -1974,6 +2083,237 @@ fn adapter_survey_report_json(report: &AdapterSurveyReport) -> String {
             e
         )
     })
+}
+
+fn adapter_connection_report(captures: &[PicoBundleCapture]) -> AdapterConnectionReport {
+    let live_pico_count = captures
+        .iter()
+        .filter(|capture| capture.manifest.live)
+        .count();
+    let mut per_pico = Vec::new();
+    for capture in captures {
+        let Some(report) = capture.adapter_survey_report.as_ref() else {
+            continue;
+        };
+        let attempts = report.attempts.len();
+        let accepted = report.attempts.iter().any(|attempt| attempt.accepted);
+        let host_traffic_seen = report.attempts.iter().any(attempt_has_usb_host_traffic);
+        let descriptor_or_report_rejected = report
+            .attempts
+            .iter()
+            .any(|attempt| attempt.verdict == "descriptor_or_report_rejected");
+        let usb_diag_missing = report
+            .attempts
+            .iter()
+            .any(|attempt| !attempt.usb_diag_captured);
+        let device_desc_total = report
+            .attempts
+            .iter()
+            .map(|attempt| attempt.device_desc_count as u64)
+            .sum();
+        let config_desc_total = report
+            .attempts
+            .iter()
+            .map(|attempt| attempt.config_desc_count as u64)
+            .sum();
+        let mount_total = report
+            .attempts
+            .iter()
+            .map(|attempt| attempt.mount_count as u64)
+            .sum();
+        let raw_packet_lines = count_usb_packet_lines(&capture.usb_packets_text);
+        let status = if accepted {
+            "adapter_accepted"
+        } else if descriptor_or_report_rejected {
+            "descriptor_or_report_rejected"
+        } else if host_traffic_seen {
+            "usb_host_traffic_seen"
+        } else if usb_diag_missing {
+            "usb_diag_incomplete"
+        } else {
+            "no_usb_host_traffic"
+        };
+        per_pico.push(AdapterConnectionPico {
+            uid: capture.manifest.uid.clone(),
+            path: capture.manifest.path.clone(),
+            live: capture.manifest.live,
+            status,
+            warning: status == "no_usb_host_traffic",
+            attempts,
+            accepted,
+            host_traffic_seen,
+            descriptor_or_report_rejected,
+            usb_diag_missing,
+            device_desc_total,
+            config_desc_total,
+            mount_total,
+            raw_packet_lines,
+        });
+    }
+
+    let surveyed_live_pico_count = per_pico.len();
+    let no_usb_host_pico_count = per_pico
+        .iter()
+        .filter(|pico| pico.status == "no_usb_host_traffic")
+        .count();
+    let host_traffic_pico_count = per_pico
+        .iter()
+        .filter(|pico| pico.host_traffic_seen)
+        .count();
+    let accepted_pico_count = per_pico.iter().filter(|pico| pico.accepted).count();
+    let descriptor_or_report_rejected_pico_count = per_pico
+        .iter()
+        .filter(|pico| pico.descriptor_or_report_rejected)
+        .count();
+
+    let status = if surveyed_live_pico_count == 0 {
+        "not_checked"
+    } else if accepted_pico_count > 0 {
+        "adapter_accepted"
+    } else if descriptor_or_report_rejected_pico_count > 0 {
+        "descriptor_or_report_rejected"
+    } else if host_traffic_pico_count > 0 {
+        "usb_host_traffic_seen"
+    } else if no_usb_host_pico_count == surveyed_live_pico_count {
+        "no_usb_host_traffic"
+    } else {
+        "usb_diag_incomplete"
+    };
+    let warning = status == "no_usb_host_traffic";
+    AdapterConnectionReport {
+        artifact_schema_version: 1,
+        status,
+        warning,
+        surveyed_live_pico_count,
+        live_pico_count,
+        no_usb_host_pico_count,
+        host_traffic_pico_count,
+        accepted_pico_count,
+        descriptor_or_report_rejected_pico_count,
+        per_pico,
+        next_steps: adapter_connection_next_steps(status),
+        notes: vec![
+            "This verdict is based on live Pico USB counters captured during bundle.",
+            "It does not infer physical cabling when no live Pico survey was captured.",
+            "device_desc_count=0 means the Pico did not observe USB host enumeration traffic.",
+            "Run bundle with the Pico connected to the console adapter and console USB host you want to support.",
+        ],
+    }
+}
+
+fn adapter_connection_next_steps(status: &str) -> Vec<&'static str> {
+    match status {
+        "no_usb_host_traffic" => vec![
+            "Plug the Pico into the console adapter and console USB host you want it to work on, then run couchlink bundle again.",
+            "If the adapter only handshakes once, power-cycle or physically replug the console-side adapter path before running bundle.",
+            "A bundle taken with no USB host traffic cannot prove whether PS4, keyboard, PS3, XInput, Xbox One, or Maple personas work with the adapter.",
+        ],
+        "descriptor_or_report_rejected" => vec![
+            "Keep the full bundle; descriptor traffic was seen, so adapter firmware or report-shape work can use this evidence.",
+            "Review initial-usb-capture.txt and usb-enumeration-analysis.txt before changing descriptors.",
+        ],
+        "adapter_accepted" => vec![
+            "Use adapter-survey.txt for the accepted persona and score.",
+            "Use usb-enumeration-analysis.txt if runtime input still fails after configuration.",
+        ],
+        "not_checked" => vec![
+            "No live Pico adapter survey was captured, so this bundle cannot determine console-adapter connection state.",
+        ],
+        _ => vec![
+            "Check bundle-capture.txt for USB diagnostic failures before repeating the run.",
+        ],
+    }
+}
+
+fn adapter_connection_text(report: &AdapterConnectionReport) -> String {
+    let mut out = String::from("Adapter connection verdict\n\n");
+    let _ = writeln!(out, "status={}", report.status);
+    let _ = writeln!(out, "warning={}", report.warning);
+    let _ = writeln!(out, "live_pico_count={}", report.live_pico_count);
+    let _ = writeln!(
+        out,
+        "surveyed_live_pico_count={}",
+        report.surveyed_live_pico_count
+    );
+    let _ = writeln!(
+        out,
+        "no_usb_host_pico_count={}",
+        report.no_usb_host_pico_count
+    );
+    let _ = writeln!(
+        out,
+        "host_traffic_pico_count={}",
+        report.host_traffic_pico_count
+    );
+    let _ = writeln!(out, "accepted_pico_count={}", report.accepted_pico_count);
+    let _ = writeln!(
+        out,
+        "descriptor_or_report_rejected_pico_count={}",
+        report.descriptor_or_report_rejected_pico_count
+    );
+    let _ = writeln!(out);
+    if report.warning {
+        out.push_str("warning_text=No USB host enumeration traffic was observed from a live Pico. This bundle will not contain the adapter diagnostics needed to prove console-adapter support.\n\n");
+    }
+    out.push_str("next_steps=\n");
+    for step in &report.next_steps {
+        let _ = writeln!(out, "- {step}");
+    }
+    let _ = writeln!(out);
+    out.push_str("per_pico=\n");
+    if report.per_pico.is_empty() {
+        out.push_str("- none\n");
+    } else {
+        for pico in &report.per_pico {
+            let _ = writeln!(
+                out,
+                "- uid={} status={} warning={} attempts={} accepted={} host_traffic_seen={} descriptor_or_report_rejected={} usb_diag_missing={} device_desc_total={} config_desc_total={} mount_total={} raw_packet_lines={} path={}",
+                pico.uid,
+                pico.status,
+                pico.warning,
+                pico.attempts,
+                pico.accepted,
+                pico.host_traffic_seen,
+                pico.descriptor_or_report_rejected,
+                pico.usb_diag_missing,
+                pico.device_desc_total,
+                pico.config_desc_total,
+                pico.mount_total,
+                pico.raw_packet_lines,
+                pico.path
+            );
+        }
+    }
+    out
+}
+
+fn adapter_connection_json(report: &AdapterConnectionReport) -> Result<String> {
+    Ok(serde_json::to_string_pretty(report)?)
+}
+
+fn aggregate_initial_usb_capture_text(captures: &[PicoBundleCapture]) -> String {
+    let mut out = String::from("# Aggregate initial USB capture evidence\n\n");
+    let mut count = 0usize;
+    for capture in captures {
+        if capture.initial_usb_capture_text.is_empty() {
+            continue;
+        }
+        count += 1;
+        let _ = writeln!(
+            out,
+            "## {} path={}/initial-usb-capture.txt",
+            capture.manifest.uid, capture.manifest.path
+        );
+        out.push_str(&capture.initial_usb_capture_text);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if count == 0 {
+        out.push_str("No live Pico initial USB capture was present.\n");
+    }
+    out
 }
 
 fn aggregate_adapter_survey_text(captures: &[PicoBundleCapture]) -> String {
@@ -2283,7 +2623,7 @@ fn usb_packets_text_from_lines(uid: &str, lines: &[String], harvest_line: Option
     let _ = writeln!(out, "# uid={uid}");
     let _ = writeln!(
         out,
-        "# These lines are present when debug input mode or bundle USB capture is active."
+        "# These lines are present when debug input mode, bundle USB capture, or the normal-persona boot snapshot is active."
     );
     let _ = writeln!(out);
     for line in lines {
@@ -3056,6 +3396,24 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
         "  adapter-survey.txt: included for {} Pico capture(s)",
         summary.per_pico_capture_count
     );
+    if summary.adapter_connection_warning {
+        println!();
+        println!("Adapter connection warning:");
+        println!(
+            "  No USB host enumeration traffic was observed from a live Pico. This bundle will not contain the adapter diagnostics needed to prove console-adapter support."
+        );
+        println!(
+            "  Plug the Pico into the console adapter and console USB host you want it to work on, then run couchlink bundle again."
+        );
+        println!(
+            "  If the adapter only handshakes once, power-cycle or physically replug the console-side adapter path before running bundle."
+        );
+    } else {
+        println!(
+            "  adapter-connection.txt: {}",
+            summary.adapter_connection_status
+        );
+    }
     let total_packet_count = summary.usb_packet_dump_count + summary.retained_debug_packet_count;
     if total_packet_count > 0 {
         println!(
@@ -3126,13 +3484,15 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
+        adapter_connection_json, adapter_connection_report, adapter_connection_text,
         adapter_survey_bundle_json, adapter_survey_report_json, adapter_survey_text,
-        aggregate_adapter_survey_text, aggregate_usb_packets, best_adapter_survey_candidate,
-        count_usb_packet_event_lines, count_usb_packet_harvest_lines, count_usb_packet_lines,
-        count_usb_packet_stats_lines, debug_capture_evidence_report_json,
-        debug_capture_overall_status, debug_capture_verdict_text, sanitize_path_component,
-        usb_packets_text_from_debug_snapshot, usb_packets_text_from_diag, AdapterSurveyAttempt,
-        AdapterSurveyRawCapture, AdapterSurveyReport, PicoBundleCapture, RetainedDebugPacketLog,
+        aggregate_adapter_survey_text, aggregate_initial_usb_capture_text, aggregate_usb_packets,
+        best_adapter_survey_candidate, count_usb_packet_event_lines,
+        count_usb_packet_harvest_lines, count_usb_packet_lines, count_usb_packet_stats_lines,
+        debug_capture_evidence_report_json, debug_capture_overall_status,
+        debug_capture_verdict_text, sanitize_path_component, usb_packets_text_from_debug_snapshot,
+        usb_packets_text_from_diag, AdapterSurveyAttempt, AdapterSurveyRawCapture,
+        AdapterSurveyReport, PicoBundleCapture, RetainedDebugPacketLog,
     };
     use super::{summarize_sources, ManifestPicoCapture, UsbPacketSummarySource};
 
@@ -3554,6 +3914,107 @@ mod tests {
         assert_eq!(value["per_pico"][0]["original_persona"], "xinput");
     }
 
+    #[test]
+    fn adapter_connection_warns_when_live_survey_has_no_host_traffic() {
+        let attempts = vec![survey_attempt(
+            "xinput",
+            false,
+            "adapter_did_not_enumerate",
+            0,
+            0,
+        )];
+        let report = AdapterSurveyReport {
+            artifact_schema_version: 1,
+            uid: "02E22DA9".to_string(),
+            original_persona: "xinput".to_string(),
+            restore_status: "already_current".to_string(),
+            restored_persona: Some("xinput".to_string()),
+            best_candidate: best_adapter_survey_candidate(&attempts),
+            attempts,
+            notes: vec![],
+        };
+        let mut capture = pico_capture("02E22DA9", true, "{\"persona\":\"xinput\"}\n", "");
+        capture.adapter_survey_report = Some(report);
+
+        let connection = adapter_connection_report(&[capture]);
+        assert_eq!(connection.status, "no_usb_host_traffic");
+        assert!(connection.warning);
+        assert_eq!(connection.surveyed_live_pico_count, 1);
+        assert_eq!(connection.no_usb_host_pico_count, 1);
+        assert_eq!(connection.host_traffic_pico_count, 0);
+        assert!(connection.per_pico[0].warning);
+
+        let text = adapter_connection_text(&connection);
+        assert!(text.contains("warning_text=No USB host enumeration traffic was observed"));
+        assert!(text.contains("power-cycle or physically replug"));
+
+        let json = adapter_connection_json(&connection).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["status"], "no_usb_host_traffic");
+        assert_eq!(value["warning"], true);
+        assert_eq!(value["per_pico"][0]["device_desc_total"], 0);
+    }
+
+    #[test]
+    fn adapter_connection_does_not_warn_for_offline_or_cache_only_capture() {
+        let capture = pico_capture("02E22DA9", false, "{\"persona\":\"xinput\"}\n", "");
+        let connection = adapter_connection_report(&[capture]);
+        assert_eq!(connection.status, "not_checked");
+        assert!(!connection.warning);
+        assert_eq!(connection.live_pico_count, 0);
+        assert_eq!(connection.surveyed_live_pico_count, 0);
+        assert!(connection.per_pico.is_empty());
+    }
+
+    #[test]
+    fn adapter_connection_reports_descriptor_rejection_as_actionable_evidence() {
+        let attempts = vec![survey_attempt(
+            "ps4",
+            false,
+            "descriptor_or_report_rejected",
+            1,
+            1,
+        )];
+        let report = AdapterSurveyReport {
+            artifact_schema_version: 1,
+            uid: "02E22DA9".to_string(),
+            original_persona: "xinput".to_string(),
+            restore_status: "confirmed".to_string(),
+            restored_persona: Some("xinput".to_string()),
+            best_candidate: best_adapter_survey_candidate(&attempts),
+            attempts,
+            notes: vec![],
+        };
+        let mut capture = pico_capture(
+            "02E22DA9",
+            true,
+            "{\"persona\":\"xinput\"}\n",
+            "usb-packet seq=1 dir=setup data=8006000100001200\n",
+        );
+        capture.adapter_survey_report = Some(report);
+
+        let connection = adapter_connection_report(&[capture]);
+        assert_eq!(connection.status, "descriptor_or_report_rejected");
+        assert!(!connection.warning);
+        assert_eq!(connection.host_traffic_pico_count, 1);
+        assert_eq!(connection.descriptor_or_report_rejected_pico_count, 1);
+        assert_eq!(connection.per_pico[0].raw_packet_lines, 1);
+    }
+
+    #[test]
+    fn aggregate_initial_usb_capture_preserves_pre_survey_packet_lines() {
+        let mut capture = pico_capture("02E22DA9", true, "{\"persona\":\"ps4\"}\n", "");
+        capture.initial_usb_capture_text = usb_packets_text_from_diag(
+            "02E22DA9",
+            "usb-packet seq=1 dir=setup bm=0x80 req=0x06 data=8006000100001200\n",
+        );
+
+        let text = aggregate_initial_usb_capture_text(&[capture]);
+        assert!(text.contains("path=picos/02E22DA9/initial-usb-capture.txt"));
+        assert!(text.contains("usb-packet seq=1 dir=setup"));
+        assert_eq!(count_usb_packet_lines(&text), 1);
+    }
+
     fn survey_attempt(
         persona: &str,
         accepted: bool,
@@ -3613,6 +4074,7 @@ mod tests {
             state_json: state_json.to_string(),
             pico_diag_text: String::new(),
             usb_diag_text: String::new(),
+            initial_usb_capture_text: String::new(),
             usb_packets_text: usb_packets_text.to_string(),
             adapter_survey_text: String::new(),
             adapter_survey_json: String::new(),
