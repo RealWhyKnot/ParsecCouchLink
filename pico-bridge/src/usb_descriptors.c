@@ -690,7 +690,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
             arr_count = sizeof(string_desc_arr_ps4) / sizeof(string_desc_arr_ps4[0]);
         } else if (boot_mode_run_persona() == RUN_PERSONA_GENERIC_HID) {
             arr = string_desc_arr_generic_hid;
-            arr_count = sizeof(string_desc_arr_generic_hid) / sizeof(string_desc_arr_generic_hid[0]);
+            arr_count =
+                sizeof(string_desc_arr_generic_hid) / sizeof(string_desc_arr_generic_hid[0]);
         } else if (boot_mode_run_persona() == RUN_PERSONA_XBOXONE) {
             arr = string_desc_arr_xboxone;
             arr_count = sizeof(string_desc_arr_xboxone) / sizeof(string_desc_arr_xboxone[0]);

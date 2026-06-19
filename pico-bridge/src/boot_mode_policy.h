@@ -18,13 +18,13 @@ typedef enum {
 // Which USB device the run-mode firmware presents. Latched at boot from
 // the stored persona byte; see boot_mode_run_persona().
 typedef enum {
-    RUN_PERSONA_XINPUT = 0,   // wired Xbox 360 / XInput (default)
-    RUN_PERSONA_KEYBOARD = 1, // USB HID boot keyboard
-    RUN_PERSONA_MAPLE = 2,    // Xbox-compatible Dreamcast Maple adapter mode
-    RUN_PERSONA_PS3 = 3,      // Sony DualShock 3 / PS3 HID gamepad
-    RUN_PERSONA_PS4 = 4,      // Sony DualShock 4 / PS4 HID gamepad
-    RUN_PERSONA_XBOXONE = 5,  // Xbox One-compatible XGIP gamepad
-    RUN_PERSONA_DEBUG = 6,    // XInput shape with raw USB packet capture
+    RUN_PERSONA_XINPUT = 0,      // wired Xbox 360 / XInput (default)
+    RUN_PERSONA_KEYBOARD = 1,    // USB HID boot keyboard
+    RUN_PERSONA_MAPLE = 2,       // Xbox-compatible Dreamcast Maple adapter mode
+    RUN_PERSONA_PS3 = 3,         // Sony DualShock 3 / PS3 HID gamepad
+    RUN_PERSONA_PS4 = 4,         // Sony DualShock 4 / PS4 HID gamepad
+    RUN_PERSONA_XBOXONE = 5,     // Xbox One-compatible XGIP gamepad
+    RUN_PERSONA_DEBUG = 6,       // XInput shape with raw USB packet capture
     RUN_PERSONA_GENERIC_HID = 7, // Generic HID gamepad for unknown-HID adapters
 } run_persona_t;
 

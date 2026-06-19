@@ -667,8 +667,8 @@ static void apply_set_usb_capture(uint8_t persona, bool enabled) {
     }
 
     reset_reason_request_usb_capture_after_reboot(want);
-    diag_log_printf("net_udp: usb_capture persona=%u changed=%d; rebooting",
-                    (unsigned)want, changed ? 1 : 0);
+    diag_log_printf("net_udp: usb_capture persona=%u changed=%d; rebooting", (unsigned)want,
+                    changed ? 1 : 0);
     watchdog_reboot(0, 0, 100);
     for (;;)
         tight_loop_contents();
@@ -747,10 +747,9 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
         set_usb_capture_enabled = (buf[5] != 0);
         set_usb_capture_pending = true;
         diag_log_printf("net_udp: usb_capture persona=%u enabled=%u requested by %u.%u.%u.%u:%u",
-                        (unsigned)set_usb_capture_persona,
-                        set_usb_capture_enabled ? 1u : 0u, ip4_addr1(ip_2_ip4(addr)),
-                        ip4_addr2(ip_2_ip4(addr)), ip4_addr3(ip_2_ip4(addr)),
-                        ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
+                        (unsigned)set_usb_capture_persona, set_usb_capture_enabled ? 1u : 0u,
+                        ip4_addr1(ip_2_ip4(addr)), ip4_addr2(ip_2_ip4(addr)),
+                        ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
     } else if (type == TYPE_STATE || type == TYPE_HEARTBEAT || type == TYPE_KEY_STATE ||
                type == TYPE_KEY_HEARTBEAT) {
         if (!have_peer || !ip_addr_cmp(&peer_addr, addr) || peer_port != port) {

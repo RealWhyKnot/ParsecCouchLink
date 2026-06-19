@@ -24,13 +24,13 @@
 // where the pad used to be all-zero, so a record written before this
 // field existed reads back as the XInput persona with its CRC still
 // valid -- no version bump or migration needed.
-#define FLASH_PERSONA_XINPUT 0   // wired Xbox 360 / XInput (default)
-#define FLASH_PERSONA_KEYBOARD 1 // USB HID boot keyboard
-#define FLASH_PERSONA_MAPLE 2    // Xbox-compatible Dreamcast Maple adapter mode
-#define FLASH_PERSONA_PS3 3      // Sony DualShock 3 / PS3 HID gamepad
-#define FLASH_PERSONA_PS4 4      // Sony DualShock 4 / PS4 HID gamepad
-#define FLASH_PERSONA_XBOXONE 5  // Xbox One-compatible XGIP gamepad
-#define FLASH_PERSONA_DEBUG 6    // XInput shape with raw USB packet capture
+#define FLASH_PERSONA_XINPUT 0      // wired Xbox 360 / XInput (default)
+#define FLASH_PERSONA_KEYBOARD 1    // USB HID boot keyboard
+#define FLASH_PERSONA_MAPLE 2       // Xbox-compatible Dreamcast Maple adapter mode
+#define FLASH_PERSONA_PS3 3         // Sony DualShock 3 / PS3 HID gamepad
+#define FLASH_PERSONA_PS4 4         // Sony DualShock 4 / PS4 HID gamepad
+#define FLASH_PERSONA_XBOXONE 5     // Xbox One-compatible XGIP gamepad
+#define FLASH_PERSONA_DEBUG 6       // XInput shape with raw USB packet capture
 #define FLASH_PERSONA_GENERIC_HID 7 // Generic HID gamepad for unknown-HID adapters
 
 typedef struct __attribute__((packed)) {
