@@ -4,7 +4,13 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Changed
+- **firmware:** Apply clang format (74cae10)
+
+### Fixed
+- **firmware:** Add generic HID adapter persona (364c9e5)
+- **bundle:** Warn when adapter host is absent (12a4c99)
+- **bundle:** Survey adapter personas automatically (8f828be)
 
 ---
 
