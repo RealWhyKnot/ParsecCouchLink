@@ -141,6 +141,13 @@ struct AdapterSurveyReport {
     original_persona: String,
     restore_status: String,
     restored_persona: Option<String>,
+    expected_adapter_personas: Vec<String>,
+    attempted_personas: Vec<String>,
+    missing_adapter_personas: Vec<String>,
+    failed_usb_diag_personas: Vec<String>,
+    current_no_usb_host_traffic: bool,
+    coverage_status: &'static str,
+    stop_reason: &'static str,
     best_candidate: Option<AdapterSurveyBest>,
     attempts: Vec<AdapterSurveyAttempt>,
     notes: Vec<&'static str>,
@@ -210,6 +217,12 @@ struct AdapterConnectionPico {
     status: &'static str,
     warning: bool,
     attempts: usize,
+    coverage_status: String,
+    stop_reason: String,
+    restore_status: String,
+    attempted_personas: Vec<String>,
+    missing_adapter_personas: Vec<String>,
+    failed_usb_diag_personas: Vec<String>,
     accepted: bool,
     host_traffic_seen: bool,
     descriptor_or_report_rejected: bool,
@@ -1508,23 +1521,20 @@ async fn bundle_usb_packets_for_target(
     } else {
         None
     };
-    let best_candidate = best_adapter_survey_candidate(&attempts);
-    let report = AdapterSurveyReport {
-        artifact_schema_version: 1,
-        uid: uid.to_string(),
-        original_persona: original_persona.label().to_string(),
+    let report = build_adapter_survey_report(
+        uid.to_string(),
+        original_persona.label().to_string(),
         restore_status,
         restored_persona,
-        best_candidate,
         attempts,
-        notes: vec![
+        vec![
             "PS3 is tested first for USB-to-Maple adapters, followed by a generic HID gamepad fallback.",
             "Debug mode uses the XInput USB shape and is not selected as adapter proof.",
             "Polling or configured means the adapter accepted that persona.",
             "device_desc_count=0 means the adapter did not enumerate that persona.",
             "Descriptor traffic without configuration points to descriptor or report rejection.",
         ],
-    };
+    );
 
     let adapter_survey_text = adapter_survey_text(&report);
     let adapter_survey_json = adapter_survey_report_json(&report);
@@ -2021,6 +2031,94 @@ fn best_adapter_survey_candidate(attempts: &[AdapterSurveyAttempt]) -> Option<Ad
     })
 }
 
+fn build_adapter_survey_report(
+    uid: String,
+    original_persona: String,
+    restore_status: String,
+    restored_persona: Option<String>,
+    attempts: Vec<AdapterSurveyAttempt>,
+    notes: Vec<&'static str>,
+) -> AdapterSurveyReport {
+    let best_candidate = best_adapter_survey_candidate(&attempts);
+    let expected_adapter_personas = adapter_survey_expected_personas();
+    let attempted_personas = attempts
+        .iter()
+        .map(|attempt| attempt.persona.clone())
+        .collect::<Vec<_>>();
+    let missing_adapter_personas = expected_adapter_personas
+        .iter()
+        .filter(|persona| !attempted_personas.contains(persona))
+        .cloned()
+        .collect::<Vec<_>>();
+    let failed_usb_diag_personas = attempts
+        .iter()
+        .filter(|attempt| !attempt.usb_diag_captured)
+        .map(|attempt| attempt.persona.clone())
+        .collect::<Vec<_>>();
+    let current_no_usb_host_traffic = attempts
+        .iter()
+        .find(|attempt| attempt.current_at_start)
+        .map(|attempt| attempt.usb_diag_captured && !attempt_has_usb_host_traffic(attempt))
+        .unwrap_or(false);
+    let current_accepted = attempts
+        .iter()
+        .any(|attempt| attempt.current_at_start && attempt.accepted);
+    let accepted_candidate = attempts
+        .iter()
+        .any(|attempt| !attempt.current_at_start && attempt.accepted);
+    let coverage_status = if current_accepted || accepted_candidate {
+        "stopped_after_acceptance"
+    } else if missing_adapter_personas.is_empty() && failed_usb_diag_personas.is_empty() {
+        "all_adapter_personas_attempted"
+    } else {
+        "incomplete"
+    };
+    let stop_reason = if current_accepted {
+        "accepted_current_persona"
+    } else if accepted_candidate {
+        "accepted_candidate"
+    } else if !missing_adapter_personas.is_empty() {
+        "not_all_personas_attempted"
+    } else if !failed_usb_diag_personas.is_empty() {
+        "usb_diag_or_switch_failed"
+    } else {
+        "exhausted_candidates"
+    };
+
+    AdapterSurveyReport {
+        artifact_schema_version: 1,
+        uid,
+        original_persona,
+        restore_status,
+        restored_persona,
+        expected_adapter_personas,
+        attempted_personas,
+        missing_adapter_personas,
+        failed_usb_diag_personas,
+        current_no_usb_host_traffic,
+        coverage_status,
+        stop_reason,
+        best_candidate,
+        attempts,
+        notes,
+    }
+}
+
+fn adapter_survey_expected_personas() -> Vec<String> {
+    ADAPTER_SURVEY_PERSONAS
+        .iter()
+        .map(|persona| persona.label().to_string())
+        .collect()
+}
+
+fn format_string_list_or_none(items: &[String]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(",")
+    }
+}
+
 fn adapter_survey_text(report: &AdapterSurveyReport) -> String {
     let mut out = String::from("Adapter persona survey\n\n");
     let _ = writeln!(out, "uid={}", report.uid);
@@ -2031,6 +2129,33 @@ fn adapter_survey_text(report: &AdapterSurveyReport) -> String {
         "restored_persona={}",
         report.restored_persona.as_deref().unwrap_or("unknown")
     );
+    let _ = writeln!(
+        out,
+        "expected_adapter_personas={}",
+        format_string_list_or_none(&report.expected_adapter_personas)
+    );
+    let _ = writeln!(
+        out,
+        "attempted_personas={}",
+        format_string_list_or_none(&report.attempted_personas)
+    );
+    let _ = writeln!(
+        out,
+        "missing_adapter_personas={}",
+        format_string_list_or_none(&report.missing_adapter_personas)
+    );
+    let _ = writeln!(
+        out,
+        "failed_usb_diag_personas={}",
+        format_string_list_or_none(&report.failed_usb_diag_personas)
+    );
+    let _ = writeln!(
+        out,
+        "current_no_usb_host_traffic={}",
+        report.current_no_usb_host_traffic
+    );
+    let _ = writeln!(out, "coverage_status={}", report.coverage_status);
+    let _ = writeln!(out, "stop_reason={}", report.stop_reason);
     if let Some(best) = report.best_candidate.as_ref() {
         let _ = writeln!(
             out,
@@ -2147,6 +2272,12 @@ fn adapter_connection_report(captures: &[PicoBundleCapture]) -> AdapterConnectio
             status,
             warning: status == "no_usb_host_traffic",
             attempts,
+            coverage_status: report.coverage_status.to_string(),
+            stop_reason: report.stop_reason.to_string(),
+            restore_status: report.restore_status.clone(),
+            attempted_personas: report.attempted_personas.clone(),
+            missing_adapter_personas: report.missing_adapter_personas.clone(),
+            failed_usb_diag_personas: report.failed_usb_diag_personas.clone(),
             accepted,
             host_traffic_seen,
             descriptor_or_report_rejected,
@@ -2211,6 +2342,8 @@ fn adapter_connection_report(captures: &[PicoBundleCapture]) -> AdapterConnectio
 fn adapter_connection_next_steps(status: &str) -> Vec<&'static str> {
     match status {
         "no_usb_host_traffic" => vec![
+            "Confirm adapter-survey.txt lists PS3, generic HID, PS4, keyboard, XInput, Xbox One, and Maple attempts. If any are missing, use bundle-capture.txt to find the failed switch or USB diagnostic step.",
+            "If every attempted persona reports device_desc_count=0, the Pico did not observe the console adapter as a USB host during the survey window.",
             "Plug the Pico into the console adapter and console USB host you want it to work on, then run couchlink bundle again.",
             "If the adapter only handshakes once, power-cycle or physically replug the console-side adapter path before running bundle.",
             "A bundle taken with no USB host traffic cannot prove whether PS3, generic HID, PS4, keyboard, XInput, Xbox One, or Maple personas work with the adapter.",
@@ -2274,11 +2407,17 @@ fn adapter_connection_text(report: &AdapterConnectionReport) -> String {
         for pico in &report.per_pico {
             let _ = writeln!(
                 out,
-                "- uid={} status={} warning={} attempts={} accepted={} host_traffic_seen={} descriptor_or_report_rejected={} usb_diag_missing={} device_desc_total={} config_desc_total={} mount_total={} raw_packet_lines={} path={}",
+                "- uid={} status={} warning={} attempts={} coverage_status={} stop_reason={} restore_status={} attempted_personas={} missing_adapter_personas={} failed_usb_diag_personas={} accepted={} host_traffic_seen={} descriptor_or_report_rejected={} usb_diag_missing={} device_desc_total={} config_desc_total={} mount_total={} raw_packet_lines={} path={}",
                 pico.uid,
                 pico.status,
                 pico.warning,
                 pico.attempts,
+                pico.coverage_status,
+                pico.stop_reason,
+                pico.restore_status,
+                format_string_list_or_none(&pico.attempted_personas),
+                format_string_list_or_none(&pico.missing_adapter_personas),
+                format_string_list_or_none(&pico.failed_usb_diag_personas),
                 pico.accepted,
                 pico.host_traffic_seen,
                 pico.descriptor_or_report_rejected,
@@ -2380,6 +2519,7 @@ fn adapter_survey_bundle_json(captures: &[PicoBundleCapture]) -> Result<String> 
         per_pico,
         notes: vec![
             "The survey is non-interactive and restores the original persona after the bundle pass.",
+            "expected_adapter_personas, attempted_personas, missing_adapter_personas, failed_usb_diag_personas, coverage_status, and stop_reason describe whether the bundle captured a complete survey.",
             "Accepted personas reached configured or polling state according to firmware USB counters.",
             "Debug mode is retained only as debug/XInput evidence and is not selected as adapter proof.",
         ],
@@ -3494,12 +3634,12 @@ mod tests {
         adapter_connection_json, adapter_connection_report, adapter_connection_text,
         adapter_survey_bundle_json, adapter_survey_candidates, adapter_survey_report_json,
         adapter_survey_text, aggregate_adapter_survey_text, aggregate_initial_usb_capture_text,
-        aggregate_usb_packets, best_adapter_survey_candidate, count_usb_packet_event_lines,
+        aggregate_usb_packets, build_adapter_survey_report, count_usb_packet_event_lines,
         count_usb_packet_harvest_lines, count_usb_packet_lines, count_usb_packet_stats_lines,
         debug_capture_evidence_report_json, debug_capture_overall_status,
         debug_capture_verdict_text, sanitize_path_component, usb_packets_text_from_debug_snapshot,
         usb_packets_text_from_diag, AdapterSurveyAttempt, AdapterSurveyRawCapture,
-        AdapterSurveyReport, PicoBundleCapture, RetainedDebugPacketLog,
+        PicoBundleCapture, RetainedDebugPacketLog,
     };
     use super::{summarize_sources, ManifestPicoCapture, UsbPacketSummarySource};
 
@@ -3896,23 +4036,22 @@ mod tests {
     #[test]
     fn adapter_survey_text_selects_accepted_ps4_candidate() {
         let attempts = vec![
-            survey_attempt("debug", false, "debug_xinput_evidence_only", 4, 1),
+            current_survey_attempt("debug", false, "debug_xinput_evidence_only", 4, 1),
             survey_attempt("ps4", true, "accepted_by_adapter", 5, 2),
             survey_attempt("keyboard", false, "adapter_did_not_enumerate", 0, 0),
         ];
-        let report = AdapterSurveyReport {
-            artifact_schema_version: 1,
-            uid: "02E22DA9".to_string(),
-            original_persona: "debug".to_string(),
-            restore_status: "confirmed".to_string(),
-            restored_persona: Some("debug".to_string()),
-            best_candidate: best_adapter_survey_candidate(&attempts),
-            attempts,
-            notes: vec![],
-        };
+        let report = test_survey_report("02E22DA9", "debug", "confirmed", Some("debug"), attempts);
 
         let text = adapter_survey_text(&report);
         assert!(text.contains("selected_best=ps4 accepted=true"));
+        assert!(text.contains(
+            "expected_adapter_personas=ps3,generic-hid,ps4,keyboard,xinput,xboxone,maple"
+        ));
+        assert!(text.contains("attempted_personas=debug,ps4,keyboard"));
+        assert!(text.contains("missing_adapter_personas=ps3,generic-hid,xinput,xboxone,maple"));
+        assert!(text.contains("current_no_usb_host_traffic=false"));
+        assert!(text.contains("coverage_status=stopped_after_acceptance"));
+        assert!(text.contains("stop_reason=accepted_candidate"));
         assert!(text.contains("persona=keyboard"));
         assert!(text.contains("verdict=adapter_did_not_enumerate"));
         assert!(text.contains("debug_xinput_evidence_only"));
@@ -3921,6 +4060,9 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["best_candidate"]["persona"], "ps4");
         assert_eq!(value["best_candidate"]["accepted"], true);
+        assert_eq!(value["coverage_status"], "stopped_after_acceptance");
+        assert_eq!(value["stop_reason"], "accepted_candidate");
+        assert_eq!(value["missing_adapter_personas"][0], "ps3");
         assert_eq!(value["attempts"][2]["device_desc_count"], 0);
     }
 
@@ -3930,16 +4072,13 @@ mod tests {
             survey_attempt("ps4", false, "descriptor_or_report_rejected", 1, 1),
             survey_attempt("keyboard", true, "accepted_by_adapter", 4, 1),
         ];
-        let report = AdapterSurveyReport {
-            artifact_schema_version: 1,
-            uid: "02E22DA9".to_string(),
-            original_persona: "xinput".to_string(),
-            restore_status: "already_current".to_string(),
-            restored_persona: Some("xinput".to_string()),
-            best_candidate: best_adapter_survey_candidate(&attempts),
+        let report = test_survey_report(
+            "02E22DA9",
+            "xinput",
+            "already_current",
+            Some("xinput"),
             attempts,
-            notes: vec![],
-        };
+        );
         let mut capture = pico_capture("02E22DA9", true, "{\"persona\":\"xinput\"}\n", "");
         capture.adapter_survey_text = adapter_survey_text(&report);
         capture.adapter_survey_json = adapter_survey_report_json(&report);
@@ -3959,22 +4098,13 @@ mod tests {
 
     #[test]
     fn adapter_connection_warns_when_live_survey_has_no_host_traffic() {
-        let attempts = vec![
-            survey_attempt("debug", false, "adapter_did_not_enumerate", 0, 0),
-            survey_attempt("ps3", false, "adapter_did_not_enumerate", 0, 0),
-            survey_attempt("generic-hid", false, "adapter_did_not_enumerate", 0, 0),
-            survey_attempt("ps4", false, "adapter_did_not_enumerate", 0, 0),
-        ];
-        let report = AdapterSurveyReport {
-            artifact_schema_version: 1,
-            uid: "02E22DA9".to_string(),
-            original_persona: "debug".to_string(),
-            restore_status: "already_current".to_string(),
-            restored_persona: Some("debug".to_string()),
-            best_candidate: best_adapter_survey_candidate(&attempts),
-            attempts,
-            notes: vec![],
-        };
+        let report = test_survey_report(
+            "02E22DA9",
+            "debug",
+            "already_current",
+            Some("debug"),
+            all_no_host_survey_attempts(),
+        );
         let mut capture = pico_capture("02E22DA9", true, "{\"persona\":\"debug\"}\n", "");
         capture.adapter_survey_report = Some(report);
 
@@ -3984,17 +4114,34 @@ mod tests {
         assert_eq!(connection.surveyed_live_pico_count, 1);
         assert_eq!(connection.no_usb_host_pico_count, 1);
         assert_eq!(connection.host_traffic_pico_count, 0);
-        assert_eq!(connection.per_pico[0].attempts, 4);
+        assert_eq!(connection.per_pico[0].attempts, 8);
+        assert_eq!(
+            connection.per_pico[0].coverage_status,
+            "all_adapter_personas_attempted"
+        );
+        assert_eq!(connection.per_pico[0].stop_reason, "exhausted_candidates");
+        assert!(connection.per_pico[0].missing_adapter_personas.is_empty());
         assert!(connection.per_pico[0].warning);
 
         let text = adapter_connection_text(&connection);
         assert!(text.contains("warning_text=No USB host enumeration traffic was observed"));
+        assert!(text.contains("coverage_status=all_adapter_personas_attempted"));
+        assert!(text.contains(
+            "attempted_personas=debug,ps3,generic-hid,ps4,keyboard,xinput,xboxone,maple"
+        ));
+        assert!(text.contains("missing_adapter_personas=none"));
+        assert!(text.contains("If every attempted persona reports device_desc_count=0"));
         assert!(text.contains("power-cycle or physically replug"));
 
         let json = adapter_connection_json(&connection).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["status"], "no_usb_host_traffic");
         assert_eq!(value["warning"], true);
+        assert_eq!(
+            value["per_pico"][0]["coverage_status"],
+            "all_adapter_personas_attempted"
+        );
+        assert_eq!(value["per_pico"][0]["attempted_personas"][7], "maple");
         assert_eq!(value["per_pico"][0]["device_desc_total"], 0);
     }
 
@@ -4018,16 +4165,8 @@ mod tests {
             1,
             1,
         )];
-        let report = AdapterSurveyReport {
-            artifact_schema_version: 1,
-            uid: "02E22DA9".to_string(),
-            original_persona: "xinput".to_string(),
-            restore_status: "confirmed".to_string(),
-            restored_persona: Some("xinput".to_string()),
-            best_candidate: best_adapter_survey_candidate(&attempts),
-            attempts,
-            notes: vec![],
-        };
+        let report =
+            test_survey_report("02E22DA9", "xinput", "confirmed", Some("xinput"), attempts);
         let mut capture = pico_capture(
             "02E22DA9",
             true,
@@ -4084,6 +4223,49 @@ mod tests {
             host_out_count: 0,
             raw_capture: AdapterSurveyRawCapture::not_attempted("not_needed"),
         }
+    }
+
+    fn current_survey_attempt(
+        persona: &str,
+        accepted: bool,
+        verdict: &str,
+        score_rank: u8,
+        device_desc_count: u32,
+    ) -> AdapterSurveyAttempt {
+        let mut attempt = survey_attempt(persona, accepted, verdict, score_rank, device_desc_count);
+        attempt.current_at_start = true;
+        attempt.switched = false;
+        attempt
+    }
+
+    fn all_no_host_survey_attempts() -> Vec<AdapterSurveyAttempt> {
+        vec![
+            current_survey_attempt("debug", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("ps3", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("generic-hid", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("ps4", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("keyboard", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("xinput", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("xboxone", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("maple", false, "adapter_did_not_enumerate", 0, 0),
+        ]
+    }
+
+    fn test_survey_report(
+        uid: &str,
+        original_persona: &str,
+        restore_status: &str,
+        restored_persona: Option<&str>,
+        attempts: Vec<AdapterSurveyAttempt>,
+    ) -> super::AdapterSurveyReport {
+        build_adapter_survey_report(
+            uid.to_string(),
+            original_persona.to_string(),
+            restore_status.to_string(),
+            restored_persona.map(|persona| persona.to_string()),
+            attempts,
+            vec![],
+        )
     }
 
     fn pico_capture(
