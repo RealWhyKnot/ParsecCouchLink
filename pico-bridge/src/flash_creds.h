@@ -32,6 +32,7 @@
 #define FLASH_PERSONA_XBOXONE 5     // Xbox One-compatible XGIP gamepad
 #define FLASH_PERSONA_DEBUG 6       // XInput shape with raw USB packet capture
 #define FLASH_PERSONA_GENERIC_HID 7 // Generic HID gamepad for unknown-HID adapters
+#define FLASH_PERSONA_N64 8         // Native Nintendo 64 Joybus controller
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;  // FLASH_CREDS_MAGIC

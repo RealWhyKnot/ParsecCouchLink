@@ -15,6 +15,7 @@ CMakeLists.txt text eol=lf
 *.py text eol=lf
 *.c text eol=lf
 *.h text eol=lf
+*.pio text eol=lf
 *.rs text eol=lf
 *.md text eol=lf
 *.yml text eol=lf

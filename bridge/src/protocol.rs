@@ -97,6 +97,8 @@ pub const ACK_FLAG_MAPLE_PERSONA: u8 = 1 << 5;
 pub const ACK_FLAG_DINPUT_PERSONA: u8 = 1 << 6;
 /// Extends the persona bits without changing the fixed ACK packet shape.
 pub const ACK_FLAG_ALT_PERSONA: u8 = 1 << 7;
+pub const ACK_FLAG_N64_PERSONA: u8 =
+    ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA;
 
 pub const USB_DIAG_V1_WIRE_SIZE: usize = 78;
 pub const USB_DIAG_WIRE_SIZE: usize = 104;
@@ -184,6 +186,7 @@ pub enum Persona {
     XboxOne,
     Debug,
     GenericHid,
+    N64,
 }
 
 impl Persona {
@@ -193,6 +196,8 @@ impl Persona {
             Persona::Debug
         } else if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
             Persona::Keyboard
+        } else if flags & ACK_FLAG_N64_PERSONA == ACK_FLAG_N64_PERSONA {
+            Persona::N64
         } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
             Persona::XboxOne
         } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
@@ -220,6 +225,7 @@ impl Persona {
             Persona::XboxOne => 5,
             Persona::Debug => 6,
             Persona::GenericHid => 7,
+            Persona::N64 => 8,
         }
     }
 
@@ -233,6 +239,7 @@ impl Persona {
             Persona::XboxOne => "xboxone",
             Persona::Debug => "debug",
             Persona::GenericHid => "generic-hid",
+            Persona::N64 => "n64",
         }
     }
 
@@ -246,6 +253,7 @@ impl Persona {
             Persona::XboxOne => "Xbox One",
             Persona::Debug => "Debug packet capture",
             Persona::GenericHid => "Generic HID gamepad",
+            Persona::N64 => "Nintendo 64 Joybus",
         }
     }
 }
@@ -1126,6 +1134,7 @@ impl PicoStateDiag {
             5 => Some(Persona::XboxOne),
             6 => Some(Persona::Debug),
             7 => Some(Persona::GenericHid),
+            8 => Some(Persona::N64),
             _ => None,
         }
     }
@@ -1594,6 +1603,7 @@ mod tests {
         assert_eq!(encode_set_persona(0, Persona::Xinput)[4], 0);
         assert_eq!(encode_set_persona(0, Persona::Debug)[4], 6);
         assert_eq!(encode_set_persona(0, Persona::GenericHid)[4], 7);
+        assert_eq!(encode_set_persona(0, Persona::N64)[4], 8);
         // Decode is lenient on unknown types; SET_PERSONA isn't a PacketKind.
         assert_eq!(
             Packet::decode(&buf),
@@ -1676,6 +1686,11 @@ mod tests {
             Persona::from_ack_flags(ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA),
             Persona::GenericHid
         );
+        assert_eq!(Persona::from_ack_flags(ACK_FLAG_N64_PERSONA), Persona::N64);
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_N64_PERSONA | ACK_FLAG_USB_DIAG_SUPPORTED),
+            Persona::N64
+        );
         assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA),
             Persona::Keyboard
@@ -1688,6 +1703,7 @@ mod tests {
         assert_eq!(Persona::XboxOne.flash_byte(), 5);
         assert_eq!(Persona::Debug.flash_byte(), 6);
         assert_eq!(Persona::GenericHid.flash_byte(), 7);
+        assert_eq!(Persona::N64.flash_byte(), 8);
     }
 
     #[test]
@@ -2090,6 +2106,9 @@ mod tests {
         let mut generic_diag = diag;
         generic_diag.persona_byte = Persona::GenericHid.flash_byte();
         assert_eq!(generic_diag.persona(), Some(Persona::GenericHid));
+        let mut n64_diag = generic_diag;
+        n64_diag.persona_byte = Persona::N64.flash_byte();
+        assert_eq!(n64_diag.persona(), Some(Persona::N64));
         let json = back.to_json_map();
         assert_eq!(json["malformed_udp_count"], serde_json::json!(42));
         assert_eq!(json["in_blocked_not_ready"], serde_json::json!(11));

@@ -1,0 +1,213 @@
+/**
+ * @addtogroup joybus
+ *
+ * @{
+ */
+
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+#include <joybus/target.h>
+
+struct joybus;
+
+/// Joybus frequency of an N64 console (NUS-001).
+#define JOYBUS_FREQ_N64_CONSOLE         244141 // PIF-NUS @ 15.625MHz / 64
+
+/// Joybus frequency of an external joybus device (EEPROM/RTC on an N64 cartridge).
+#define JOYBUS_FREQ_N64_EXTJOY          JOYBUS_FREQ_N64_CONSOLE // SECCLK @ 1.953125MHz / 8
+
+/// Joybus frequency of an N64 controller (NUS-005).
+#define JOYBUS_FREQ_N64_CONTROLLER      250000 // CNT-NUS @ 2MHz / 8
+
+/// Joybus frequency of an N64 VRU (NUS-020).
+#define JOYBUS_FREQ_N64_VRU             250000 // VCI-NUS @ 4MHz / 16
+
+/// Joybus frequency of a GameCube console (DOL-001 / DOL-101).
+#define JOYBUS_FREQ_GCN_CONSOLE         202500 // Flipper @ 162MHz / 800
+
+/// Joybus frequency of a GameCube controller (DOL-003).
+#define JOYBUS_FREQ_GCN_CONTROLLER      250000 // CNT-DOL @ 4MHz / 16
+
+/// Joybus frequency of WaveBird receiver (DOL-005)
+#define JOYBUS_FREQ_WAVEBIRD_RECEIVER   225000 // WCRX-DOL @ 28.8MHz / 128
+
+/// Joybus frequency of a Wii console (RVL-001 / RVL-101 / RVL-201).
+#define JOYBUS_FREQ_WII_CONSOLE         202500 // Hollywood @ 243MHz / 1200
+
+/// Joybus frequency of a GameCube Game Boy Advance cable (DOL-011).
+#define JOYBUS_FREQ_GCN_GBA_CABLE       262144 // CPU-AGB @ 16.777216MHz / 64
+
+/// Minimum delay between Joybus transfers, in microseconds
+#define JOYBUS_INTER_TRANSFER_DELAY_US  80
+
+/// Timeout for waiting for a reply from a target, in microseconds
+#define JOYBUS_REPLY_TIMEOUT_US         100
+
+/// Minimum line-high time to consider the bus idle, in microseconds
+#define JOYBUS_BUS_IDLE_US              100
+
+/// Maximum size of a Joybus transfer, in bytes
+#define JOYBUS_BLOCK_SIZE               64
+
+/// Size of a Joybus N64 pak read/write block
+#define JOYBUS_PAK_BLOCK_SIZE           32
+
+/**
+ * Macro to cast a backend-specific Joybus instance to a generic Joybus instance.
+ */
+#define JOYBUS(bus) ((struct joybus *)(bus))
+
+/**
+ * Function type for transfer completion callbacks.
+ *
+ * Invoked once, after the async call has returned, when a started transfer
+ * completes. Runs in transfer-completion context, which is an interrupt on most
+ * backends, so it must not block.
+ *
+ * @param bus the Joybus associated with the transfer
+ * @param status 0 on success, a negative joybus_error on failure
+ * @param user_data the user_data passed to the async function
+ */
+typedef void (*joybus_transfer_cb)(struct joybus *bus, int status, void *user_data);
+
+// API for a Joybus backend - internal use only
+struct joybus_api {
+  int (*enable)(struct joybus *bus);
+  int (*disable)(struct joybus *bus);
+  int (*transfer)(struct joybus *bus, const uint8_t *write_buf, uint8_t write_len, uint8_t *read_buf, uint8_t read_len,
+                  joybus_transfer_cb callback, void *user_data);
+  int (*target_register)(struct joybus *bus, struct joybus_target *target);
+  int (*target_unregister)(struct joybus *bus, struct joybus_target *target);
+};
+
+struct joybus_host_op {
+  joybus_transfer_cb callback;
+  void *user_data;
+  uint8_t *response;
+  uint8_t arg;
+};
+
+/**
+ * A Joybus instance.
+ */
+struct joybus {
+  const struct joybus_api *api;
+
+  struct joybus_target *target;
+  uint8_t command_buffer[JOYBUS_BLOCK_SIZE];
+  uint8_t response_buffer[JOYBUS_BLOCK_SIZE];
+  struct joybus_host_op host_op;
+};
+
+/**
+ * Enable the Joybus instance.
+ *
+ * @param bus the Joybus instance to enable
+ */
+static inline int joybus_enable(struct joybus *bus)
+{
+  return bus->api->enable(bus);
+}
+
+/**
+ * Disable the Joybus instance.
+ *
+ * @param bus the Joybus instance to disable
+ */
+static inline int joybus_disable(struct joybus *bus)
+{
+  return bus->api->disable(bus);
+}
+
+/**
+ * Perform a Joybus "write then read" transfer.
+ *
+ * Sends a command to a device and reads the response. Returns once the transfer
+ * has started, and @p callback is invoked with the status when it completes.
+ * The provided buffers must stay valid until the callback runs.
+ *
+ * @param bus the Joybus instance to use
+ * @param write_buf the buffer containing the command to send
+ * @param write_len the number of bytes to write
+ * @param read_buf the buffer to store the response in
+ * @param read_len the number of bytes to read
+ * @param callback invoked once when the transfer completes
+ * @param user_data user data to pass to the callback
+ * @return 0 if the transfer was started, a negative joybus_error otherwise
+ */
+static inline int joybus_transfer(struct joybus *bus, const uint8_t *write_buf, uint8_t write_len, uint8_t *read_buf,
+                                  uint8_t read_len, joybus_transfer_cb callback, void *user_data)
+{
+  return bus->api->transfer(bus, write_buf, write_len, read_buf, read_len, callback, user_data);
+}
+
+/**
+ * Perform a synchronous "write then read" Joybus transfer.
+ *
+ * Sends a command to a device and blocks until the response arrives.
+ *
+ * @param bus the Joybus instance to use
+ * @param write_buf the buffer containing the command to send
+ * @param write_len the number of bytes to write
+ * @param read_buf the buffer to store the response in
+ * @param read_len the number of bytes to read
+ * @return 0 on success, a negative joybus_error on failure
+ *
+ * @warning Blocks by busy-waiting, so it must not be called from an interrupt
+ *   or timer callback. Use joybus_transfer() there.
+ */
+int joybus_transfer_sync(struct joybus *bus, const uint8_t *write_buf, uint8_t write_len, uint8_t *read_buf,
+                         uint8_t read_len);
+
+/**
+ * Enable Joybus "target" mode, and register a target to handle commands.
+ *
+ * @param bus the Joybus instance to use
+ * @param target the target to register
+ * @return 0 on success, a negative joybus_error on failure
+ */
+static inline int joybus_target_register(struct joybus *bus, struct joybus_target *target)
+{
+  // Common setup
+  bus->target        = target;
+  target->registered = true;
+
+  // Backend-specific registration
+  return bus->api->target_register(bus, target);
+}
+
+/**
+ * Unregister a Joybus target.
+ *
+ * @param bus the Joybus instance to use
+ * @param target the target to unregister
+ * @return 0 on success, a negative joybus_error on failure
+ */
+static inline int joybus_target_unregister(struct joybus *bus, struct joybus_target *target)
+{
+  // Backend-specific unregistration
+  int status = bus->api->target_unregister(bus, target);
+
+  // Common teardown
+  bus->target        = NULL;
+  target->registered = false;
+
+  return status;
+}
+
+// Context for a blocking Joybus operation
+struct joybus_sync_ctx {
+  volatile bool done;
+  volatile int status;
+};
+
+// Transfer completion callback that records the status into a joybus_sync_ctx.
+void joybus_sync_cb(struct joybus *bus, int status, void *user_data);
+
+// Busy-wait on a joybus_sync_ctx until the operation completes
+int joybus_sync(int start_status, struct joybus_sync_ctx *ctx);
+
+/** @} */
