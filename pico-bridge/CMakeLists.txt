@@ -83,6 +83,7 @@ configure_file(
 )
 
 set(PICO_BRIDGE_N64_GPIO "0" CACHE STRING "GPIO used for N64 Joybus DATA")
+set(PICO_BRIDGE_N64_USBC_GPIO "1" CACHE STRING "GPIO used for N64 Joybus DATA on USB-C output")
 
 add_executable(pico_bridge
     src/main.c
@@ -123,6 +124,7 @@ set(PICO_BRIDGE_WIFI_COUNTRY "CYW43_COUNTRY_WORLDWIDE"
 target_compile_definitions(pico_bridge PRIVATE
     PICO_BRIDGE_WIFI_COUNTRY=${PICO_BRIDGE_WIFI_COUNTRY}
     PICO_BRIDGE_N64_GPIO=${PICO_BRIDGE_N64_GPIO}
+    PICO_BRIDGE_N64_USBC_GPIO=${PICO_BRIDGE_N64_USBC_GPIO}
 )
 
 target_include_directories(pico_bridge PRIVATE

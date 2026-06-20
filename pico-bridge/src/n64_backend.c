@@ -16,22 +16,20 @@
 #include "gamepad_state.h"
 #include "n64_report.h"
 
-#ifndef PICO_BRIDGE_N64_GPIO
-#define PICO_BRIDGE_N64_GPIO 0
-#endif
-
 static struct joybus_rp2xxx joybus_bus;
 static struct joybus_target_n64_controller n64_controller;
 static volatile uint32_t staged_report;
 static volatile int core1_status;
 static volatile bool core1_started;
+static unsigned int configured_gpio;
+static const char *configured_label;
 static bool status_logged;
 
 static void n64_core1_entry(void) {
     multicore_lockout_victim_init();
 
     struct joybus *bus = JOYBUS(&joybus_bus);
-    int rc = joybus_rp2xxx_init(&joybus_bus, PICO_BRIDGE_N64_GPIO, pio0);
+    int rc = joybus_rp2xxx_init(&joybus_bus, configured_gpio, pio0);
     if (rc != 0) {
         core1_status = rc;
         core1_started = true;
@@ -63,13 +61,15 @@ static void n64_core1_entry(void) {
     }
 }
 
-void n64_backend_init(void) {
+void n64_backend_init(unsigned int gpio, const char *label) {
     struct joybus_n64_controller_state neutral = {0};
     staged_report = n64_report_pack(&neutral);
     core1_status = -1;
     core1_started = false;
+    configured_gpio = gpio;
+    configured_label = label ? label : "n64";
     status_logged = false;
-    diag_log_printf("n64: starting Joybus target on GPIO %u", (unsigned)PICO_BRIDGE_N64_GPIO);
+    diag_log_printf("n64: starting Joybus target %s on GPIO %u", configured_label, configured_gpio);
     multicore_launch_core1(n64_core1_entry);
 }
 

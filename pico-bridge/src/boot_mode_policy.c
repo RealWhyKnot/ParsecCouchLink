@@ -39,6 +39,8 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
         return RUN_PERSONA_GENERIC_HID;
     if (persona_byte == (uint8_t)RUN_PERSONA_N64)
         return RUN_PERSONA_N64;
+    if (persona_byte == (uint8_t)RUN_PERSONA_N64_USBC)
+        return RUN_PERSONA_N64_USBC;
     return RUN_PERSONA_XINPUT;
 }
 
