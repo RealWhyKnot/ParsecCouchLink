@@ -41,14 +41,6 @@ volatile keyboard_state_t g_keyboard_state = {0};
 volatile uint32_t g_last_packet_ms = 0;
 volatile uint8_t g_parsec_connected = 0;
 
-#ifndef PICO_BRIDGE_N64_GPIO
-#define PICO_BRIDGE_N64_GPIO 0
-#endif
-
-#ifndef PICO_BRIDGE_N64_USBC_GPIO
-#define PICO_BRIDGE_N64_USBC_GPIO 1
-#endif
-
 static void log_reset_reason(const reset_reason_info_t *info) {
     diag_log_printf("boot: reset-reason=%s", reset_reason_name(info->reason));
     if (info->reason == RESET_REASON_FAULT) {
@@ -196,11 +188,8 @@ static void run_mode_main_loop(void) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
     } else if (persona == RUN_PERSONA_N64) {
-        n64_backend_init(PICO_BRIDGE_N64_GPIO, "gpio");
+        n64_backend_init();
         diag_log_msg("run: persona = Nintendo 64 Joybus");
-    } else if (persona == RUN_PERSONA_N64_USBC) {
-        n64_backend_init(PICO_BRIDGE_N64_USBC_GPIO, "usb-c");
-        diag_log_msg("run: persona = Nintendo 64 Joybus over USB-C");
     } else if (boot_mode_persona_uses_gamepad_hid(persona)) {
         dinput_init();
         if (persona == RUN_PERSONA_PS4)
@@ -282,7 +271,7 @@ static void run_mode_main_loop(void) {
 
         if (persona == RUN_PERSONA_KEYBOARD)
             hid_kbd_task();
-        else if (persona == RUN_PERSONA_N64 || persona == RUN_PERSONA_N64_USBC)
+        else if (persona == RUN_PERSONA_N64)
             n64_backend_task();
         else if (boot_mode_persona_uses_gamepad_hid(persona))
             dinput_task();
@@ -395,9 +384,6 @@ int main(void) {
             break;
         case RUN_PERSONA_N64:
             persona_name = "Nintendo 64 Joybus";
-            break;
-        case RUN_PERSONA_N64_USBC:
-            persona_name = "Nintendo 64 Joybus over USB-C";
             break;
         }
     }

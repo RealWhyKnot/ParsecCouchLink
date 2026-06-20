@@ -864,8 +864,7 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
             "Maple",
             "Xbox-compatible mode labelled for Dreamcast adapters",
         ),
-        menu_item("N64 GPIO", "native Nintendo 64 Joybus on the GPIO output"),
-        menu_item("N64 USB-C", "native Nintendo 64 Joybus on the USB-C output"),
+        menu_item("N64", "native Nintendo 64 Joybus mode"),
         menu_item("Keyboard", "USB HID keyboard mode"),
         menu_item("Debug", "XInput mode with raw USB packet capture"),
     ];
@@ -875,8 +874,7 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
         2 => choose_playstation_input_mode().await,
         3 => Ok(InputModeChoice::Persona(protocol::Persona::Maple)),
         4 => Ok(InputModeChoice::Persona(protocol::Persona::N64)),
-        5 => Ok(InputModeChoice::Persona(protocol::Persona::N64UsbC)),
-        6 => Ok(InputModeChoice::Persona(protocol::Persona::Keyboard)),
+        5 => Ok(InputModeChoice::Persona(protocol::Persona::Keyboard)),
         _ => Ok(InputModeChoice::Persona(protocol::Persona::Debug)),
     }
 }

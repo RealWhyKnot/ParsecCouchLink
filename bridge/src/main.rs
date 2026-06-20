@@ -233,21 +233,6 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to native Nintendo 64 Joybus mode on USB-C output.
-    #[command(name = "n64-usbc", alias = "retro-c")]
-    N64UsbC {
-        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
-        #[arg(long = "pico")]
-        picos: Vec<String>,
-
-        /// Switch every Pico currently visible on Wi-Fi.
-        #[arg(long)]
-        all: bool,
-
-        /// Switch the persona but don't start streaming afterwards.
-        #[arg(long)]
-        no_stream: bool,
-    },
     /// Try PS3, generic HID, and PS4 modes for USB4MAPLE-style adapters.
     Dinput {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
@@ -564,11 +549,6 @@ fn main() {
                 all,
                 no_stream,
             }) => cmd_persona::run(protocol::Persona::N64, picos, all, !no_stream).await,
-            Some(Command::N64UsbC {
-                picos,
-                all,
-                no_stream,
-            }) => cmd_persona::run(protocol::Persona::N64UsbC, picos, all, !no_stream).await,
             Some(Command::Dinput {
                 picos,
                 all,
@@ -883,26 +863,6 @@ mod tests {
                 assert!(no_stream);
             }
             other => panic!("expected n64 command, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn n64_usbc_command_parses_target_and_no_stream() {
-        let cli =
-            Cli::try_parse_from(["couchlink", "n64-usbc", "--pico", "07D37EB6", "--no-stream"])
-                .unwrap();
-
-        match cli.command {
-            Some(Command::N64UsbC {
-                picos,
-                all,
-                no_stream,
-            }) => {
-                assert_eq!(picos, vec!["07D37EB6"]);
-                assert!(!all);
-                assert!(no_stream);
-            }
-            other => panic!("expected n64-usbc command, got {other:?}"),
         }
     }
 

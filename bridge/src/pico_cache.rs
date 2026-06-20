@@ -309,7 +309,6 @@ fn usb_verdict_label(diag: &protocol::UsbDiag, persona: protocol::Persona) -> &'
             protocol::Persona::Keyboard => "polling_with_keyboard_out",
             protocol::Persona::Debug => "polling_with_debug_out",
             protocol::Persona::N64 => "polling_with_n64_diag_out",
-            protocol::Persona::N64UsbC => "polling_with_n64_usbc_diag_out",
             _ => "polling_with_out",
         }
     } else {

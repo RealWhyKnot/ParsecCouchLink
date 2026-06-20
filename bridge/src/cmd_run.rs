@@ -127,7 +127,6 @@ impl StreamRoute {
             | Persona::XboxOne
             | Persona::GenericHid
             | Persona::N64
-            | Persona::N64UsbC
             | Persona::Debug => xinput::user_slot_label(self.source_slot),
         }
     }
@@ -1156,7 +1155,6 @@ impl RouteRuntime {
             | Persona::XboxOne
             | Persona::GenericHid
             | Persona::N64
-            | Persona::N64UsbC
             | Persona::Debug => self.next_controller_packet(),
             Persona::Keyboard => self.next_keyboard_packet(),
         };
@@ -1277,7 +1275,6 @@ fn print_status(routes: &mut [RouteRuntime]) {
             | Persona::XboxOne
             | Persona::GenericHid
             | Persona::N64
-            | Persona::N64UsbC
             | Persona::Debug => format!(
                 "buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
                 route.last_state.buttons,

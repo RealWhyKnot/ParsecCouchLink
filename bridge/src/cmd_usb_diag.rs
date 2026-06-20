@@ -190,7 +190,6 @@ pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> 
         protocol::Persona::Debug => "Debug XInput packet capture",
         protocol::Persona::GenericHid => "Generic HID gamepad",
         protocol::Persona::N64 => "Nintendo 64 Joybus",
-        protocol::Persona::N64UsbC => "Nintendo 64 Joybus (USB-C)",
     };
     let mut out = String::new();
     let _ = writeln!(out, "  {}", usb_verdict(diag, device_label));
