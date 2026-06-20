@@ -1369,8 +1369,6 @@ async fn bundle_usb_packets_for_target(
     let mut attempts = Vec::new();
     let mut capture_sections = Vec::new();
     let mut capture_target = None;
-    let mut current_accepted = false;
-
     let mut current_raw_capture = AdapterSurveyRawCapture::not_attempted("not_needed");
     let current_needs_capture = current_diag
         .map(|diag| diag.device_desc_count > 0 && !survey_diag_accepted(target.persona, diag))
@@ -1418,31 +1416,23 @@ async fn bundle_usb_packets_for_target(
         current_diag.cloned(),
         current_raw_capture,
     );
-    if current_attempt.accepted {
-        current_accepted = true;
-    }
     let current_has_no_usb_host = current_diag
         .map(|diag| !diag_has_usb_host_traffic(diag))
         .unwrap_or(false);
+    let current_accepted = current_attempt.accepted;
     attempts.push(current_attempt);
 
-    let mut candidates = Vec::new();
     if current_has_no_usb_host {
         capture_log.record_duration(
-            format!("per_pico.{uid}.adapter_survey.skip"),
+            format!("per_pico.{uid}.adapter_survey.current"),
             0,
             "no_usb_host_traffic",
             0,
             "current USB diagnostic had no descriptor, mount, suspend, report, or OUT traffic",
         );
-    } else if !current_accepted || target.persona == protocol::Persona::Debug {
-        for persona in ADAPTER_SURVEY_PERSONAS {
-            if !candidates.contains(persona) && *persona != target.persona {
-                candidates.push(*persona);
-            }
-        }
     }
 
+    let candidates = adapter_survey_candidates(target.persona, current_accepted);
     for candidate in candidates {
         let switched = current.persona != candidate;
         let Some(active) =
@@ -1956,6 +1946,21 @@ fn diag_has_usb_host_traffic(diag: &protocol::UsbDiag) -> bool {
         || diag.resume_count > 0
         || diag.xinput_in_sent_count > 0
         || diag.xinput_out_count > 0
+}
+
+fn adapter_survey_candidates(
+    current: protocol::Persona,
+    current_accepted: bool,
+) -> Vec<protocol::Persona> {
+    if current_accepted && current != protocol::Persona::Debug {
+        return Vec::new();
+    }
+
+    ADAPTER_SURVEY_PERSONAS
+        .iter()
+        .copied()
+        .filter(|persona| *persona != current)
+        .collect()
 }
 
 fn attempt_has_usb_host_traffic(attempt: &AdapterSurveyAttempt) -> bool {
@@ -3487,9 +3492,9 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 mod tests {
     use super::{
         adapter_connection_json, adapter_connection_report, adapter_connection_text,
-        adapter_survey_bundle_json, adapter_survey_report_json, adapter_survey_text,
-        aggregate_adapter_survey_text, aggregate_initial_usb_capture_text, aggregate_usb_packets,
-        best_adapter_survey_candidate, count_usb_packet_event_lines,
+        adapter_survey_bundle_json, adapter_survey_candidates, adapter_survey_report_json,
+        adapter_survey_text, aggregate_adapter_survey_text, aggregate_initial_usb_capture_text,
+        aggregate_usb_packets, best_adapter_survey_candidate, count_usb_packet_event_lines,
         count_usb_packet_harvest_lines, count_usb_packet_lines, count_usb_packet_stats_lines,
         debug_capture_evidence_report_json, debug_capture_overall_status,
         debug_capture_verdict_text, sanitize_path_component, usb_packets_text_from_debug_snapshot,
@@ -3853,6 +3858,42 @@ mod tests {
     }
 
     #[test]
+    fn adapter_survey_candidates_cycle_after_debug_no_host_traffic() {
+        assert_eq!(
+            adapter_survey_candidates(crate::protocol::Persona::Debug, false),
+            vec![
+                crate::protocol::Persona::Ps3,
+                crate::protocol::Persona::GenericHid,
+                crate::protocol::Persona::Ps4,
+                crate::protocol::Persona::Keyboard,
+                crate::protocol::Persona::Xinput,
+                crate::protocol::Persona::XboxOne,
+                crate::protocol::Persona::Maple,
+            ]
+        );
+    }
+
+    #[test]
+    fn adapter_survey_candidates_stop_after_accepted_current_persona() {
+        assert!(adapter_survey_candidates(crate::protocol::Persona::Ps4, true).is_empty());
+    }
+
+    #[test]
+    fn adapter_survey_candidates_try_remaining_personas_after_rejected_current_persona() {
+        assert_eq!(
+            adapter_survey_candidates(crate::protocol::Persona::Ps4, false),
+            vec![
+                crate::protocol::Persona::Ps3,
+                crate::protocol::Persona::GenericHid,
+                crate::protocol::Persona::Keyboard,
+                crate::protocol::Persona::Xinput,
+                crate::protocol::Persona::XboxOne,
+                crate::protocol::Persona::Maple,
+            ]
+        );
+    }
+
+    #[test]
     fn adapter_survey_text_selects_accepted_ps4_candidate() {
         let attempts = vec![
             survey_attempt("debug", false, "debug_xinput_evidence_only", 4, 1),
@@ -3918,24 +3959,23 @@ mod tests {
 
     #[test]
     fn adapter_connection_warns_when_live_survey_has_no_host_traffic() {
-        let attempts = vec![survey_attempt(
-            "xinput",
-            false,
-            "adapter_did_not_enumerate",
-            0,
-            0,
-        )];
+        let attempts = vec![
+            survey_attempt("debug", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("ps3", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("generic-hid", false, "adapter_did_not_enumerate", 0, 0),
+            survey_attempt("ps4", false, "adapter_did_not_enumerate", 0, 0),
+        ];
         let report = AdapterSurveyReport {
             artifact_schema_version: 1,
             uid: "02E22DA9".to_string(),
-            original_persona: "xinput".to_string(),
+            original_persona: "debug".to_string(),
             restore_status: "already_current".to_string(),
-            restored_persona: Some("xinput".to_string()),
+            restored_persona: Some("debug".to_string()),
             best_candidate: best_adapter_survey_candidate(&attempts),
             attempts,
             notes: vec![],
         };
-        let mut capture = pico_capture("02E22DA9", true, "{\"persona\":\"xinput\"}\n", "");
+        let mut capture = pico_capture("02E22DA9", true, "{\"persona\":\"debug\"}\n", "");
         capture.adapter_survey_report = Some(report);
 
         let connection = adapter_connection_report(&[capture]);
@@ -3944,6 +3984,7 @@ mod tests {
         assert_eq!(connection.surveyed_live_pico_count, 1);
         assert_eq!(connection.no_usb_host_pico_count, 1);
         assert_eq!(connection.host_traffic_pico_count, 0);
+        assert_eq!(connection.per_pico[0].attempts, 4);
         assert!(connection.per_pico[0].warning);
 
         let text = adapter_connection_text(&connection);
