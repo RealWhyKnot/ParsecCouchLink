@@ -82,8 +82,6 @@ configure_file(
     @ONLY
 )
 
-set(PICO_BRIDGE_N64_GPIO "0" CACHE STRING "GPIO used for N64 Joybus DATA")
-
 add_executable(pico_bridge
     src/main.c
     src/boot_mode.c
@@ -97,8 +95,6 @@ add_executable(pico_bridge
     src/flash_creds.c
     src/heartbeat.c
     src/hid_kbd.c
-    src/n64_backend.c
-    src/n64_report.c
     src/net_udp.c
     src/reset_reason.c
     src/usb_diag.c
@@ -108,10 +104,6 @@ add_executable(pico_bridge
     src/wifi.c
     src/xbone.c
     src/xinput.c
-    ../third_party/libjoybus/src/bus.c
-    ../third_party/libjoybus/src/checksum.c
-    ../third_party/libjoybus/src/backend/rp2xxx/joybus.c
-    ../third_party/libjoybus/src/target/n64_controller.c
 )
 
 # Wi-Fi country code. WORLDWIDE is the safest pre-built default; EU/UK
@@ -122,33 +114,21 @@ set(PICO_BRIDGE_WIFI_COUNTRY "CYW43_COUNTRY_WORLDWIDE"
     CACHE STRING "CYW43 country code (cyw43_arch_init_with_country)")
 target_compile_definitions(pico_bridge PRIVATE
     PICO_BRIDGE_WIFI_COUNTRY=${PICO_BRIDGE_WIFI_COUNTRY}
-    PICO_BRIDGE_N64_GPIO=${PICO_BRIDGE_N64_GPIO}
 )
 
 target_include_directories(pico_bridge PRIVATE
     ${PICO_BRIDGE_GENERATED_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/src
-    ${CMAKE_CURRENT_LIST_DIR}/../third_party/libjoybus/include
 )
 
 target_link_libraries(pico_bridge
     pico_stdlib
     pico_unique_id
     pico_flash          # flash_safe_execute (coordinates core 1 + IRQs)
-    pico_multicore
     hardware_flash
-    hardware_dma
-    hardware_pio
     hardware_sync
     tinyusb_device
     pico_cyw43_arch_lwip_threadsafe_background
-)
-
-pico_generate_pio_header(pico_bridge
-    ${CMAKE_CURRENT_LIST_DIR}/../third_party/libjoybus/src/backend/rp2xxx/joybus_host.pio
-)
-pico_generate_pio_header(pico_bridge
-    ${CMAKE_CURRENT_LIST_DIR}/../third_party/libjoybus/src/backend/rp2xxx/joybus_target.pio
 )
 
 # Use UART for any stdio (e.g. for early-boot prints); USB stdio is

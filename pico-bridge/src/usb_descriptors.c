@@ -207,9 +207,6 @@ uint8_t const *tud_descriptor_device_cb(void) {
         return desc;
     }
     switch (boot_mode_run_persona()) {
-    case RUN_PERSONA_N64:
-        desc = (uint8_t const *)&desc_device_cdc;
-        break;
     case RUN_PERSONA_PS3:
         desc = (uint8_t const *)&desc_device_ps3;
         break;
@@ -558,9 +555,6 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
         return desc;
     }
     switch (boot_mode_run_persona()) {
-    case RUN_PERSONA_N64:
-        desc = desc_configuration_cdc;
-        break;
     case RUN_PERSONA_PS3:
         desc = desc_configuration_ps3;
         break;
@@ -931,11 +925,10 @@ static const uint8_t desc_bos[BOS_DESC_TOTAL_LEN] = {
 };
 
 uint8_t const *tud_descriptor_bos_cb(void) {
-    // Only setup mode and the N64 diagnostic USB shape advertise WinUSB
-    // binding. XInput's binding to xusb22.sys is sensitive to extra
-    // descriptors and capability declarations; other run personas skip
-    // BOS entirely.
-    if (boot_mode_current() == BOOT_MODE_RUN && boot_mode_run_persona() != RUN_PERSONA_N64)
+    // Only setup mode advertises WinUSB binding. XInput's binding to
+    // xusb22.sys is sensitive to extra descriptors and capability
+    // declarations; run mode skips BOS entirely.
+    if (boot_mode_current() == BOOT_MODE_RUN)
         return NULL;
     return desc_bos;
 }

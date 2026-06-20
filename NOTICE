@@ -19,6 +19,3 @@ components retain their own upstream licenses.
 Portions of the PlayStation and Xbox One USB descriptor/report reference data
 are adapted from GP2040-CE, Copyright (c) 2024 OpenStickCommunity
 (gp2040-ce.info), licensed under the MIT License.
-
-Firmware Joybus support uses libjoybus, Copyright (c) 2026 James Smith,
-licensed under the MIT License.

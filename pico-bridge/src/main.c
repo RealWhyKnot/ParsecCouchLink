@@ -25,7 +25,6 @@
 #include "heartbeat.h"
 #include "hid_kbd.h"
 #include "keyboard_state.h"
-#include "n64_backend.h"
 #include "net_udp.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
@@ -187,9 +186,6 @@ static void run_mode_main_loop(void) {
     if (persona == RUN_PERSONA_KEYBOARD) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
-    } else if (persona == RUN_PERSONA_N64) {
-        n64_backend_init();
-        diag_log_msg("run: persona = Nintendo 64 Joybus");
     } else if (boot_mode_persona_uses_gamepad_hid(persona)) {
         dinput_init();
         if (persona == RUN_PERSONA_PS4)
@@ -271,8 +267,6 @@ static void run_mode_main_loop(void) {
 
         if (persona == RUN_PERSONA_KEYBOARD)
             hid_kbd_task();
-        else if (persona == RUN_PERSONA_N64)
-            n64_backend_task();
         else if (boot_mode_persona_uses_gamepad_hid(persona))
             dinput_task();
         else if (persona == RUN_PERSONA_XBOXONE)
@@ -381,9 +375,6 @@ int main(void) {
             break;
         case RUN_PERSONA_GENERIC_HID:
             persona_name = "generic HID gamepad";
-            break;
-        case RUN_PERSONA_N64:
-            persona_name = "Nintendo 64 Joybus";
             break;
         }
     }

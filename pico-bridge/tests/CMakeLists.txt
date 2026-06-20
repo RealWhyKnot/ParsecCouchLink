@@ -35,17 +35,6 @@ target_include_directories(test_dinput_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 
 add_test(NAME dinput_report COMMAND test_dinput_report)
 
-add_executable(test_n64_report
-    test_n64_report.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src/n64_report.c
-)
-target_include_directories(test_n64_report PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/libjoybus/include
-)
-
-add_test(NAME n64_report COMMAND test_n64_report)
-
 add_executable(test_dinput_features
     test_dinput_features.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/dinput.c

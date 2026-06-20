@@ -26,7 +26,6 @@ typedef enum {
     RUN_PERSONA_XBOXONE = 5,     // Xbox One-compatible XGIP gamepad
     RUN_PERSONA_DEBUG = 6,       // XInput shape with raw USB packet capture
     RUN_PERSONA_GENERIC_HID = 7, // Generic HID gamepad for unknown-HID adapters
-    RUN_PERSONA_N64 = 8,         // Native Nintendo 64 Joybus controller
 } run_persona_t;
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);
