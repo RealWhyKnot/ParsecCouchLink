@@ -47,6 +47,15 @@ target_include_directories(test_dinput_features PRIVATE
 
 add_test(NAME dinput_features COMMAND test_dinput_features)
 
+add_executable(test_bt_hid_report
+    test_bt_hid_report.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/bt_hid_report.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/dinput_report.c
+)
+target_include_directories(test_bt_hid_report PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+add_test(NAME bt_hid_report COMMAND test_bt_hid_report)
+
 add_executable(test_maple_proto
     test_maple_proto.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/maple_proto.c

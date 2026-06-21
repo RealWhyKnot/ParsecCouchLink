@@ -16,6 +16,7 @@
 #include "tusb.h"
 
 #include "boot_mode.h"
+#include "bt_hid.h"
 #include "cdc_handlers.h"
 #include "cdc_proto.h"
 #include "diag_log.h"
@@ -183,7 +184,22 @@ static void run_mode_main_loop(void) {
     bool badauth_armed = false;
 
     run_persona_t persona = boot_mode_run_persona();
-    if (persona == RUN_PERSONA_KEYBOARD) {
+    bool bt_hid_inited = false;
+    bt_hid_target_t bt_hid_target = BT_HID_TARGET_GENERIC;
+    uint32_t bt_hid_radio_generation = 0;
+    if (boot_mode_persona_uses_bluetooth(persona)) {
+        if (bt_hid_target_from_persona(persona, &bt_hid_target) && radio_up) {
+            bt_hid_inited = bt_hid_init(bt_hid_target);
+            if (bt_hid_inited)
+                bt_hid_radio_generation = wifi_radio_generation();
+        }
+        if (bt_hid_inited) {
+            diag_log_printf("run: Bluetooth persona = %s", bt_hid_target_label(bt_hid_target));
+        } else {
+            diag_log_printf("run: Bluetooth persona = %s (waiting for radio)",
+                            bt_hid_target_label(bt_hid_target));
+        }
+    } else if (persona == RUN_PERSONA_KEYBOARD) {
         hid_kbd_init();
         diag_log_msg("run: USB persona = HID keyboard");
     } else if (boot_mode_persona_uses_gamepad_hid(persona)) {
@@ -213,15 +229,17 @@ static void run_mode_main_loop(void) {
     reset_reason_mark_main_loop_entered();
 
     for (;;) {
-        tud_task();
-        boot_mode_post_enum_bootsel_poll();
-        // Defense-in-depth: drain any CDC bytes the host may have sent
-        // before we re-enumerated as XInput. With the boot-ordering fix
-        // in main(), run mode never exposes CDC endpoints and this is a
-        // no-op (early-exits on tud_cdc_available() == 0). It's here so
-        // a future regression that reintroduces the persona race can't
-        // silently fill the CDC RX FIFO again.
-        cdc_handlers_poll();
+        if (boot_mode_persona_uses_usb_output(persona)) {
+            tud_task();
+            boot_mode_post_enum_bootsel_poll();
+            // Defense-in-depth: drain any CDC bytes the host may have sent
+            // before we re-enumerated as XInput. With the boot-ordering fix
+            // in main(), run mode never exposes CDC endpoints and this is a
+            // no-op (early-exits on tud_cdc_available() == 0). It's here so
+            // a future regression that reintroduces the persona race can't
+            // silently fill the CDC RX FIFO again.
+            cdc_handlers_poll();
+        }
 
         if (!radio_up) {
             // Stay a live (idle) controller while the radio refuses to
@@ -234,6 +252,13 @@ static void run_mode_main_loop(void) {
                                     (unsigned)radio_init_fails);
                     run_issue_join(&creds);
                     join_issued = true;
+                    if (boot_mode_persona_uses_bluetooth(persona) && !bt_hid_inited) {
+                        bt_hid_inited = bt_hid_init(bt_hid_target);
+                        if (bt_hid_inited)
+                            bt_hid_radio_generation = wifi_radio_generation();
+                        diag_log_printf("run: Bluetooth init after radio recovery target=%s ok=%d",
+                                        bt_hid_target_label(bt_hid_target), (int)bt_hid_inited);
+                    }
                 } else {
                     radio_init_fails++;
                     radio_retry_at = make_timeout_time_ms(3000);
@@ -257,6 +282,21 @@ static void run_mode_main_loop(void) {
             cyw43_arch_poll();
             wifi_task();
 
+            if (boot_mode_persona_uses_bluetooth(persona) && bt_hid_inited) {
+                uint32_t current_generation = wifi_radio_generation();
+                if (current_generation != bt_hid_radio_generation) {
+                    diag_log_printf("run: radio generation changed %u -> %u; restarting Bluetooth",
+                                    (unsigned)bt_hid_radio_generation,
+                                    (unsigned)current_generation);
+                    bt_hid_reset_stack_state();
+                    bt_hid_inited = bt_hid_init(bt_hid_target);
+                    if (bt_hid_inited)
+                        bt_hid_radio_generation = current_generation;
+                    diag_log_printf("run: Bluetooth re-init target=%s ok=%d",
+                                    bt_hid_target_label(bt_hid_target), (int)bt_hid_inited);
+                }
+            }
+
             if (wifi_state() == WIFI_STATE_JOINED && !udp_inited) {
                 udp_inited = net_udp_init();
             }
@@ -265,7 +305,9 @@ static void run_mode_main_loop(void) {
             }
         }
 
-        if (persona == RUN_PERSONA_KEYBOARD)
+        if (boot_mode_persona_uses_bluetooth(persona))
+            bt_hid_task();
+        else if (persona == RUN_PERSONA_KEYBOARD)
             hid_kbd_task();
         else if (boot_mode_persona_uses_gamepad_hid(persona))
             dinput_task();
@@ -376,11 +418,21 @@ int main(void) {
         case RUN_PERSONA_GENERIC_HID:
             persona_name = "generic HID gamepad";
             break;
+        case RUN_PERSONA_BT_HID:
+            persona_name = "Bluetooth HID gamepad";
+            break;
+        case RUN_PERSONA_BT_XBOX:
+            persona_name = "Bluetooth HID Xbox button order";
+            break;
+        case RUN_PERSONA_BT_PS:
+            persona_name = "Bluetooth HID PlayStation button order";
+            break;
         }
     }
     uint8_t usb_capture_persona = 0;
     if (reset_reason_consume_usb_capture_request(&usb_capture_persona)) {
-        if (mode == BOOT_MODE_RUN && usb_capture_persona == (uint8_t)boot_mode_run_persona()) {
+        if (mode == BOOT_MODE_RUN && boot_mode_persona_uses_usb_output(boot_mode_run_persona()) &&
+            usb_capture_persona == (uint8_t)boot_mode_run_persona()) {
             usb_packet_debug_set_capture_enabled(true);
             diag_log_printf("usb_capture: enabled for persona=%u before tusb_init",
                             (unsigned)usb_capture_persona);
@@ -392,42 +444,48 @@ int main(void) {
     }
     diag_log_printf("boot: mode decided: %s persona will be advertised", persona_name);
 
-    // Now that the correct persona is fixed, raise D+ once and keep it
-    // there. The host sees a single clean connect event.
-    tusb_init();
-    diag_log_msg("usb_init: tusb_init complete");
+    bool usb_output_enabled =
+        mode != BOOT_MODE_RUN || boot_mode_persona_uses_usb_output(boot_mode_run_persona());
+    if (usb_output_enabled) {
+        // Now that the correct persona is fixed, raise D+ once and keep it
+        // there. The host sees a single clean connect event.
+        tusb_init();
+        diag_log_msg("usb_init: tusb_init complete");
 
-    // Pump TinyUSB until the host completes enumeration or 1500 ms,
-    // whichever comes first. Run mode's first blocking step is
-    // wifi_init()/cyw43_arch_init_with_country(), which can hold the
-    // CPU for hundreds of ms to a couple of seconds while it streams
-    // the CYW43 firmware blob to the radio. Without this pump, Windows
-    // sends GET_DESCRIPTOR(DEVICE) into a stack with no task ticking,
-    // times out, and abandons the device as VID_0000:PID_0002. Setup
-    // mode mounts in well under 100 ms so the pump exits early and
-    // costs us nothing on the setup path.
-    {
-        absolute_time_t pump_start = get_absolute_time();
-        absolute_time_t deadline = make_timeout_time_ms(1500);
-        bool mounted_in_pump = false;
-        while (!time_reached(deadline)) {
-            tud_task();
-            if (tud_mounted()) {
-                mounted_in_pump = true;
-                break;
+        // Pump TinyUSB until the host completes enumeration or 1500 ms,
+        // whichever comes first. Run mode's first blocking step is
+        // wifi_init()/cyw43_arch_init_with_country(), which can hold the
+        // CPU for hundreds of ms to a couple of seconds while it streams
+        // the CYW43 firmware blob to the radio. Without this pump, Windows
+        // sends GET_DESCRIPTOR(DEVICE) into a stack with no task ticking,
+        // times out, and abandons the device as VID_0000:PID_0002. Setup
+        // mode mounts in well under 100 ms so the pump exits early and
+        // costs us nothing on the setup path.
+        {
+            absolute_time_t pump_start = get_absolute_time();
+            absolute_time_t deadline = make_timeout_time_ms(1500);
+            bool mounted_in_pump = false;
+            while (!time_reached(deadline)) {
+                tud_task();
+                if (tud_mounted()) {
+                    mounted_in_pump = true;
+                    break;
+                }
+                sleep_us(500);
             }
-            sleep_us(500);
+            uint32_t elapsed_ms =
+                (uint32_t)(absolute_time_diff_us(pump_start, get_absolute_time()) / 1000);
+            if (mounted_in_pump) {
+                diag_log_printf("usb_init: enumeration completed during pump (%u ms)",
+                                (unsigned)elapsed_ms);
+            } else {
+                diag_log_printf("usb_init: pump timeout after %u ms (mounted=%d) -- "
+                                "continuing with mode init",
+                                (unsigned)elapsed_ms, (int)tud_mounted());
+            }
         }
-        uint32_t elapsed_ms =
-            (uint32_t)(absolute_time_diff_us(pump_start, get_absolute_time()) / 1000);
-        if (mounted_in_pump) {
-            diag_log_printf("usb_init: enumeration completed during pump (%u ms)",
-                            (unsigned)elapsed_ms);
-        } else {
-            diag_log_printf("usb_init: pump timeout after %u ms (mounted=%d) -- "
-                            "continuing with mode init",
-                            (unsigned)elapsed_ms, (int)tud_mounted());
-        }
+    } else {
+        diag_log_msg("usb_init: skipped for Bluetooth output persona");
     }
 
     if (mode == BOOT_MODE_RUN) {

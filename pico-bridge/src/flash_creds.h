@@ -32,6 +32,9 @@
 #define FLASH_PERSONA_XBOXONE 5     // Xbox One-compatible XGIP gamepad
 #define FLASH_PERSONA_DEBUG 6       // XInput shape with raw USB packet capture
 #define FLASH_PERSONA_GENERIC_HID 7 // Generic HID gamepad for unknown-HID adapters
+#define FLASH_PERSONA_BT_HID 8      // Bluetooth HID gamepad
+#define FLASH_PERSONA_BT_XBOX 9     // Bluetooth HID gamepad, Xbox button order
+#define FLASH_PERSONA_BT_PS 10      // Bluetooth HID gamepad, PlayStation button order
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;  // FLASH_CREDS_MAGIC
@@ -43,7 +46,7 @@ typedef struct __attribute__((packed)) {
     uint8_t ssid[FLASH_CREDS_SSID_MAX];                       // 32
     uint8_t password[FLASH_CREDS_PASS_MAX + 1];               // 64 with NUL room
     uint8_t device_name[FLASH_CREDS_NAME_MAX];                // 32
-    uint8_t usb_persona;                                      // FLASH_PERSONA_*; 0 = XInput
+    uint8_t usb_persona;                                      // output FLASH_PERSONA_*; 0 = XInput
     uint8_t reserved[256 - 4 - 4 - 4 - 32 - 64 - 32 - 1 - 4]; // pad
     uint32_t crc32;                                           // over the first 252 bytes
 } flash_creds_t;

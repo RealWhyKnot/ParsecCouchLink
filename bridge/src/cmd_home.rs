@@ -861,6 +861,10 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
             "choose PS3, generic HID, or PS4 mode",
         ),
         menu_item(
+            "Bluetooth",
+            "choose Bluetooth HID target layout for wireless receivers",
+        ),
+        menu_item(
             "Maple",
             "Xbox-compatible mode labelled for Dreamcast adapters",
         ),
@@ -871,8 +875,9 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
         0 => Ok(InputModeChoice::Auto),
         1 => choose_xbox_input_mode().await,
         2 => choose_playstation_input_mode().await,
-        3 => Ok(InputModeChoice::Persona(protocol::Persona::Maple)),
-        4 => Ok(InputModeChoice::Persona(protocol::Persona::Keyboard)),
+        3 => choose_bluetooth_input_mode().await,
+        4 => Ok(InputModeChoice::Persona(protocol::Persona::Maple)),
+        5 => Ok(InputModeChoice::Persona(protocol::Persona::Keyboard)),
         _ => Ok(InputModeChoice::Persona(protocol::Persona::Debug)),
     }
 }
@@ -902,6 +907,24 @@ async fn choose_playstation_input_mode() -> Result<InputModeChoice> {
         1 => Ok(InputModeChoice::Persona(protocol::Persona::Ps3)),
         2 => Ok(InputModeChoice::Persona(protocol::Persona::GenericHid)),
         _ => Ok(InputModeChoice::Persona(protocol::Persona::Ps4)),
+    }
+}
+
+async fn choose_bluetooth_input_mode() -> Result<InputModeChoice> {
+    let choices = vec![
+        menu_item("Bluetooth HID", "generic Bluetooth HID gamepad"),
+        menu_item("Bluetooth Xbox", "Bluetooth HID with Xbox button ordering"),
+        menu_item(
+            "Bluetooth PlayStation",
+            "Bluetooth HID with PlayStation button ordering",
+        ),
+    ];
+    match select("Bluetooth input mode", &choices, 0).await? {
+        0 => Ok(InputModeChoice::Persona(protocol::Persona::BluetoothHid)),
+        1 => Ok(InputModeChoice::Persona(protocol::Persona::BluetoothXbox)),
+        _ => Ok(InputModeChoice::Persona(
+            protocol::Persona::BluetoothPlaystation,
+        )),
     }
 }
 

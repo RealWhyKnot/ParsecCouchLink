@@ -84,6 +84,8 @@ configure_file(
 
 add_executable(pico_bridge
     src/main.c
+    src/bt_hid.c
+    src/bt_hid_report.c
     src/boot_mode.c
     src/boot_mode_policy.c
     src/cdc_handlers.c
@@ -114,6 +116,7 @@ set(PICO_BRIDGE_WIFI_COUNTRY "CYW43_COUNTRY_WORLDWIDE"
     CACHE STRING "CYW43 country code (cyw43_arch_init_with_country)")
 target_compile_definitions(pico_bridge PRIVATE
     PICO_BRIDGE_WIFI_COUNTRY=${PICO_BRIDGE_WIFI_COUNTRY}
+    PICO_FLASH_BANK_STORAGE_OFFSET=PICO_FLASH_SIZE_BYTES-16384u
 )
 
 target_include_directories(pico_bridge PRIVATE
@@ -128,6 +131,9 @@ target_link_libraries(pico_bridge
     hardware_flash
     hardware_sync
     tinyusb_device
+    pico_btstack_classic
+    pico_btstack_cyw43
+    pico_btstack_flash_bank
     pico_cyw43_arch_lwip_threadsafe_background
 )
 

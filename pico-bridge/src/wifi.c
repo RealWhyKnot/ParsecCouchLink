@@ -39,6 +39,7 @@ static wifi_state_t state = WIFI_STATE_IDLE;
 static int8_t rssi = 0;
 static uint8_t last_error = 0;
 static int last_init_rc = 0; // rc from the most recent cyw43_arch_init
+static uint32_t radio_generation = 0;
 
 static char saved_ssid[33];
 static char saved_pass[64];
@@ -76,6 +77,7 @@ bool wifi_init(void) {
         return false;
     }
     cyw43_arch_enable_sta_mode();
+    radio_generation++;
     apply_power_save();
     diag_log_printf("wifi: initialised (country=%s, pm=PERFORMANCE)",
                     WIFI_COUNTRY_NAME(PICO_BRIDGE_WIFI_COUNTRY));
@@ -92,6 +94,7 @@ static bool wifi_reinit_after_wedge(void) {
         return false;
     }
     cyw43_arch_enable_sta_mode();
+    radio_generation++;
     apply_power_save();
     diag_log_msg("wifi: re-init complete");
     consecutive_failures = 0;
@@ -277,6 +280,9 @@ uint8_t wifi_last_error_code(void) {
 }
 int wifi_last_init_rc(void) {
     return last_init_rc;
+}
+uint32_t wifi_radio_generation(void) {
+    return radio_generation;
 }
 uint32_t wifi_ip(void) {
     if (state != WIFI_STATE_JOINED)

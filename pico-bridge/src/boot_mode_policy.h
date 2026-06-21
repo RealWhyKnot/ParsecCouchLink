@@ -15,7 +15,7 @@ typedef enum {
     BOOT_COLD_RUN = 1,
 } boot_cold_action_t;
 
-// Which USB device the run-mode firmware presents. Latched at boot from
+// Which output device the run-mode firmware presents. Latched at boot from
 // the stored persona byte; see boot_mode_run_persona().
 typedef enum {
     RUN_PERSONA_XINPUT = 0,      // wired Xbox 360 / XInput (default)
@@ -26,6 +26,9 @@ typedef enum {
     RUN_PERSONA_XBOXONE = 5,     // Xbox One-compatible XGIP gamepad
     RUN_PERSONA_DEBUG = 6,       // XInput shape with raw USB packet capture
     RUN_PERSONA_GENERIC_HID = 7, // Generic HID gamepad for unknown-HID adapters
+    RUN_PERSONA_BT_HID = 8,      // Bluetooth HID gamepad
+    RUN_PERSONA_BT_XBOX = 9,     // Bluetooth HID gamepad, Xbox button order
+    RUN_PERSONA_BT_PS = 10,      // Bluetooth HID gamepad, PlayStation button order
 } run_persona_t;
 
 bootsel_setup_action_t boot_mode_bootsel_setup_action(bool still_pressed, int64_t elapsed_us);
@@ -46,3 +49,9 @@ bool boot_mode_persona_uses_xinput_usb(run_persona_t persona);
 
 // True for runtime personas that present a HID gamepad interface.
 bool boot_mode_persona_uses_gamepad_hid(run_persona_t persona);
+
+// True for runtime personas that present any USB output device.
+bool boot_mode_persona_uses_usb_output(run_persona_t persona);
+
+// True for runtime personas that present a Bluetooth HID output device.
+bool boot_mode_persona_uses_bluetooth(run_persona_t persona);

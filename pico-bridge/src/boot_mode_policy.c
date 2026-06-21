@@ -37,6 +37,12 @@ run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte
         return RUN_PERSONA_DEBUG;
     if (persona_byte == (uint8_t)RUN_PERSONA_GENERIC_HID)
         return RUN_PERSONA_GENERIC_HID;
+    if (persona_byte == (uint8_t)RUN_PERSONA_BT_HID)
+        return RUN_PERSONA_BT_HID;
+    if (persona_byte == (uint8_t)RUN_PERSONA_BT_XBOX)
+        return RUN_PERSONA_BT_XBOX;
+    if (persona_byte == (uint8_t)RUN_PERSONA_BT_PS)
+        return RUN_PERSONA_BT_PS;
     return RUN_PERSONA_XINPUT;
 }
 
@@ -48,4 +54,13 @@ bool boot_mode_persona_uses_xinput_usb(run_persona_t persona) {
 bool boot_mode_persona_uses_gamepad_hid(run_persona_t persona) {
     return persona == RUN_PERSONA_PS3 || persona == RUN_PERSONA_PS4 ||
            persona == RUN_PERSONA_GENERIC_HID;
+}
+
+bool boot_mode_persona_uses_usb_output(run_persona_t persona) {
+    return !boot_mode_persona_uses_bluetooth(persona);
+}
+
+bool boot_mode_persona_uses_bluetooth(run_persona_t persona) {
+    return persona == RUN_PERSONA_BT_HID || persona == RUN_PERSONA_BT_XBOX ||
+           persona == RUN_PERSONA_BT_PS;
 }

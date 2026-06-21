@@ -22,7 +22,10 @@ _Static_assert((int)FLASH_PERSONA_XINPUT == (int)RUN_PERSONA_XINPUT &&
                    (int)FLASH_PERSONA_PS4 == (int)RUN_PERSONA_PS4 &&
                    (int)FLASH_PERSONA_XBOXONE == (int)RUN_PERSONA_XBOXONE &&
                    (int)FLASH_PERSONA_DEBUG == (int)RUN_PERSONA_DEBUG &&
-                   (int)FLASH_PERSONA_GENERIC_HID == (int)RUN_PERSONA_GENERIC_HID,
+                   (int)FLASH_PERSONA_GENERIC_HID == (int)RUN_PERSONA_GENERIC_HID &&
+                   (int)FLASH_PERSONA_BT_HID == (int)RUN_PERSONA_BT_HID &&
+                   (int)FLASH_PERSONA_BT_XBOX == (int)RUN_PERSONA_BT_XBOX &&
+                   (int)FLASH_PERSONA_BT_PS == (int)RUN_PERSONA_BT_PS,
                "flash persona byte values must match run_persona_t");
 
 static boot_mode_t current = BOOT_MODE_SETUP;

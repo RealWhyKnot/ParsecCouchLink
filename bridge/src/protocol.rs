@@ -96,6 +96,8 @@ pub const ACK_FLAG_MAPLE_PERSONA: u8 = 1 << 5;
 /// and with `ACK_FLAG_MAPLE_PERSONA` for the generic HID gamepad persona.
 pub const ACK_FLAG_DINPUT_PERSONA: u8 = 1 << 6;
 /// Extends the persona bits without changing the fixed ACK packet shape.
+/// Alone it marks generic Bluetooth HID; exact combinations with the
+/// other persona bits mark additional Bluetooth HID target layouts.
 pub const ACK_FLAG_ALT_PERSONA: u8 = 1 << 7;
 
 pub const USB_DIAG_V1_WIRE_SIZE: usize = 78;
@@ -171,7 +173,7 @@ pub struct KeyboardReport {
     pub keys: [u8; 6],
 }
 
-/// Which USB device a Pico presents in run mode. Discovered from the ACK
+/// Which output device a Pico presents in run mode. Discovered from the ACK
 /// flags byte and persisted on the Pico in flash.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Persona {
@@ -184,24 +186,57 @@ pub enum Persona {
     XboxOne,
     Debug,
     GenericHid,
+    BluetoothHid,
+    BluetoothXbox,
+    BluetoothPlaystation,
 }
 
 impl Persona {
     /// Read the active persona from an ACK packet's flags byte.
     pub fn from_ack_flags(flags: u8) -> Self {
-        if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
+        const PERSONA_MASK: u8 = ACK_FLAG_KEYBOARD_PERSONA
+            | ACK_FLAG_MAPLE_PERSONA
+            | ACK_FLAG_DINPUT_PERSONA
+            | ACK_FLAG_ALT_PERSONA;
+        let persona_bits = flags & PERSONA_MASK;
+        match persona_bits {
+            ACK_FLAG_ALT_PERSONA => return Persona::BluetoothHid,
+            bits if bits
+                == (ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA) =>
+            {
+                return Persona::BluetoothXbox
+            }
+            bits if bits
+                == (ACK_FLAG_KEYBOARD_PERSONA
+                    | ACK_FLAG_DINPUT_PERSONA
+                    | ACK_FLAG_MAPLE_PERSONA
+                    | ACK_FLAG_ALT_PERSONA) =>
+            {
+                return Persona::BluetoothPlaystation
+            }
+            _ => {}
+        }
+
+        if persona_bits & ACK_FLAG_KEYBOARD_PERSONA != 0 && persona_bits & ACK_FLAG_ALT_PERSONA != 0
+        {
             Persona::Debug
-        } else if flags & ACK_FLAG_KEYBOARD_PERSONA != 0 {
+        } else if persona_bits & ACK_FLAG_KEYBOARD_PERSONA != 0 {
             Persona::Keyboard
-        } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
+        } else if persona_bits & ACK_FLAG_MAPLE_PERSONA != 0
+            && persona_bits & ACK_FLAG_ALT_PERSONA != 0
+        {
             Persona::XboxOne
-        } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 && flags & ACK_FLAG_ALT_PERSONA != 0 {
+        } else if persona_bits & ACK_FLAG_DINPUT_PERSONA != 0
+            && persona_bits & ACK_FLAG_ALT_PERSONA != 0
+        {
             Persona::Ps4
-        } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 && flags & ACK_FLAG_MAPLE_PERSONA != 0 {
+        } else if persona_bits & ACK_FLAG_DINPUT_PERSONA != 0
+            && persona_bits & ACK_FLAG_MAPLE_PERSONA != 0
+        {
             Persona::GenericHid
-        } else if flags & ACK_FLAG_DINPUT_PERSONA != 0 {
+        } else if persona_bits & ACK_FLAG_DINPUT_PERSONA != 0 {
             Persona::Ps3
-        } else if flags & ACK_FLAG_MAPLE_PERSONA != 0 {
+        } else if persona_bits & ACK_FLAG_MAPLE_PERSONA != 0 {
             Persona::Maple
         } else {
             Persona::Xinput
@@ -220,6 +255,9 @@ impl Persona {
             Persona::XboxOne => 5,
             Persona::Debug => 6,
             Persona::GenericHid => 7,
+            Persona::BluetoothHid => 8,
+            Persona::BluetoothXbox => 9,
+            Persona::BluetoothPlaystation => 10,
         }
     }
 
@@ -233,6 +271,9 @@ impl Persona {
             Persona::XboxOne => "xboxone",
             Persona::Debug => "debug",
             Persona::GenericHid => "generic-hid",
+            Persona::BluetoothHid => "bluetooth-hid",
+            Persona::BluetoothXbox => "bluetooth-xbox",
+            Persona::BluetoothPlaystation => "bluetooth-playstation",
         }
     }
 
@@ -246,6 +287,9 @@ impl Persona {
             Persona::XboxOne => "Xbox One",
             Persona::Debug => "Debug packet capture",
             Persona::GenericHid => "Generic HID gamepad",
+            Persona::BluetoothHid => "Bluetooth HID gamepad",
+            Persona::BluetoothXbox => "Bluetooth HID Xbox button order",
+            Persona::BluetoothPlaystation => "Bluetooth HID PlayStation button order",
         }
     }
 }
@@ -1126,6 +1170,9 @@ impl PicoStateDiag {
             5 => Some(Persona::XboxOne),
             6 => Some(Persona::Debug),
             7 => Some(Persona::GenericHid),
+            8 => Some(Persona::BluetoothHid),
+            9 => Some(Persona::BluetoothXbox),
+            10 => Some(Persona::BluetoothPlaystation),
             _ => None,
         }
     }
@@ -1594,6 +1641,9 @@ mod tests {
         assert_eq!(encode_set_persona(0, Persona::Xinput)[4], 0);
         assert_eq!(encode_set_persona(0, Persona::Debug)[4], 6);
         assert_eq!(encode_set_persona(0, Persona::GenericHid)[4], 7);
+        assert_eq!(encode_set_persona(0, Persona::BluetoothHid)[4], 8);
+        assert_eq!(encode_set_persona(0, Persona::BluetoothXbox)[4], 9);
+        assert_eq!(encode_set_persona(0, Persona::BluetoothPlaystation)[4], 10);
         // Decode is lenient on unknown types; SET_PERSONA isn't a PacketKind.
         assert_eq!(
             Packet::decode(&buf),
@@ -1677,6 +1727,29 @@ mod tests {
             Persona::GenericHid
         );
         assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_ALT_PERSONA),
+            Persona::BluetoothHid
+        );
+        assert_eq!(
+            Persona::from_ack_flags(ACK_FLAG_ALT_PERSONA | ACK_FLAG_LOG_CHUNK_SUPPORTED),
+            Persona::BluetoothHid
+        );
+        assert_eq!(
+            Persona::from_ack_flags(
+                ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA
+            ),
+            Persona::BluetoothXbox
+        );
+        assert_eq!(
+            Persona::from_ack_flags(
+                ACK_FLAG_KEYBOARD_PERSONA
+                    | ACK_FLAG_DINPUT_PERSONA
+                    | ACK_FLAG_MAPLE_PERSONA
+                    | ACK_FLAG_ALT_PERSONA
+            ),
+            Persona::BluetoothPlaystation
+        );
+        assert_eq!(
             Persona::from_ack_flags(ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA),
             Persona::Keyboard
         );
@@ -1688,6 +1761,9 @@ mod tests {
         assert_eq!(Persona::XboxOne.flash_byte(), 5);
         assert_eq!(Persona::Debug.flash_byte(), 6);
         assert_eq!(Persona::GenericHid.flash_byte(), 7);
+        assert_eq!(Persona::BluetoothHid.flash_byte(), 8);
+        assert_eq!(Persona::BluetoothXbox.flash_byte(), 9);
+        assert_eq!(Persona::BluetoothPlaystation.flash_byte(), 10);
     }
 
     #[test]
@@ -2090,6 +2166,9 @@ mod tests {
         let mut generic_diag = diag;
         generic_diag.persona_byte = Persona::GenericHid.flash_byte();
         assert_eq!(generic_diag.persona(), Some(Persona::GenericHid));
+        let mut bt_diag = generic_diag;
+        bt_diag.persona_byte = Persona::BluetoothPlaystation.flash_byte();
+        assert_eq!(bt_diag.persona(), Some(Persona::BluetoothPlaystation));
         let json = back.to_json_map();
         assert_eq!(json["malformed_udp_count"], serde_json::json!(42));
         assert_eq!(json["in_blocked_not_ready"], serde_json::json!(11));

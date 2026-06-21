@@ -126,6 +126,9 @@ impl StreamRoute {
             | Persona::Ps4
             | Persona::XboxOne
             | Persona::GenericHid
+            | Persona::BluetoothHid
+            | Persona::BluetoothXbox
+            | Persona::BluetoothPlaystation
             | Persona::Debug => xinput::user_slot_label(self.source_slot),
         }
     }
@@ -1153,6 +1156,9 @@ impl RouteRuntime {
             | Persona::Ps4
             | Persona::XboxOne
             | Persona::GenericHid
+            | Persona::BluetoothHid
+            | Persona::BluetoothXbox
+            | Persona::BluetoothPlaystation
             | Persona::Debug => self.next_controller_packet(),
             Persona::Keyboard => self.next_keyboard_packet(),
         };
@@ -1272,6 +1278,9 @@ fn print_status(routes: &mut [RouteRuntime]) {
             | Persona::Ps4
             | Persona::XboxOne
             | Persona::GenericHid
+            | Persona::BluetoothHid
+            | Persona::BluetoothXbox
+            | Persona::BluetoothPlaystation
             | Persona::Debug => format!(
                 "buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
                 route.last_state.buttons,

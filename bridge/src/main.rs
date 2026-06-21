@@ -276,6 +276,62 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
+    /// Switch a Pico to Bluetooth HID gamepad mode.
+    #[command(
+        name = "bluetooth-hid",
+        alias = "bluetooth",
+        alias = "bt-hid",
+        alias = "blueretro",
+        alias = "n64-bluetooth"
+    )]
+    BluetoothHid {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to Bluetooth HID with Xbox button ordering.
+    #[command(name = "bluetooth-xbox", alias = "bt-xbox", alias = "blueretro-xbox")]
+    BluetoothXbox {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
+    /// Switch a Pico to Bluetooth HID with PlayStation button ordering.
+    #[command(
+        name = "bluetooth-playstation",
+        alias = "bt-playstation",
+        alias = "bt-ps",
+        alias = "blueretro-playstation"
+    )]
+    BluetoothPlaystation {
+        /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
+        #[arg(long = "pico")]
+        picos: Vec<String>,
+
+        /// Switch every Pico currently visible on Wi-Fi.
+        #[arg(long)]
+        all: bool,
+
+        /// Switch the persona but don't start streaming afterwards.
+        #[arg(long)]
+        no_stream: bool,
+    },
     /// First-time setup wizard: flash the Pico, provision Wi-Fi, and check LAN discovery.
     Setup {
         /// Path to the .uf2 firmware to flash.
@@ -559,6 +615,29 @@ fn main() {
                 all,
                 no_stream,
             }) => cmd_persona::run(protocol::Persona::GenericHid, picos, all, !no_stream).await,
+            Some(Command::BluetoothHid {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::BluetoothHid, picos, all, !no_stream).await,
+            Some(Command::BluetoothXbox {
+                picos,
+                all,
+                no_stream,
+            }) => cmd_persona::run(protocol::Persona::BluetoothXbox, picos, all, !no_stream).await,
+            Some(Command::BluetoothPlaystation {
+                picos,
+                all,
+                no_stream,
+            }) => {
+                cmd_persona::run(
+                    protocol::Persona::BluetoothPlaystation,
+                    picos,
+                    all,
+                    !no_stream,
+                )
+                .await
+            }
             Some(Command::Setup { uf2 }) => cmd_setup::run(uf2).await,
             Some(Command::Doctor) => cmd_doctor::run().await,
             Some(Command::Flash { uf2, all, from_usb }) => cmd_flash::run(uf2, all, from_usb).await,
@@ -944,7 +1023,17 @@ mod tests {
 
     #[test]
     fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
-        for command in ["xbox", "xbox360", "xboxone", "ps3", "ps4", "generic-hid"] {
+        for command in [
+            "xbox",
+            "xbox360",
+            "xboxone",
+            "ps3",
+            "ps4",
+            "generic-hid",
+            "bluetooth-hid",
+            "bluetooth-xbox",
+            "bluetooth-playstation",
+        ] {
             let cli =
                 Cli::try_parse_from(["couchlink", command, "--pico", "07D37EB6", "--no-stream"])
                     .unwrap();
@@ -992,6 +1081,30 @@ mod tests {
                 | (
                     "generic-hid",
                     Some(Command::GenericHid {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "bluetooth-hid",
+                    Some(Command::BluetoothHid {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "bluetooth-xbox",
+                    Some(Command::BluetoothXbox {
+                        picos,
+                        all,
+                        no_stream,
+                    }),
+                )
+                | (
+                    "bluetooth-playstation",
+                    Some(Command::BluetoothPlaystation {
                         picos,
                         all,
                         no_stream,
