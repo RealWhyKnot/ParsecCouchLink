@@ -4,7 +4,19 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **bluetooth:** Stream input over usb (77d6dfd)
+- **firmware:** Add bluetooth hid personas (0e9f379)
+- **firmware:** Add n64 usb-c output persona (912d2b4)
+- **firmware:** Add n64 joybus persona (2bdaea3)
+
+### Changed
+- **firmware:** Remove n64 joybus persona (4a6a820)
+- **firmware:** Remove n64 usb-c output persona (d21902a)
+
+### Fixed
+- **bundle:** Report adapter survey evidence coverage (0d00d3b)
+- **bundle:** Continue adapter survey after no host traffic (5b9e7c1)
 
 ---
 
