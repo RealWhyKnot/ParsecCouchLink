@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.20.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.20.0-beta) -- 2026-06-20
+
 ### Added
 - **bluetooth:** Stream input over usb (77d6dfd)
 - **firmware:** Add bluetooth hid personas (0e9f379)
