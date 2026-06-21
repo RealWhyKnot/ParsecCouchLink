@@ -32,6 +32,8 @@
 #define CDC_CMD_GET_UNIQUE_ID 0x09
 #define CDC_CMD_GET_LOG_BUFFER 0x0A
 #define CDC_CMD_REBOOT_TO_BOOTSEL 0x0B
+#define CDC_CMD_BT_STATE 0x0C
+#define CDC_CMD_BT_HEARTBEAT 0x0D
 
 // Response opcodes (high bit set).
 #define CDC_RSP_HELLO 0x81
@@ -44,6 +46,8 @@
 #define CDC_RSP_UNIQUE_ID 0x89
 #define CDC_RSP_LOG_BUFFER 0x8A
 #define CDC_RSP_REBOOT_TO_BOOTSEL 0x8B
+#define CDC_RSP_BT_STATE 0x8C
+#define CDC_RSP_BT_HEARTBEAT 0x8D
 #define CDC_RSP_NACK 0xFE
 
 // Error codes carried in a NACK payload (first byte; second byte is detail).
@@ -62,6 +66,7 @@
 #define CDC_HELLO_FLAG_CREDS_PRESENT 0x01
 #define CDC_HELLO_FLAG_WIFI_JOINED 0x02
 #define CDC_HELLO_FLAG_RUN_MODE_OK 0x04
+#define CDC_HELLO_FLAG_RUN_MODE_ACTIVE 0x08
 
 uint16_t cdc_crc16(const uint8_t *data, size_t n);
 

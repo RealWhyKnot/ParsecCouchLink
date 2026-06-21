@@ -2,10 +2,11 @@
 
 This page is for maintainers. Normal users should start with [[Quick Start]].
 
-Parsec CouchLink has two small protocols:
+Parsec CouchLink has three small protocols:
 
-- Runtime UDP over Wi-Fi while the bridge is streaming controller or keyboard state.
+- Runtime UDP over Wi-Fi while the bridge is streaming USB-output controller or keyboard state.
 - USB-CDC setup mode while Wi-Fi credentials are being provisioned.
+- USB-CDC Bluetooth input while a Bluetooth-mode Pico stays plugged into the bridge PC.
 
 ## Runtime UDP
 
@@ -13,6 +14,8 @@ Parsec CouchLink has two small protocols:
 - Packet size: controller, keyboard, heartbeat, discovery, and diagnostic request packets are 17 bytes. Diagnostic replies can be larger.
 - Addressing: the bridge broadcasts discovery, then sends unicast to the Pico.
 - Watchdog: if the Pico has not received a valid packet for 100 ms, it outputs a neutral state (controller centred / all keys released).
+
+Bluetooth mode does not use runtime UDP for live controller packets. In Bluetooth mode the bridge writes the same controller state body over USB CDC to the Pico, and the Pico outputs Classic Bluetooth HID to the paired receiver.
 
 Packet types:
 
@@ -33,15 +36,15 @@ Packet types:
 | `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, IN/OUT report counters, recent timestamps, and CRC-16. |
 | `0x87` | `VERSION` -- fixed 17-byte reply to `GET_VERSION` with `year`, `month`, `day`, `revision`, and optional four-character development suffix. |
 
-The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body. The Xbox 360, Maple, PS3, PS4, Xbox One, generic HID, and Bluetooth HID personas consume `STATE`/`HEARTBEAT`; the Pico maps the same controller state into the selected output report shape. Keyboard packets carry a standard USB HID boot-keyboard report, so a Pico in the keyboard persona processes `KEY_STATE`/`KEY_HEARTBEAT`. The bridge sends whichever packet type matches the persona the Pico advertised in its ack.
+The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body. The Xbox 360, Maple, PS3, PS4, Xbox One, generic HID, and Bluetooth personas consume the controller state body; the Pico maps the same state into the selected output report shape. Keyboard packets carry a standard USB HID boot-keyboard report, so a Pico in the keyboard persona processes `KEY_STATE`/`KEY_HEARTBEAT`. The bridge sends whichever packet type matches the persona the Pico advertised in its ack.
 
-Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`; bit 2 (`REBOOT_TO_SETUP_SUPPORTED`) means it accepts `REBOOT_TO_SETUP`; bit 3 (`KEYBOARD_PERSONA`) means the Pico is currently presenting the USB keyboard and accepts `SET_PERSONA` plus the keyboard packet types; bit 4 (`FULL_VERSION_SUPPORTED`) means it will reply to `GET_VERSION`; bit 5 (`MAPLE_PERSONA`) means Maple, or Xbox One when combined with bit 7; bit 6 (`DINPUT_PERSONA`) means PS3, or PS4 when combined with bit 7; bit 7 (`ALT_PERSONA`) extends those persona bits. Exact persona-bit combinations also identify Bluetooth HID targets: `ALT_PERSONA` alone is generic Bluetooth HID, `DINPUT_PERSONA|MAPLE_PERSONA|ALT_PERSONA` is Bluetooth HID with Xbox button ordering, and all four persona bits together select Bluetooth HID with PlayStation button ordering. Older firmware leaves these flags clear, and the bridge treats that as Xbox 360 / XInput.
+Compatibility is gated by protocol version. The bridge refuses to stream to a Pico that reports a different runtime protocol version. Capability bits in the ACK packet's `flags` byte advertise optional features without forcing a version bump: bit 0 (`LOG_CHUNK_SUPPORTED`) means the firmware will reply to `GET_LOG`; bit 1 (`USB_DIAG_SUPPORTED`) means it will reply to `GET_USB_DIAG`; bit 2 (`REBOOT_TO_SETUP_SUPPORTED`) means it accepts `REBOOT_TO_SETUP`; bit 3 (`KEYBOARD_PERSONA`) means the Pico is currently presenting the USB keyboard and accepts `SET_PERSONA` plus the keyboard packet types; bit 4 (`FULL_VERSION_SUPPORTED`) means it will reply to `GET_VERSION`; bit 5 (`MAPLE_PERSONA`) means Maple, or Xbox One when combined with bit 7; bit 6 (`DINPUT_PERSONA`) means PS3, or PS4 when combined with bit 7; bit 7 (`ALT_PERSONA`) extends those persona bits. Exact persona-bit combinations also identify Bluetooth targets: `ALT_PERSONA` alone is generic Bluetooth, `DINPUT_PERSONA|MAPLE_PERSONA|ALT_PERSONA` is Bluetooth with Xbox button ordering, and all four persona bits together select Bluetooth with PlayStation button ordering. Older firmware leaves these flags clear, and the bridge treats that as Xbox 360 / XInput.
 
 The ACK keeps its compact legacy body for compatibility: protocol version, date triplet, board type, uptime, and short UID. When `FULL_VERSION_SUPPORTED` is set, the bridge immediately follows discovery with `GET_VERSION` so user-facing Wi-Fi status can show the exact firmware string, including suffixes such as `2026.6.15.0-0030`.
 
 ## USB-CDC Setup
 
-Setup mode is used before the Pico has working Wi-Fi credentials, or when credentials are cleared.
+Setup mode is used before the Pico has working Wi-Fi credentials, or when credentials are cleared. Bluetooth run mode intentionally keeps the same CDC identity so the bridge PC can send live controller input with one local USB hop.
 
 - USB VID/PID: `0x2E8A:0xCAF0`.
 - Transport: CDC ACM virtual COM port.
@@ -59,12 +62,16 @@ Commands:
 | `SELF_TEST` | Firmware-side setup checks. |
 | `GET_LOG_BUFFER` | Read the Pico diagnostic ring buffer. |
 | `REBOOT_TO_BOOTSEL` | Reboot into the ROM BOOTSEL USB bootloader for reflashing. |
+| `BT_STATE` | Bluetooth run-mode input. Payload is one flags byte plus the 12-byte controller state body. No response is sent on success. |
+| `BT_HEARTBEAT` | Bluetooth run-mode heartbeat with the same 13-byte payload shape. No response is sent on success. |
 
 `HELLO_ACK` keeps the first six legacy identity bytes for older hosts:
 protocol version, compact firmware date fields, board type, and flags. Newer
 firmware appends `year`, `month`, `day`, `revision`, and an optional
 four-character development suffix. Development builds report versions such as
 `2026.5.29.7-D69A`; release builds report `2026.5.29.0`.
+
+`HELLO_ACK` flags: bit 0 means saved Wi-Fi credentials are present, bit 1 means Wi-Fi is joined when reported, bit 2 means the firmware can reboot into run mode, and bit 3 means the CDC port is already active in run mode. The bridge uses bit 3 to avoid mistaking Bluetooth run-mode CDC for setup-mode recovery.
 
 ## USB Vendor Diag (setup mode)
 
@@ -81,7 +88,7 @@ Control transfer:
 
 Response payload matches the CDC `GET_LOG_BUFFER` body: a 4-byte little-endian lost-bytes counter, followed by the most-recent ring contents.
 
-Run mode does not expose this interface -- the XInput persona is deliberately minimal to keep `xusb22.sys` binding stable. In run mode, diag retrieval uses UDP `GET_LOG` instead.
+USB-output run modes do not expose this interface -- the XInput persona is deliberately minimal to keep `xusb22.sys` binding stable. In those run modes, diag retrieval uses UDP `GET_LOG` instead. Bluetooth run mode keeps the setup USB identity on the bridge PC so CDC can carry live controller input and diagnostics while Bluetooth carries the controller output.
 
 The bridge's `couchlink bundle` tries CDC, vendor control, and UDP in order; the first to succeed wins, and `manifest.json`'s `pico_diag_source` records which path produced the captured log (`setup-cdc`, `vendor-control`, or `run-udp`).
 
@@ -96,11 +103,11 @@ In run mode, the Pico presents one output persona, chosen by a persona byte stor
 - **PS4**: a DualShock 4-style HID gamepad (`0x054C:0x09CC`).
 - **Xbox One**: an Xbox One-compatible XGIP vendor-class gamepad.
 - **Generic HID**: a USB HID gamepad for adapters that accept a simple HID descriptor.
-- **Bluetooth HID**: a Classic Bluetooth HID gamepad target for wireless receivers.
-- **Bluetooth Xbox**: the same Bluetooth HID transport with Xbox-oriented button ordering.
-- **Bluetooth PlayStation**: the same Bluetooth HID transport with PlayStation-oriented button ordering.
+- **Bluetooth**: a Classic Bluetooth HID gamepad target for wireless receivers. The Pico stays plugged into the bridge PC over USB CDC for live controller input.
+- **Bluetooth Xbox**: the same Bluetooth output with Xbox-oriented button ordering.
+- **Bluetooth PlayStation**: the same Bluetooth output with PlayStation-oriented button ordering.
 
-Only one persona is selected at a time. Because the runtime output is fixed at boot, switching persona persists the new value and reboots the board. The Pico lives plugged into the console or receiver rather than the host, so the switch happens over Wi-Fi: `couchlink keyboard`, `couchlink xinput`, `couchlink xboxone`, `couchlink maple`, `couchlink ps3`, `couchlink ps4`, `couchlink generic-hid`, `couchlink bluetooth-hid`, `couchlink bluetooth-xbox`, and `couchlink bluetooth-playstation` send a `SET_PERSONA` request, then wait for the board to rejoin Wi-Fi advertising the new persona. `couchlink dinput` cycles PS3, generic HID, then PS4, and `couchlink auto` tries the USB gamepad personas and keeps the first one that the USB host polls. A record written before personas existed reads back as the XInput default, so existing boards keep working without re-provisioning. Setup mode and each USB runtime persona use USB identities chosen for their target host binding. Bluetooth personas do not start the TinyUSB device stack in run mode; their diagnostic proof comes from UDP discovery/logs plus Bluetooth pairing state, not from USB enumeration counters.
+Only one persona is selected at a time. Because the runtime output is fixed at boot, switching persona persists the new value and reboots the board. USB-output personas usually have the Pico plugged into the console-side adapter, so the switch happens over Wi-Fi: `couchlink keyboard`, `couchlink xinput`, `couchlink xboxone`, `couchlink maple`, `couchlink ps3`, `couchlink ps4`, and `couchlink generic-hid` send a `SET_PERSONA` request, then wait for the board to rejoin Wi-Fi advertising the new persona. `couchlink bluetooth`, `couchlink bluetooth-xbox`, and `couchlink bluetooth-playstation` also switch over Wi-Fi, but streaming then requires the matching Pico to be plugged into the bridge PC over USB. `couchlink dinput` cycles PS3, generic HID, then PS4, and `couchlink auto` tries the USB gamepad personas and keeps the first one that the USB host polls. A record written before personas existed reads back as the XInput default, so existing boards keep working without re-provisioning. Setup mode and each USB runtime persona use USB identities chosen for their target host binding. Bluetooth personas keep CDC diagnostic USB on the bridge PC; `couchlink bundle` writes `bluetooth-report.txt` and skips the console USB adapter survey for those personas.
 
 The PS3 persona uses report ID `0x01` with a 48-byte payload matching the native DualShock 3-style HID shape. The PS4 persona uses report ID `0x01` with a 63-byte payload matching the common DualShock 4-style controller input shape. The Bluetooth HID personas use Classic HID report ID `0x01` with 20 buttons, a hat switch, six 8-bit axes, and target-specific button ordering. All gamepad personas map the same Parsec/XInput source buttons, triggers, and sticks. Rumble is not implemented for these personas.
 

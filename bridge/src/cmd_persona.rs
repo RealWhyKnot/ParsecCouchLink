@@ -2,11 +2,11 @@
 //! optionally start streaming to it.
 //!
 //! The persona is persisted on the Pico and applied at the next boot, so
-//! switching reboots the board. Because the Pico lives plugged into the
-//! console (not the host), the switch has to happen over UDP -- the same
-//! reason `reboot-to-setup` exists. After the switch we wait for the
-//! board to rejoin Wi-Fi advertising the new persona before handing off
-//! to the streaming loop.
+//! switching reboots the board. USB-output personas usually live plugged
+//! into the console-side adapter, so the switch happens over UDP. Bluetooth
+//! mode stays plugged into the bridge PC for USB CDC input, but still uses
+//! the same Wi-Fi persona switch before the streaming loop opens the local
+//! USB diagnostic port.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};

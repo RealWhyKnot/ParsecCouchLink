@@ -204,6 +204,8 @@ If streaming starts but the console does not react, run the guided menu again:
 
 On the **Basic** tab, choose the Pico, then use **Start streaming with Controller 1** or **Choose controller and stream**. Verify that the right Controller 1-4 source is mapped to the right Pico. While streaming, the terminal should show outbound packet counts increasing and recent Pico replies. If the source says `waiting for source`, Windows does not currently see that XInput slot.
 
+For Bluetooth mode, the Pico must stay plugged into the bridge PC over USB. The status line shows USB CDC output instead of Pico UDP replies. If the stream refuses to start, confirm Windows sees the CouchLink USB diagnostic device, then rerun `.\couchlink.exe bluetooth`.
+
 ## USB Adapter Does Not See The Pico
 
 If the Pico is on Wi-Fi but the console adapter or a test PC does not see it as a controller, run:
@@ -231,6 +233,16 @@ On a development bench where the Pico is plugged into the Windows host, use
 XInput PnP instances, then verifies Wi-Fi/input detection and signal
 delivery after reconnect. It is still a Windows PnP simulation, not a physical
 power cut.
+
+## Bluetooth Receiver Does Not React
+
+Bluetooth mode does not use the Pico as a console-side USB controller. Leave the Pico plugged into the bridge PC, pair the receiver with the CouchLink Bluetooth device, then run:
+
+```powershell
+.\couchlink.exe bluetooth
+```
+
+If it still fails, run a bundle and check `bluetooth-report.txt`. The important fields are `bt_started`, `bt_connected`, `bt_report_send_count`, and the PC USB input counters. `bt_connected=false` points at pairing or receiver state; `bt_connected=true` with `bt_report_send_count=0` points at the PC source controller or stream command.
 
 ## Logs
 

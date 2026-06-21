@@ -19,8 +19,8 @@ use zeroize::Zeroize;
 
 use crate::firmware_version::FirmwareVersion;
 
-/// Pico setup-mode USB IDs. Distinct from the run-mode HID PID so Windows
-/// does not cache one driver binding across a descriptor change.
+/// CouchLink CDC USB IDs. Setup mode and Bluetooth run mode both use this
+/// identity; wired USB-output run personas use separate descriptors.
 pub const SETUP_VID: u16 = 0x2E8A;
 pub const SETUP_PID: u16 = 0xCAF0;
 
@@ -42,6 +42,8 @@ pub const CMD_SET_DEVICE_NAME: u8 = 0x08;
 pub const CMD_GET_UNIQUE_ID: u8 = 0x09;
 pub const CMD_GET_LOG_BUFFER: u8 = 0x0A;
 pub const CMD_REBOOT_TO_BOOTSEL: u8 = 0x0B;
+pub const CMD_BT_STATE: u8 = 0x0C;
+pub const CMD_BT_HEARTBEAT: u8 = 0x0D;
 
 // Response opcodes
 pub const RSP_HELLO: u8 = 0x81;
@@ -54,6 +56,8 @@ pub const RSP_SET_DEVICE_NAME: u8 = 0x88;
 pub const RSP_UNIQUE_ID: u8 = 0x89;
 pub const RSP_LOG_BUFFER: u8 = 0x8A;
 pub const RSP_REBOOT_TO_BOOTSEL: u8 = 0x8B;
+pub const RSP_BT_STATE: u8 = 0x8C;
+pub const RSP_BT_HEARTBEAT: u8 = 0x8D;
 pub const RSP_NACK: u8 = 0xFE;
 
 /// Short human label for a response opcode, used in the rare "unexpected
@@ -71,6 +75,8 @@ fn response_name(command: u8) -> &'static str {
         RSP_UNIQUE_ID => "UNIQUE_ID",
         RSP_LOG_BUFFER => "LOG_BUFFER",
         RSP_REBOOT_TO_BOOTSEL => "REBOOT_TO_BOOTSEL_ACK",
+        RSP_BT_STATE => "BT_STATE_ACK",
+        RSP_BT_HEARTBEAT => "BT_HEARTBEAT_ACK",
         RSP_NACK => "NACK",
         _ => "unknown",
     }
@@ -87,6 +93,11 @@ pub const ERR_WIFI_JOIN_TIMEOUT: u8 = 0x10;
 pub const ERR_AUTH_FAIL: u8 = 0x11;
 pub const ERR_NO_2G_NETWORK: u8 = 0x12;
 pub const ERR_INTERNAL: u8 = 0xFF;
+
+pub const HELLO_FLAG_CREDS_PRESENT: u8 = 0x01;
+pub const HELLO_FLAG_WIFI_JOINED: u8 = 0x02;
+pub const HELLO_FLAG_RUN_MODE_OK: u8 = 0x04;
+pub const HELLO_FLAG_RUN_MODE_ACTIVE: u8 = 0x08;
 
 pub fn err_name(code: u8) -> &'static str {
     match code {
@@ -229,6 +240,15 @@ impl PicoSetup {
             ));
         }
         Ok(resp)
+    }
+
+    pub fn write_frame_no_response(&mut self, command: u8, seq: u8, payload: &[u8]) -> Result<()> {
+        let frame = encode(command, seq, payload);
+        self.port.write_all(&frame).context("writing CDC frame")?;
+        if let Err(e) = self.port.flush() {
+            tracing::debug!("cdc: flush after write returned {e:?}");
+        }
+        Ok(())
     }
 
     // Like exchange() but produces a command-specific NACK error message.
@@ -712,7 +732,11 @@ pub struct HelloAck {
 
 impl HelloAck {
     pub fn creds_present(&self) -> bool {
-        self.flags & 0x01 != 0
+        self.flags & HELLO_FLAG_CREDS_PRESENT != 0
+    }
+
+    pub fn run_mode_active(&self) -> bool {
+        self.flags & HELLO_FLAG_RUN_MODE_ACTIVE != 0
     }
 
     pub fn firmware_version(&self) -> FirmwareVersion {

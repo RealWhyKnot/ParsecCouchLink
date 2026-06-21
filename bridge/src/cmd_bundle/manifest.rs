@@ -8,7 +8,7 @@ use crate::{config, logfile};
 
 use super::collect::BUNDLE_LOG_FILES_PER_PREFIX;
 
-pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 22;
+pub(super) const BUNDLE_SCHEMA_VERSION: u8 = 23;
 
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct ManifestPicoCapture {
@@ -24,6 +24,7 @@ pub(super) struct ManifestPicoCapture {
     pub pico_state_status: String,
     pub usb_packet_dump_status: String,
     pub usb_packet_dump_count: usize,
+    pub bluetooth_report_status: String,
     pub cached_state_included: bool,
 }
 
@@ -73,6 +74,10 @@ pub(super) struct Manifest {
     adapter_survey_path: &'static str,
     adapter_survey_json_included: bool,
     adapter_survey_json_path: &'static str,
+    bluetooth_report_included: bool,
+    bluetooth_report_path: &'static str,
+    bluetooth_report_json_included: bool,
+    bluetooth_report_json_path: &'static str,
     app_log_retention_count: usize,
     bundled_log_files_per_prefix: usize,
     debug_packet_log_retention_count: usize,
@@ -164,6 +169,10 @@ pub(super) async fn build_manifest(
         adapter_survey_path: "adapter-survey.txt",
         adapter_survey_json_included: true,
         adapter_survey_json_path: "adapter-survey.json",
+        bluetooth_report_included: true,
+        bluetooth_report_path: "bluetooth-report.txt",
+        bluetooth_report_json_included: true,
+        bluetooth_report_json_path: "bluetooth-report.json",
         app_log_retention_count: logfile::LOG_FILE_RETENTION,
         bundled_log_files_per_prefix: BUNDLE_LOG_FILES_PER_PREFIX,
         debug_packet_log_retention_count: crate::debug_packets::DEBUG_PACKET_FILE_RETENTION,
@@ -198,6 +207,8 @@ pub(super) async fn build_manifest(
             "initial-usb-capture.txt preserves USB packet lines harvested before bundle switches personas.",
             "adapter-survey.txt and adapter-survey.json record live persona checks for PS3, generic HID, PS4, keyboard, XInput, Xbox One, and Maple shapes without prompting, including expected, attempted, missing, failed, coverage_status, and stop_reason fields.",
             "Bundle restores the original persona after the adapter survey pass.",
+            "Bluetooth mode is captured separately in bluetooth-report.txt and bluetooth-report.json because the Pico stays plugged into the PC and receives live controller input over USB CDC.",
+            "Bluetooth mode does not use the USB adapter survey; its live controller packet path is PC USB CDC to Pico, then Bluetooth HID to the paired receiver.",
             "Debug input mode uses the XInput USB shape; debug evidence is not treated as proof that a HID persona works with an adapter.",
             "When a surveyed persona gets descriptor traffic but does not configure, bundle requests a one-shot USB packet capture boot for that same persona.",
             "If persona switching, USB diagnostic queries, packet capture, or persona restore cannot complete, bundle-capture.txt records the failed step, duration, and reason.",
@@ -266,6 +277,7 @@ mod tests {
             pico_state_status: "captured".to_string(),
             usb_packet_dump_status: "captured".to_string(),
             usb_packet_dump_count: 2,
+            bluetooth_report_status: "not_applicable".to_string(),
             cached_state_included: true,
         };
         let host = ManifestHostSnapshot {
@@ -324,6 +336,10 @@ mod tests {
         assert_eq!(json["adapter_survey_path"], "adapter-survey.txt");
         assert_eq!(json["adapter_survey_json_included"], true);
         assert_eq!(json["adapter_survey_json_path"], "adapter-survey.json");
+        assert_eq!(json["bluetooth_report_included"], true);
+        assert_eq!(json["bluetooth_report_path"], "bluetooth-report.txt");
+        assert_eq!(json["bluetooth_report_json_included"], true);
+        assert_eq!(json["bluetooth_report_json_path"], "bluetooth-report.json");
         assert_eq!(
             json["retained_debug_packet_logs"][0],
             "usb-packets-20260615-214000-02E22DA9.log"

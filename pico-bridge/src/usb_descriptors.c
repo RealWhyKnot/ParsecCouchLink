@@ -8,6 +8,7 @@
 //   run / ps4:        Sony DualShock 4 HID gamepad (Sony VID 0x054C, PID 0x09CC)
 //   run / xboxone:    Xbox One-compatible XGIP vendor-class gamepad
 //   run / generic-hid: generic HID gamepad (Raspberry Pi VID 0x2E8A, PID 0xCAF2)
+//   run / bluetooth:  CDC ACM + WinUSB diag on the PC; controller output is Bluetooth HID
 //
 // Only one persona is presented at a time. main() calls boot_mode_decide()
 // before tusb_init(), so D+ is raised exactly once with the final mode
@@ -201,7 +202,8 @@ uint8_t const *tud_descriptor_device_cb(void) {
         diag_log_msg("usb_init: first GET_DESCRIPTOR(DEVICE) reply sent");
     }
     uint8_t const *desc = NULL;
-    if (boot_mode_current() != BOOT_MODE_RUN) {
+    if (boot_mode_current() != BOOT_MODE_RUN ||
+        boot_mode_persona_uses_bluetooth(boot_mode_run_persona())) {
         desc = (uint8_t const *)&desc_device_cdc;
         usb_packet_debug_note_control_in("desc-device", desc, desc[0]);
         return desc;
@@ -548,7 +550,8 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
         logged = true;
     }
     uint8_t const *desc = NULL;
-    if (boot_mode_current() != BOOT_MODE_RUN) {
+    if (boot_mode_current() != BOOT_MODE_RUN ||
+        boot_mode_persona_uses_bluetooth(boot_mode_run_persona())) {
         desc = desc_configuration_cdc;
         usb_packet_debug_note_control_in("desc-config", desc,
                                          (uint16_t)(desc[2] | ((uint16_t)desc[3] << 8)));
@@ -674,6 +677,8 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     }
 
     // Run personas use strings that match the USB identity they expose.
+    // Bluetooth output keeps the CouchLink diagnostic USB identity because
+    // the Pico is expected to remain plugged into the bridge PC.
     // The keyboard persona uses the default CouchLink strings, same as
     // setup mode.
     const char *const *arr = string_desc_arr;
@@ -925,10 +930,11 @@ static const uint8_t desc_bos[BOS_DESC_TOTAL_LEN] = {
 };
 
 uint8_t const *tud_descriptor_bos_cb(void) {
-    // Only setup mode advertises WinUSB binding. XInput's binding to
-    // xusb22.sys is sensitive to extra descriptors and capability
-    // declarations; run mode skips BOS entirely.
-    if (boot_mode_current() == BOOT_MODE_RUN)
+    // Setup mode and Bluetooth output mode advertise WinUSB binding.
+    // XInput's binding to xusb22.sys is sensitive to extra descriptors
+    // and capability declarations; USB controller output modes skip BOS.
+    if (boot_mode_current() == BOOT_MODE_RUN &&
+        !boot_mode_persona_uses_bluetooth(boot_mode_run_persona()))
         return NULL;
     return desc_bos;
 }

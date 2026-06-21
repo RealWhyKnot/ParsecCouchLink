@@ -27,6 +27,21 @@ static uint16_t bt_hid_cid;
 static bt_hid_target_t bt_hid_target = BT_HID_TARGET_GENERIC;
 static absolute_time_t bt_hid_next_send_at;
 static bt_hid_report_t bt_hid_pending_report;
+static uint8_t bt_hid_last_status;
+static uint32_t bt_hid_init_count;
+static uint32_t bt_hid_ready_count;
+static uint32_t bt_hid_open_count;
+static uint32_t bt_hid_close_count;
+static uint32_t bt_hid_can_send_count;
+static uint32_t bt_hid_report_build_count;
+static uint32_t bt_hid_report_send_count;
+static uint32_t bt_hid_send_request_count;
+static uint32_t bt_hid_last_event_ms;
+static uint32_t bt_hid_last_send_ms;
+
+static uint32_t now_ms(void) {
+    return to_ms_since_boot(get_absolute_time());
+}
 
 static void copy_gamepad_state(gamepad_state_t *out) {
     out->buttons = g_gamepad_state.buttons;
@@ -47,7 +62,9 @@ static void request_send_now(bool force) {
     gamepad_state_t state;
     copy_gamepad_state(&state);
     bt_hid_build_report(bt_hid_target, &state, &bt_hid_pending_report);
+    bt_hid_report_build_count++;
     bt_hid_send_requested = true;
+    bt_hid_send_request_count++;
     hid_device_request_can_send_now_event(bt_hid_cid);
 }
 
@@ -57,6 +74,8 @@ static void send_pending_report(void) {
     memcpy(&interrupt_report[1], bt_hid_pending_report.bytes, bt_hid_pending_report.len);
     hid_device_send_interrupt_message(bt_hid_cid, interrupt_report,
                                       (uint16_t)(bt_hid_pending_report.len + 1u));
+    bt_hid_report_send_count++;
+    bt_hid_last_send_ms = now_ms();
     bt_hid_next_send_at = make_timeout_time_ms(BT_HID_SEND_INTERVAL_MS);
 }
 
@@ -74,6 +93,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
     switch (hci_event_packet_get_type(packet)) {
     case BTSTACK_EVENT_STATE:
         if (btstack_event_state_get_state(packet) == HCI_STATE_WORKING) {
+            bt_hid_ready_count++;
+            bt_hid_last_event_ms = now_ms();
             diag_log_printf("bt_hid: ready target=%s", bt_hid_target_label(bt_hid_target));
         }
         break;
@@ -89,6 +110,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
         switch (hci_event_hid_meta_get_subevent_code(packet)) {
         case HID_SUBEVENT_CONNECTION_OPENED:
             status = hid_subevent_connection_opened_get_status(packet);
+            bt_hid_last_status = status;
+            bt_hid_last_event_ms = now_ms();
             if (status != ERROR_CODE_SUCCESS) {
                 diag_log_printf("bt_hid: connection failed status=0x%02X", (unsigned)status);
                 bt_hid_connected = false;
@@ -99,6 +122,7 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             bt_hid_connected = true;
             bt_hid_send_requested = false;
             bt_hid_next_send_at = get_absolute_time();
+            bt_hid_open_count++;
             diag_log_msg("bt_hid: connected");
             request_send_now(true);
             break;
@@ -106,9 +130,13 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             bt_hid_connected = false;
             bt_hid_send_requested = false;
             bt_hid_cid = 0;
+            bt_hid_close_count++;
+            bt_hid_last_event_ms = now_ms();
             diag_log_msg("bt_hid: disconnected");
             break;
         case HID_SUBEVENT_CAN_SEND_NOW:
+            bt_hid_can_send_count++;
+            bt_hid_last_event_ms = now_ms();
             if (bt_hid_connected && bt_hid_send_requested) {
                 bt_hid_send_requested = false;
                 send_pending_report();
@@ -181,8 +209,8 @@ bool bt_hid_init(bt_hid_target_t target) {
 
     memset(device_id_sdp_service_buffer, 0, sizeof(device_id_sdp_service_buffer));
     device_id_create_sdp_record(device_id_sdp_service_buffer, sdp_create_service_record_handle(),
-                                DEVICE_ID_VENDOR_ID_SOURCE_USB, 0x2E8Au,
-                                bt_hid_product_id(target), 0x0100u);
+                                DEVICE_ID_VENDOR_ID_SOURCE_USB, 0x2E8Au, bt_hid_product_id(target),
+                                0x0100u);
     sdp_register_service(device_id_sdp_service_buffer);
 
     hid_device_init(BT_HID_BOOT_DEVICE, descriptor_len, descriptor);
@@ -192,6 +220,8 @@ bool bt_hid_init(bt_hid_target_t target) {
     hid_device_register_packet_handler(&packet_handler);
 
     bt_hid_started = true;
+    bt_hid_init_count++;
+    bt_hid_last_event_ms = now_ms();
     diag_log_printf("bt_hid: init target=%s", bt_hid_target_label(target));
     hci_power_control(HCI_POWER_ON);
     return true;
@@ -204,6 +234,30 @@ void bt_hid_reset_stack_state(void) {
     bt_hid_cid = 0;
     memset(&hci_event_callback_registration, 0, sizeof(hci_event_callback_registration));
     memset(&bt_hid_pending_report, 0, sizeof(bt_hid_pending_report));
+}
+
+void bt_hid_snapshot(bt_hid_snapshot_t *out) {
+    memset(out, 0, sizeof(*out));
+    if (bt_hid_started)
+        out->flags |= BT_HID_STATUS_STARTED;
+    if (bt_hid_connected)
+        out->flags |= BT_HID_STATUS_CONNECTED;
+    if (bt_hid_send_requested)
+        out->flags |= BT_HID_STATUS_SEND_REQUESTED;
+    out->target = (uint8_t)bt_hid_target;
+    out->last_status = bt_hid_last_status;
+    out->report_len = bt_hid_pending_report.len;
+    out->cid = bt_hid_cid;
+    out->init_count = bt_hid_init_count;
+    out->ready_count = bt_hid_ready_count;
+    out->open_count = bt_hid_open_count;
+    out->close_count = bt_hid_close_count;
+    out->can_send_count = bt_hid_can_send_count;
+    out->report_build_count = bt_hid_report_build_count;
+    out->report_send_count = bt_hid_report_send_count;
+    out->send_request_count = bt_hid_send_request_count;
+    out->last_event_ms = bt_hid_last_event_ms;
+    out->last_send_ms = bt_hid_last_send_ms;
 }
 
 void bt_hid_task(void) {

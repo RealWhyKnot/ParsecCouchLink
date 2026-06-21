@@ -64,9 +64,8 @@ static void neutral_report_is_centered_and_released(void) {
 
 static void generic_report_maps_core_controls(void) {
     gamepad_state_t state = {0};
-    state.buttons = DINPUT_XINPUT_A | DINPUT_XINPUT_B | DINPUT_XINPUT_BACK |
-                    DINPUT_XINPUT_START | DINPUT_XINPUT_DPAD_UP |
-                    DINPUT_XINPUT_DPAD_RIGHT;
+    state.buttons = DINPUT_XINPUT_A | DINPUT_XINPUT_B | DINPUT_XINPUT_BACK | DINPUT_XINPUT_START |
+                    DINPUT_XINPUT_DPAD_UP | DINPUT_XINPUT_DPAD_RIGHT;
     state.left_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD;
     state.right_trigger = DINPUT_TRIGGER_BUTTON_THRESHOLD - 1;
     state.left_x = -32768;
@@ -121,10 +120,9 @@ static void target_button_orders_are_distinct(void) {
 }
 
 static void target_metadata_is_stable(void) {
-    CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_GENERIC), "bluetooth-hid") == 0);
-    CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_XBOX), "bluetooth-xbox-hid") == 0);
-    CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_PLAYSTATION),
-                 "bluetooth-playstation-hid") == 0);
+    CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_GENERIC), "bluetooth") == 0);
+    CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_XBOX), "bluetooth-xbox") == 0);
+    CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_PLAYSTATION), "bluetooth-playstation") == 0);
     CHECK(bt_hid_product_id(BT_HID_TARGET_GENERIC) == 0xCB10u);
     CHECK(bt_hid_product_id(BT_HID_TARGET_XBOX) == 0xCB11u);
     CHECK(bt_hid_product_id(BT_HID_TARGET_PLAYSTATION) == 0xCB12u);

@@ -276,10 +276,11 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to Bluetooth HID gamepad mode.
+    /// Switch a Pico to Bluetooth mode.
     #[command(
-        name = "bluetooth-hid",
-        alias = "bluetooth",
+        name = "bluetooth",
+        alias = "bluetooth-hid",
+        alias = "bt",
         alias = "bt-hid",
         alias = "blueretro",
         alias = "n64-bluetooth"
@@ -297,7 +298,7 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to Bluetooth HID with Xbox button ordering.
+    /// Switch a Pico to Bluetooth with Xbox button ordering.
     #[command(name = "bluetooth-xbox", alias = "bt-xbox", alias = "blueretro-xbox")]
     BluetoothXbox {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
@@ -312,7 +313,7 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to Bluetooth HID with PlayStation button ordering.
+    /// Switch a Pico to Bluetooth with PlayStation button ordering.
     #[command(
         name = "bluetooth-playstation",
         alias = "bt-playstation",
@@ -1030,6 +1031,7 @@ mod tests {
             "ps3",
             "ps4",
             "generic-hid",
+            "bluetooth",
             "bluetooth-hid",
             "bluetooth-xbox",
             "bluetooth-playstation",
@@ -1087,7 +1089,7 @@ mod tests {
                     }),
                 )
                 | (
-                    "bluetooth-hid",
+                    "bluetooth" | "bluetooth-hid",
                     Some(Command::BluetoothHid {
                         picos,
                         all,

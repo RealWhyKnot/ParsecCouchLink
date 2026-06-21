@@ -29,7 +29,7 @@ pub async fn run() -> Result<()> {
 fn print_header() {
     println!();
     println!("Parsec CouchLink");
-    println!("Remote Parsec controllers -> Wi-Fi -> Pico -> console adapter");
+    println!("Remote Parsec controllers -> Pico output modes");
     println!();
 }
 
@@ -797,8 +797,8 @@ fn print_xinput_sources() {
             );
         }
     }
-    println!("  If a Pico is plugged into this same PC only for testing, Windows may list it here as an Xbox controller.");
-    println!("  In normal use, the Pico USB side should be plugged into the console adapter, not used as the source controller.");
+    println!("  USB-output modes plug the Pico into the console adapter.");
+    println!("  Bluetooth mode keeps the Pico plugged into this PC for USB input.");
 }
 
 async fn route_one(picos: Vec<cmd_run::PicoTarget>) -> Result<()> {
@@ -862,7 +862,7 @@ async fn choose_input_mode() -> Result<InputModeChoice> {
         ),
         menu_item(
             "Bluetooth",
-            "choose Bluetooth HID target layout for wireless receivers",
+            "PC USB input with Bluetooth output to a wireless receiver",
         ),
         menu_item(
             "Maple",
@@ -912,11 +912,11 @@ async fn choose_playstation_input_mode() -> Result<InputModeChoice> {
 
 async fn choose_bluetooth_input_mode() -> Result<InputModeChoice> {
     let choices = vec![
-        menu_item("Bluetooth HID", "generic Bluetooth HID gamepad"),
-        menu_item("Bluetooth Xbox", "Bluetooth HID with Xbox button ordering"),
+        menu_item("Bluetooth", "generic Bluetooth gamepad"),
+        menu_item("Bluetooth Xbox", "Bluetooth with Xbox button ordering"),
         menu_item(
             "Bluetooth PlayStation",
-            "Bluetooth HID with PlayStation button ordering",
+            "Bluetooth with PlayStation button ordering",
         ),
     ];
     match select("Bluetooth input mode", &choices, 0).await? {

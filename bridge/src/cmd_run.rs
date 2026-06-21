@@ -331,29 +331,35 @@ async fn recover_setup_usb_to_wifi(quiet: bool) -> Result<usize> {
 
     let mut rebooted = 0usize;
     let mut blocked = 0usize;
-    if !quiet {
-        println!("Found setup-mode USB Pico port(s): {}", ports.join(", "));
-    }
+    let mut printed_header = false;
 
     for port in ports {
         match setup_port_reboot_to_run(port.clone()).await {
             Ok(SetupRecovery::Rebooted { firmware, board }) => {
                 rebooted += 1;
                 if !quiet {
+                    print_setup_recovery_header(&mut printed_header);
                     println!("  {port}: fw v{firmware} {board} -> Wi-Fi/input mode");
                 }
             }
             Ok(SetupRecovery::NoCredentials { firmware, board }) => {
                 blocked += 1;
                 if !quiet {
+                    print_setup_recovery_header(&mut printed_header);
                     println!(
                         "  {port}: fw v{firmware} {board} has no saved Wi-Fi; choose `Set up or change Wi-Fi`."
                     );
                 }
             }
+            Ok(SetupRecovery::AlreadyRunMode { firmware, board }) => {
+                tracing::debug!(
+                    "run: {port} fw v{firmware} {board} is already in run mode; skipping USB recovery"
+                );
+            }
             Err(e) => {
                 blocked += 1;
                 if !quiet {
+                    print_setup_recovery_header(&mut printed_header);
                     println!("  {port}: could not auto-recover: {e:#}");
                 }
             }
@@ -367,8 +373,19 @@ async fn recover_setup_usb_to_wifi(quiet: bool) -> Result<usize> {
     Ok(rebooted)
 }
 
+fn print_setup_recovery_header(printed: &mut bool) {
+    if !*printed {
+        println!("Found recoverable setup-mode USB Pico port(s):");
+        *printed = true;
+    }
+}
+
 enum SetupRecovery {
     Rebooted {
+        firmware: String,
+        board: &'static str,
+    },
+    AlreadyRunMode {
         firmware: String,
         board: &'static str,
     },
@@ -376,6 +393,23 @@ enum SetupRecovery {
         firmware: String,
         board: &'static str,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SetupUsbMode {
+    RunModeActive,
+    SetupModeWithCredentials,
+    SetupModeWithoutCredentials,
+}
+
+fn classify_setup_usb_hello(hello: &cdc::HelloAck) -> SetupUsbMode {
+    if hello.run_mode_active() {
+        SetupUsbMode::RunModeActive
+    } else if hello.creds_present() {
+        SetupUsbMode::SetupModeWithCredentials
+    } else {
+        SetupUsbMode::SetupModeWithoutCredentials
+    }
 }
 
 async fn setup_port_reboot_to_run(port: String) -> Result<SetupRecovery> {
@@ -389,14 +423,19 @@ async fn setup_port_reboot_to_run(port: String) -> Result<SetupRecovery> {
                 cdc::PROTO_VERSION,
             );
         }
+
+        let firmware = hello.firmware_version().to_string();
+        let board = setup_board_label(hello.board_type);
+        if classify_setup_usb_hello(&hello) == SetupUsbMode::RunModeActive {
+            return Ok(SetupRecovery::AlreadyRunMode { firmware, board });
+        }
+
         let self_test = pico.self_test()?;
         if !self_test.passed {
             bail!("SELF_TEST failed: {}", self_test.message);
         }
 
-        let firmware = hello.firmware_version().to_string();
-        let board = setup_board_label(hello.board_type);
-        if !hello.creds_present() {
+        if classify_setup_usb_hello(&hello) == SetupUsbMode::SetupModeWithoutCredentials {
             return Ok(SetupRecovery::NoCredentials { firmware, board });
         }
 
@@ -684,6 +723,7 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
         bail!("no routes selected");
     }
     validate_routes(&routes)?;
+    let mut bluetooth_usb_links = open_bluetooth_usb_links(&routes)?;
     if options.save_routes {
         save_routes(&routes)?;
     }
@@ -726,7 +766,13 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
         print_stream_intro(&routes, socket.local_addr()?);
     }
 
-    let mut runtime: Vec<RouteRuntime> = routes.into_iter().map(RouteRuntime::new).collect();
+    let mut runtime: Vec<RouteRuntime> = routes
+        .into_iter()
+        .map(|route| {
+            let bluetooth_usb = bluetooth_usb_links.remove(&route.pico.info.unique_id_short);
+            RouteRuntime::new(route, bluetooth_usb)
+        })
+        .collect();
     // Bring the injected-input keyboard hook up before the first tick so a
     // keyboard route doesn't start with empty reports.
     if runtime
@@ -760,7 +806,15 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
         tokio::select! {
             _ = tick.tick() => {
                 for route in &mut runtime {
-                    if let Err(e) = route.send_tick(&socket).await {
+                    if route.route.pico.persona.is_bluetooth() {
+                        if let Err(e) = route.send_bluetooth_usb_tick() {
+                            return Err(e).with_context(|| {
+                                format!("streaming over USB to {}", route.route.pico.short_label())
+                            });
+                        }
+                        continue;
+                    }
+                    if let Err(e) = route.send_udp_tick(&socket).await {
                         // A Pico that rebooted or dropped off Wi-Fi makes the OS
                         // surface a transient error (ICMP unreachable -> reset on
                         // Windows). Keep streaming the other routes and let the
@@ -859,6 +913,55 @@ fn validate_routes(routes: &[StreamRoute]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn open_bluetooth_usb_links(routes: &[StreamRoute]) -> Result<HashMap<u32, cdc::PicoSetup>> {
+    let needed: HashSet<u32> = routes
+        .iter()
+        .filter(|route| route.pico.persona.is_bluetooth())
+        .map(|route| route.pico.info.unique_id_short)
+        .collect();
+    if needed.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let ports = cdc::find_setup_ports().context(
+        "Bluetooth mode requires the Pico to be plugged into this PC over USB; could not enumerate local CouchLink USB diagnostic ports",
+    )?;
+    let mut found = HashMap::new();
+    let mut probe_errors = Vec::new();
+    for port in ports {
+        match cdc::PicoSetup::open_named(&port).and_then(|mut pico| {
+            let uid = pico.unique_id_short()?;
+            Ok((uid, pico))
+        }) {
+            Ok((uid, pico)) if needed.contains(&uid) => {
+                found.insert(uid, pico);
+            }
+            Ok((_uid, _pico)) => {}
+            Err(e) => probe_errors.push(format!("{port}: {e:#}")),
+        }
+    }
+
+    let missing = needed
+        .iter()
+        .filter(|uid| !found.contains_key(uid))
+        .map(|uid| format!("{uid:08X}"))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        let mut msg = format!(
+            "Bluetooth mode will not stream to a Wi-Fi-only Pico. Plug Pico {} into this PC over USB, wait for the CouchLink USB diagnostic device, then run the command again.",
+            missing.join(", ")
+        );
+        msg.push_str(" Expected USB identity: VID 0x2E8A PID 0xCAF0.");
+        if !probe_errors.is_empty() {
+            msg.push_str(" Local USB probe errors: ");
+            msg.push_str(&probe_errors.join(" | "));
+        }
+        bail!("{msg}");
+    }
+
+    Ok(found)
 }
 
 fn save_routes(routes: &[StreamRoute]) -> Result<()> {
@@ -1115,6 +1218,7 @@ fn duration_ms_u64(duration: Duration) -> u64 {
 
 struct RouteRuntime {
     route: StreamRoute,
+    bluetooth_usb: Option<cdc::PicoSetup>,
     seq: u8,
     sent_total: u64,
     sent_at_last_status: u64,
@@ -1130,9 +1234,10 @@ struct RouteRuntime {
 }
 
 impl RouteRuntime {
-    fn new(route: StreamRoute) -> Self {
+    fn new(route: StreamRoute, bluetooth_usb: Option<cdc::PicoSetup>) -> Self {
         Self {
             route,
+            bluetooth_usb,
             seq: 0,
             sent_total: 0,
             sent_at_last_status: 0,
@@ -1148,7 +1253,7 @@ impl RouteRuntime {
         }
     }
 
-    async fn send_tick(&mut self, socket: &UdpSocket) -> std::io::Result<()> {
+    async fn send_udp_tick(&mut self, socket: &UdpSocket) -> std::io::Result<()> {
         let packet = match self.route.pico.persona {
             Persona::Xinput
             | Persona::Maple
@@ -1156,16 +1261,31 @@ impl RouteRuntime {
             | Persona::Ps4
             | Persona::XboxOne
             | Persona::GenericHid
-            | Persona::BluetoothHid
-            | Persona::BluetoothXbox
-            | Persona::BluetoothPlaystation
             | Persona::Debug => self.next_controller_packet(),
             Persona::Keyboard => self.next_keyboard_packet(),
+            Persona::BluetoothHid | Persona::BluetoothXbox | Persona::BluetoothPlaystation => {
+                self.next_controller_packet()
+            }
         };
         self.seq = self.seq.wrapping_add(1);
         socket
             .send_to(&packet.encode(), self.route.pico.peer)
             .await?;
+        self.sent_total += 1;
+        Ok(())
+    }
+
+    fn send_bluetooth_usb_tick(&mut self) -> Result<()> {
+        let packet = self.next_controller_packet();
+        let (command, payload) = bluetooth_cdc_frame_from_packet(&packet)?;
+        let link = self.bluetooth_usb.as_mut().ok_or_else(|| {
+            anyhow!(
+                "Bluetooth mode requires Pico {} to be plugged into this PC over USB; no matching CouchLink USB diagnostic port is open",
+                self.route.pico.uid_hex()
+            )
+        })?;
+        link.write_frame_no_response(command, self.seq, &payload)?;
+        self.seq = self.seq.wrapping_add(1);
         self.sent_total += 1;
         Ok(())
     }
@@ -1213,6 +1333,19 @@ impl RouteRuntime {
     }
 }
 
+fn bluetooth_cdc_frame_from_packet(packet: &Packet) -> Result<(u8, [u8; 13])> {
+    let command = match packet.kind {
+        PacketKind::State(_) => cdc::CMD_BT_STATE,
+        PacketKind::Heartbeat(_) => cdc::CMD_BT_HEARTBEAT,
+        _ => bail!("Bluetooth USB streaming only accepts controller state packets"),
+    };
+    let encoded = packet.encode();
+    let mut payload = [0u8; 13];
+    payload[0] = encoded[3];
+    payload[1..].copy_from_slice(&encoded[4..16]);
+    Ok((command, payload))
+}
+
 fn handle_stream_reply(routes: &mut [RouteRuntime], from: SocketAddr, buf: &[u8]) {
     let Ok(packet) = Packet::decode(buf) else {
         tracing::debug!("stream: dropping malformed packet from {from}");
@@ -1239,7 +1372,17 @@ fn handle_stream_reply(routes: &mut [RouteRuntime], from: SocketAddr, buf: &[u8]
 fn print_stream_intro(routes: &[StreamRoute], local_addr: SocketAddr) {
     println!();
     println!("CouchLink streaming");
-    println!("Local UDP socket: {local_addr}");
+    let udp_routes = routes
+        .iter()
+        .filter(|route| !route.pico.persona.is_bluetooth())
+        .count();
+    let bluetooth_routes = routes.len().saturating_sub(udp_routes);
+    if udp_routes > 0 {
+        println!("Local UDP socket: {local_addr}");
+    }
+    if bluetooth_routes > 0 {
+        println!("Bluetooth input: PC USB CDC to plugged Pico");
+    }
     println!("Press Ctrl+C to stop.");
     println!();
     println!("Routes:");
@@ -1258,8 +1401,11 @@ fn print_status(routes: &mut [RouteRuntime]) {
     for route in routes {
         let sent_delta = route.sent_total.saturating_sub(route.sent_at_last_status);
         route.sent_at_last_status = route.sent_total;
+        let bluetooth_route = route.route.pico.persona.is_bluetooth();
         let inbound_age = route.last_inbound.elapsed();
-        let peer_state = if route.inbound_total == 0 {
+        let peer_state = if bluetooth_route {
+            "USB CDC input".to_string()
+        } else if route.inbound_total == 0 {
             "no reply yet".to_string()
         } else if inbound_age > PEER_STALE_AFTER {
             format!("no reply for {:.1}s", inbound_age.as_secs_f32())
@@ -1306,7 +1452,7 @@ fn print_status(routes: &mut [RouteRuntime]) {
                 )
             }
         };
-        let last_inbound_ms_ago = if route.inbound_total == 0 {
+        let last_inbound_ms_ago = if bluetooth_route || route.inbound_total == 0 {
             None
         } else {
             Some(pico_cache::duration_ms(inbound_age))
@@ -1325,24 +1471,43 @@ fn print_status(routes: &mut [RouteRuntime]) {
                     last_send_type: Some(route.last_send_type.to_string()),
                 }),
         );
-        println!(
-            "  {} -> {} | {} | out +{} total {} | in {} ({}) | {} {}",
-            route.route.source_label(),
-            route.route.pico.uid_hex(),
-            source_state,
-            sent_delta,
-            route.sent_total,
-            route.inbound_total,
-            peer_state,
-            route.last_send_type,
-            detail,
-        );
-        if route.inbound_total == 0 && route.sent_total > 180 && !route.recovery_hint_printed {
+        if bluetooth_route {
+            println!(
+                "  {} -> {} | {} | USB out +{} total {} | {} | {} {}",
+                route.route.source_label(),
+                route.route.pico.uid_hex(),
+                source_state,
+                sent_delta,
+                route.sent_total,
+                peer_state,
+                route.last_send_type,
+                detail,
+            );
+        } else {
+            println!(
+                "  {} -> {} | {} | out +{} total {} | in {} ({}) | {} {}",
+                route.route.source_label(),
+                route.route.pico.uid_hex(),
+                source_state,
+                sent_delta,
+                route.sent_total,
+                route.inbound_total,
+                peer_state,
+                route.last_send_type,
+                detail,
+            );
+        }
+        if !bluetooth_route
+            && route.inbound_total == 0
+            && route.sent_total > 180
+            && !route.recovery_hint_printed
+        {
             println!(
                 "    hint: no Pico reply yet. Confirm this Pico is powered and on the same Wi-Fi; run `couchlink bundle` if it stays unreachable."
             );
             route.recovery_hint_printed = true;
-        } else if route.inbound_total > 0
+        } else if !bluetooth_route
+            && route.inbound_total > 0
             && route.last_inbound.elapsed() > PEER_STALE_AFTER
             && !route.recovery_hint_printed
         {
@@ -1358,6 +1523,9 @@ fn schedule_recovery_if_needed(routes: &mut [RouteRuntime]) -> bool {
     let now = Instant::now();
     let mut needed = false;
     for route in routes {
+        if route.route.pico.persona.is_bluetooth() {
+            continue;
+        }
         if route.last_inbound.elapsed() <= PEER_STALE_AFTER {
             continue;
         }
@@ -1604,14 +1772,20 @@ mod tests {
         debug.persona = Persona::Debug;
         let xinput = pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040);
         let routes = vec![
-            RouteRuntime::new(StreamRoute {
-                source_slot: 0,
-                pico: debug,
-            }),
-            RouteRuntime::new(StreamRoute {
-                source_slot: 1,
-                pico: xinput,
-            }),
+            RouteRuntime::new(
+                StreamRoute {
+                    source_slot: 0,
+                    pico: debug,
+                },
+                None,
+            ),
+            RouteRuntime::new(
+                StreamRoute {
+                    source_slot: 1,
+                    pico: xinput,
+                },
+                None,
+            ),
         ];
 
         let disabled = HashSet::new();
@@ -1627,5 +1801,82 @@ mod tests {
         let disabled = HashSet::from([0x07D37EB6]);
         assert!(!has_debug_packet_routes(&routes, &disabled));
         assert!(debug_packet_harvest_targets(&routes, &disabled).is_empty());
+    }
+
+    #[test]
+    fn bluetooth_cdc_frame_preserves_controller_payload() {
+        let state = protocol::GamepadState {
+            buttons: 0x1234,
+            left_trigger: 5,
+            right_trigger: 6,
+            left_x: -123,
+            left_y: 456,
+            right_x: -789,
+            right_y: 1024,
+        };
+        let packet = Packet::state(7, protocol::FLAG_PARSEC_CONNECTED, state);
+        let (command, payload) = bluetooth_cdc_frame_from_packet(&packet).unwrap();
+
+        assert_eq!(command, cdc::CMD_BT_STATE);
+        assert_eq!(payload[0], protocol::FLAG_PARSEC_CONNECTED);
+        assert_eq!(&payload[1..], &packet.encode()[4..16]);
+
+        let heartbeat = Packet::heartbeat(8, 0, state);
+        let (command, payload) = bluetooth_cdc_frame_from_packet(&heartbeat).unwrap();
+        assert_eq!(command, cdc::CMD_BT_HEARTBEAT);
+        assert_eq!(payload[0], 0);
+        assert_eq!(&payload[1..], &heartbeat.encode()[4..16]);
+    }
+
+    #[test]
+    fn bluetooth_routes_do_not_schedule_udp_recovery() {
+        let mut bt = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+        bt.persona = Persona::BluetoothHid;
+        let mut routes = vec![RouteRuntime::new(
+            StreamRoute {
+                source_slot: 0,
+                pico: bt,
+            },
+            None,
+        )];
+        routes[0].last_inbound = Instant::now() - (PEER_STALE_AFTER + Duration::from_secs(1));
+
+        assert!(!schedule_recovery_if_needed(&mut routes));
+        assert!(routes[0].last_recovery_attempt.is_none());
+    }
+
+    #[test]
+    fn setup_usb_recovery_skips_run_mode_cdc() {
+        let hello = cdc::HelloAck {
+            proto_version: cdc::PROTO_VERSION,
+            fw_major: 26,
+            fw_minor: 6,
+            fw_patch: 20,
+            board_type: protocol::BOARD_PICO_2_W,
+            flags: cdc::HELLO_FLAG_CREDS_PRESENT | cdc::HELLO_FLAG_RUN_MODE_ACTIVE,
+            firmware_version: crate::firmware_version::FirmwareVersion::Legacy {
+                major: 0,
+                minor: 0,
+                patch: 0,
+            },
+        };
+
+        assert_eq!(
+            classify_setup_usb_hello(&hello),
+            SetupUsbMode::RunModeActive
+        );
+
+        let mut setup = hello;
+        setup.flags = cdc::HELLO_FLAG_CREDS_PRESENT;
+        assert_eq!(
+            classify_setup_usb_hello(&setup),
+            SetupUsbMode::SetupModeWithCredentials
+        );
+
+        setup.flags = 0;
+        assert_eq!(
+            classify_setup_usb_hello(&setup),
+            SetupUsbMode::SetupModeWithoutCredentials
+        );
     }
 }

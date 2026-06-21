@@ -188,6 +188,7 @@ static void run_mode_main_loop(void) {
     bt_hid_target_t bt_hid_target = BT_HID_TARGET_GENERIC;
     uint32_t bt_hid_radio_generation = 0;
     if (boot_mode_persona_uses_bluetooth(persona)) {
+        cdc_handlers_init();
         if (bt_hid_target_from_persona(persona, &bt_hid_target) && radio_up) {
             bt_hid_inited = bt_hid_init(bt_hid_target);
             if (bt_hid_inited)
@@ -229,16 +230,27 @@ static void run_mode_main_loop(void) {
     reset_reason_mark_main_loop_entered();
 
     for (;;) {
-        if (boot_mode_persona_uses_usb_output(persona)) {
+        if (boot_mode_persona_uses_usb_output(persona) ||
+            boot_mode_persona_uses_bluetooth(persona)) {
             tud_task();
             boot_mode_post_enum_bootsel_poll();
-            // Defense-in-depth: drain any CDC bytes the host may have sent
-            // before we re-enumerated as XInput. With the boot-ordering fix
-            // in main(), run mode never exposes CDC endpoints and this is a
-            // no-op (early-exits on tud_cdc_available() == 0). It's here so
-            // a future regression that reintroduces the persona race can't
-            // silently fill the CDC RX FIFO again.
+            // USB-output personas normally have no CDC endpoints; Bluetooth
+            // keeps CDC open because the PC streams controller state over USB.
             cdc_handlers_poll();
+            if (boot_mode_persona_uses_bluetooth(persona)) {
+                if (cdc_handlers_bootsel_pending()) {
+                    diag_log_msg("run: CDC REBOOT_TO_BOOTSEL acknowledged, resetting to BOOTSEL");
+                    sleep_ms(50);
+                    reset_usb_boot(0, 0);
+                }
+                if (cdc_handlers_reboot_pending()) {
+                    diag_log_msg("run: CDC REBOOT_TO_RUN acknowledged, resetting");
+                    sleep_ms(50);
+                    watchdog_reboot(0, 0, 100);
+                    for (;;)
+                        tight_loop_contents();
+                }
+            }
         }
 
         if (!radio_up) {
@@ -321,8 +333,8 @@ static void run_mode_main_loop(void) {
         // Sustained-BADAUTH watchdog. Arm on the first auth rejection and
         // disarm the instant we join or see any other state, so only a
         // continuously-wrong password ever reaches the timeout and bounces.
-        if (join_issued && wifi_state() != WIFI_STATE_JOINED &&
-            wifi_last_error_code() == CDC_ERR_AUTH_FAIL) {
+        if (!boot_mode_persona_uses_bluetooth(persona) && join_issued &&
+            wifi_state() != WIFI_STATE_JOINED && wifi_last_error_code() == CDC_ERR_AUTH_FAIL) {
             if (!badauth_armed) {
                 badauth_since = get_absolute_time();
                 badauth_armed = true;
@@ -419,13 +431,13 @@ int main(void) {
             persona_name = "generic HID gamepad";
             break;
         case RUN_PERSONA_BT_HID:
-            persona_name = "Bluetooth HID gamepad";
+            persona_name = "Bluetooth";
             break;
         case RUN_PERSONA_BT_XBOX:
-            persona_name = "Bluetooth HID Xbox button order";
+            persona_name = "Bluetooth Xbox button order";
             break;
         case RUN_PERSONA_BT_PS:
-            persona_name = "Bluetooth HID PlayStation button order";
+            persona_name = "Bluetooth PlayStation button order";
             break;
         }
     }
@@ -444,9 +456,10 @@ int main(void) {
     }
     diag_log_printf("boot: mode decided: %s persona will be advertised", persona_name);
 
-    bool usb_output_enabled =
-        mode != BOOT_MODE_RUN || boot_mode_persona_uses_usb_output(boot_mode_run_persona());
-    if (usb_output_enabled) {
+    bool usb_device_enabled = mode != BOOT_MODE_RUN ||
+                              boot_mode_persona_uses_usb_output(boot_mode_run_persona()) ||
+                              boot_mode_persona_uses_bluetooth(boot_mode_run_persona());
+    if (usb_device_enabled) {
         // Now that the correct persona is fixed, raise D+ once and keep it
         // there. The host sees a single clean connect event.
         tusb_init();
@@ -485,7 +498,7 @@ int main(void) {
             }
         }
     } else {
-        diag_log_msg("usb_init: skipped for Bluetooth output persona");
+        diag_log_msg("usb_init: skipped for non-USB runtime persona");
     }
 
     if (mode == BOOT_MODE_RUN) {

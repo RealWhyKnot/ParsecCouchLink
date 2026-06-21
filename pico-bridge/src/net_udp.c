@@ -11,6 +11,7 @@
 
 #include "boot_mode.h"
 #include "boot_mode_policy.h"
+#include "bt_hid.h"
 #include "diag_log.h"
 #include "flash_creds.h"
 #include "gamepad_state.h"
@@ -126,8 +127,8 @@ static const char *lwip_err_name(err_t e) {
 #define USB_DIAG_ACTIVITY_PEER 0x08
 #define USB_DIAG_ACTIVITY_PARSEC 0x10
 
-#define PICO_STATE_WIRE_SIZE 128
-#define PICO_STATE_VERSION 2
+#define PICO_STATE_WIRE_SIZE 176
+#define PICO_STATE_VERSION 3
 
 // LogChunk layout (matches bridge protocol.rs):
 //   header (12 bytes) + payload (<= 256 bytes) + crc16 (2 bytes)
@@ -241,8 +242,8 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     if (boot_mode_run_persona() == RUN_PERSONA_BT_XBOX)
         ack_flags |= ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA;
     if (boot_mode_run_persona() == RUN_PERSONA_BT_PS)
-        ack_flags |= ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA |
-                     ACK_FLAG_MAPLE_PERSONA | ACK_FLAG_ALT_PERSONA;
+        ack_flags |= ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA |
+                     ACK_FLAG_ALT_PERSONA;
     buf[3] = ack_flags;
     // body[0..11]
     buf[4] = PICO_BRIDGE_UDP_PROTO_VERSION;
@@ -459,6 +460,8 @@ static uint8_t current_persona_byte(void) {
 static void send_pico_state(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     usb_diag_snapshot_t snap;
     usb_diag_snapshot(&snap);
+    bt_hid_snapshot_t bt_snap;
+    bt_hid_snapshot(&bt_snap);
 
     uint8_t usb_flags = 0;
     if (snap.mounted)
@@ -528,6 +531,21 @@ static void send_pico_state(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_
     buf[120] = snap.last_in_blocked_reason;
     put_u16_le(buf, 122, snap.last_in_blocked_want);
     put_u16_le(buf, 124, snap.last_in_blocked_got);
+    buf[126] = bt_snap.flags;
+    buf[127] = bt_snap.target;
+    buf[128] = bt_snap.last_status;
+    buf[129] = bt_snap.report_len;
+    put_u16_le(buf, 130, bt_snap.cid);
+    put_u32_le(buf, 132, bt_snap.init_count);
+    put_u32_le(buf, 136, bt_snap.ready_count);
+    put_u32_le(buf, 140, bt_snap.open_count);
+    put_u32_le(buf, 144, bt_snap.close_count);
+    put_u32_le(buf, 148, bt_snap.can_send_count);
+    put_u32_le(buf, 152, bt_snap.report_build_count);
+    put_u32_le(buf, 156, bt_snap.report_send_count);
+    put_u32_le(buf, 160, bt_snap.send_request_count);
+    put_u32_le(buf, 164, bt_snap.last_event_ms);
+    put_u32_le(buf, 168, bt_snap.last_send_ms);
     uint16_t crc = crc16_ccitt_false(buf, PICO_STATE_WIRE_SIZE - 2);
     buf[PICO_STATE_WIRE_SIZE - 2] = (uint8_t)(crc & 0xFFu);
     buf[PICO_STATE_WIRE_SIZE - 1] = (uint8_t)((crc >> 8) & 0xFFu);

@@ -6,41 +6,43 @@
 #include "dinput_report.h"
 
 static const uint8_t bt_hid_gamepad_descriptor[] = {
-    0x05, 0x01,       // Usage Page (Generic Desktop)
-    0x09, 0x05,       // Usage (Game Pad)
-    0xA1, 0x01,       // Collection (Application)
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x05, // Usage (Game Pad)
+    0xA1, 0x01, // Collection (Application)
     0x85, BT_HID_REPORT_ID,
-    0x05, 0x09,       // Usage Page (Button)
-    0x19, 0x01,       // Usage Minimum (Button 1)
+    0x05, 0x09, // Usage Page (Button)
+    0x19, 0x01, // Usage Minimum (Button 1)
     0x29, BT_HID_BUTTON_COUNT,
-    0x15, 0x00,       // Logical Minimum (0)
-    0x25, 0x01,       // Logical Maximum (1)
-    0x75, 0x01,       // Report Size (1)
+    0x15, 0x00, // Logical Minimum (0)
+    0x25, 0x01, // Logical Maximum (1)
+    0x75, 0x01, // Report Size (1)
     0x95, BT_HID_BUTTON_COUNT,
-    0x81, 0x02,       // Input (Data, Variable, Absolute)
-    0x05, 0x01,       // Usage Page (Generic Desktop)
-    0x09, 0x39,       // Usage (Hat switch)
-    0x15, 0x00,       // Logical Minimum (0)
-    0x25, 0x07,       // Logical Maximum (7)
-    0x35, 0x00,       // Physical Minimum (0)
-    0x46, 0x3B, 0x01, // Physical Maximum (315)
-    0x65, 0x14,       // Unit (English Rotation, degrees)
-    0x75, 0x04,       // Report Size (4)
-    0x95, 0x01,       // Report Count (1)
-    0x81, 0x42,       // Input (Data, Variable, Absolute, Null State)
-    0x65, 0x00,       // Unit (None)
-    0x09, 0x30,       // Usage (X)
-    0x09, 0x31,       // Usage (Y)
-    0x09, 0x33,       // Usage (Rx)
-    0x09, 0x34,       // Usage (Ry)
-    0x09, 0x32,       // Usage (Z)
-    0x09, 0x35,       // Usage (Rz)
-    0x15, 0x00,       // Logical Minimum (0)
-    0x26, 0xFF, 0x00, // Logical Maximum (255)
-    0x75, 0x08,       // Report Size (8)
-    0x95, 0x06,       // Report Count (6)
-    0x81, 0x02,       // Input (Data, Variable, Absolute)
-    0xC0,             // End Collection
+    0x81, 0x02, // Input (Data, Variable, Absolute)
+    0x05, 0x01, // Usage Page (Generic Desktop)
+    0x09, 0x39, // Usage (Hat switch)
+    0x15, 0x00, // Logical Minimum (0)
+    0x25, 0x07, // Logical Maximum (7)
+    0x35, 0x00, // Physical Minimum (0)
+    0x46, 0x3B,
+    0x01,       // Physical Maximum (315)
+    0x65, 0x14, // Unit (English Rotation, degrees)
+    0x75, 0x04, // Report Size (4)
+    0x95, 0x01, // Report Count (1)
+    0x81, 0x42, // Input (Data, Variable, Absolute, Null State)
+    0x65, 0x00, // Unit (None)
+    0x09, 0x30, // Usage (X)
+    0x09, 0x31, // Usage (Y)
+    0x09, 0x33, // Usage (Rx)
+    0x09, 0x34, // Usage (Ry)
+    0x09, 0x32, // Usage (Z)
+    0x09, 0x35, // Usage (Rz)
+    0x15, 0x00, // Logical Minimum (0)
+    0x26, 0xFF,
+    0x00,       // Logical Maximum (255)
+    0x75, 0x08, // Report Size (8)
+    0x95, 0x06, // Report Count (6)
+    0x81, 0x02, // Input (Data, Variable, Absolute)
+    0xC0,       // End Collection
 };
 
 static uint8_t centered_axis_x_to_hid(int16_t value) {
@@ -150,12 +152,12 @@ const uint8_t *bt_hid_descriptor(bt_hid_target_t target, uint16_t *len) {
 const char *bt_hid_target_label(bt_hid_target_t target) {
     switch (target) {
     case BT_HID_TARGET_XBOX:
-        return "bluetooth-xbox-hid";
+        return "bluetooth-xbox";
     case BT_HID_TARGET_PLAYSTATION:
-        return "bluetooth-playstation-hid";
+        return "bluetooth-playstation";
     case BT_HID_TARGET_GENERIC:
     default:
-        return "bluetooth-hid";
+        return "bluetooth";
     }
 }
 

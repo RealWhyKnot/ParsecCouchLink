@@ -11,7 +11,8 @@ This is the path for a new Pico user starting from a release zip.
   - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- equivalent and fully supported.
 - Micro-USB data cable. Charge-only cables will fail.
 - 2.4 GHz Wi-Fi name and password. Both Pico variants use the CYW43439 radio, which is 2.4 GHz only -- 5 GHz-only networks won't work.
-- USB4MAPLE or another USB-to-console adapter that accepts Xbox 360, Xbox One, PS3, PS4, or keyboard USB devices.
+- USB-output modes: USB4MAPLE or another USB-to-console adapter that accepts Xbox 360, Xbox One, PS3, PS4, or keyboard USB devices.
+- Bluetooth mode: a Bluetooth receiver or adapter that accepts a Classic Bluetooth HID gamepad, with the Pico kept plugged into the bridge PC over USB.
 
 ## Install
 
@@ -49,7 +50,7 @@ Setup is complete. From now on, couchlink runs at logon.
 Confirmed Pico IP: 192.168.50.4
 ```
 
-Then plug the Pico into the USB-to-console adapter. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose the Pico's streaming command on the **Basic** tab.
+For USB-output modes, plug the Pico into the USB-to-console adapter. For Bluetooth mode, leave the Pico plugged into the bridge PC over USB so CouchLink can feed it controller state with low latency. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose the Pico's streaming command on the **Basic** tab.
 
 If automatic Wi-Fi discovery fails later, choose **Enter Pico IP manually** in the guided menu and enter the confirmed IP from setup.
 
@@ -70,7 +71,7 @@ The guided menu can:
 
 - Start streaming for one selected Pico.
 - Choose which Windows controller feeds one selected Pico.
-- Choose Auto, Xbox, DInput / PlayStation, Maple, or Keyboard input mode before guided streaming.
+- Choose Auto, Xbox, DInput / PlayStation, Bluetooth, Maple, or Keyboard input mode before guided streaming.
 - Show each Pico state: Wi-Fi ready, USB debug, BOOTSEL, or not seen.
 - Save a detected Pico or remove a missing saved Pico.
 - Recover one Pico left in USB debug mode when it already has saved Wi-Fi.
@@ -99,6 +100,7 @@ Useful direct commands:
 .\couchlink.exe recover # auto-check Wi-Fi, setup USB, and BOOTSEL before streaming
 .\couchlink.exe run --all  # route Controller 1, 2, ... to every detected Pico
 .\couchlink.exe run --route 1=07D37EB6  # route Controller 1 to a specific Pico UID
+.\couchlink.exe bluetooth  # switch one Pico to Bluetooth mode and stream over PC USB
 .\couchlink.exe test usb --all  # check whether the USB adapter is polling the Pico
 .\couchlink.exe debug --status  # show whether the Pico is on Wi-Fi, USB debug, or BOOTSEL
 .\couchlink.exe debug --to-wifi --port COM3  # switch one USB debug Pico back to Wi-Fi

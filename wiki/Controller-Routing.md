@@ -6,7 +6,7 @@ Run:
 .\couchlink.exe
 ```
 
-On the **Basic** tab, choose the Pico you want to use. Pick **Start streaming with Controller 1** for the normal one-controller path, or **Choose controller and stream** to select Controller 1, 2, 3, or 4 for that Pico. Before streaming starts, choose the Pico input mode: Auto, Xbox, DInput / PlayStation, Maple, or Keyboard. Xbox then lets you choose Auto Xbox, Xbox 360, or Xbox One; DInput / PlayStation lets you choose Auto DInput, PS3, or PS4.
+On the **Basic** tab, choose the Pico you want to use. Pick **Start streaming with Controller 1** for the normal one-controller path, or **Choose controller and stream** to select Controller 1, 2, 3, or 4 for that Pico. Before streaming starts, choose the Pico input mode: Auto, Xbox, DInput / PlayStation, Bluetooth, Maple, or Keyboard. Xbox then lets you choose Auto Xbox, Xbox 360, or Xbox One; DInput / PlayStation lets you choose Auto DInput, PS3, or PS4.
 
 ## Common Layouts
 
@@ -171,6 +171,25 @@ Switch back to XInput mode with:
 
 Add `--no-stream` to change the persona without starting a stream. PS3 is tried before PS4 because USB4MAPLE field reports more consistently recommend PS3 mode for generic DInput-style compatibility. Rumble is not implemented for these personas.
 
+## Bluetooth Mode
+
+Bluetooth mode is for a wireless receiver or adapter that accepts a Classic Bluetooth HID gamepad. Unlike the USB-output modes, the Pico stays plugged into the bridge PC. CouchLink sends each controller frame to the Pico over USB CDC, and the Pico sends Bluetooth HID reports to the paired receiver.
+
+Switch a Pico to generic Bluetooth mode and start streaming:
+
+```powershell
+.\couchlink.exe bluetooth
+```
+
+Target-specific button ordering is also available:
+
+```powershell
+.\couchlink.exe bluetooth-xbox
+.\couchlink.exe bluetooth-playstation
+```
+
+The stream will not start unless the selected Bluetooth-mode Pico is also visible as the CouchLink USB diagnostic device on the PC. This avoids the extra Wi-Fi hop for live controller input.
+
 ### If the player's typing isn't reaching the game
 
 A few Parsec-side settings gate guest keyboard input:
@@ -216,6 +235,8 @@ Use this to confirm:
 - The Pico is replying.
 - Button and stick values change when the player presses input.
 
+Bluetooth mode shows USB output counters instead of Pico UDP replies because live input is carried over the plugged-in USB cable.
+
 ## Direct Commands
 
 The menu is the normal path. These commands are for scripts and launchers:
@@ -235,4 +256,4 @@ IP manually** in the guided menu.
 
 ## Bench Testing Note
 
-In normal use, the Pico USB side plugs into the console adapter. If you plug the Pico into the same Windows PC for testing, Windows may see the Pico itself as an Xbox controller. Do not pick that Pico output as the source controller; pick the Parsec virtual controller or a local test controller instead.
+In USB-output modes, the Pico USB side plugs into the console adapter. If you plug that output into the same Windows PC for testing, Windows may see the Pico itself as an Xbox controller. Do not pick that Pico output as the source controller; pick the Parsec virtual controller or a local test controller instead. Bluetooth mode is the exception: the Pico intentionally stays plugged into the bridge PC for USB CDC input.

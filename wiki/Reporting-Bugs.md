@@ -1,6 +1,6 @@
 # Reporting bugs
 
-If something didn't work, the fastest way to get it fixed is to attach a bundle to the issue. The bundle is one command and it captures everything -- logs, doctor output, firmware state, USB adapter counters, and recent Windows USB events -- in a single ZIP with no manual log-hunting required.
+If something didn't work, the fastest way to get it fixed is to attach a bundle to the issue. The bundle is one command and it captures everything -- logs, doctor output, firmware state, USB adapter counters, Bluetooth mode state, and recent Windows USB events -- in a single ZIP with no manual log-hunting required.
 
 ## Make a bundle
 
@@ -21,6 +21,7 @@ The ZIP contains:
 - Crash files, if any
 - `pico-diag.txt` -- firmware diagnostics, if the Pico is reachable by USB setup mode or run-mode Wi-Fi
 - `usb-diag.txt` -- live Pico USB counters for the active input mode, if the Pico is reachable on Wi-Fi
+- `bluetooth-report.txt` / `bluetooth-report.json` -- Bluetooth stack, pairing, send counters, and PC USB CDC input state for Bluetooth-mode Picos
 - `usb-devices.txt` -- Windows USB device snapshot
 - `usb-events.txt` -- recent Windows USB event-log entries
 
@@ -35,6 +36,7 @@ The bundle does NOT contain your Wi-Fi password or SSID.
 - Crash files (if present)
 - `pico-diag.txt` (if firmware diagnostics are reachable)
 - `usb-diag.txt` (if run-mode USB counters are reachable)
+- `bluetooth-report.txt` and `bluetooth-report.json` (for live Bluetooth-mode Picos)
 - `usb-devices.txt` and `usb-events.txt`
 
 ## Where to send it

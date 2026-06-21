@@ -6,7 +6,10 @@
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
 
+#include "boot_mode.h"
+#include "boot_mode_policy.h"
 #include "flash_creds.h"
+#include "gamepad_state.h"
 #include "diag_log.h"
 #include "version.h"
 
@@ -77,6 +80,9 @@ static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
     payload[3] = PICO_BRIDGE_FW_WIRE_PATCH;
     payload[4] = PICO_BRIDGE_BOARD_TYPE;
     payload[5] = (have ? CDC_HELLO_FLAG_CREDS_PRESENT : 0) | CDC_HELLO_FLAG_RUN_MODE_OK;
+    if (boot_mode_current() == BOOT_MODE_RUN) {
+        payload[5] |= CDC_HELLO_FLAG_RUN_MODE_ACTIVE;
+    }
     payload[6] = (uint8_t)(PICO_BRIDGE_FW_YEAR & 0xFFu);
     payload[7] = (uint8_t)((PICO_BRIDGE_FW_YEAR >> 8) & 0xFFu);
     payload[8] = PICO_BRIDGE_FW_MONTH;
@@ -148,6 +154,34 @@ static size_t handle_reboot(uint8_t seq, uint8_t *reply, size_t cap) {
 static size_t handle_reboot_to_bootsel(uint8_t seq, uint8_t *reply, size_t cap) {
     bootsel_pending = true;
     return cdc_encode(CDC_RSP_REBOOT_TO_BOOTSEL, seq, NULL, 0, reply, cap);
+}
+
+static void apply_bt_state_body(const uint8_t *payload) {
+    const uint8_t flags = payload[0];
+    const uint8_t *body = &payload[1];
+    g_gamepad_state.buttons = (uint16_t)body[0] | ((uint16_t)body[1] << 8);
+    g_gamepad_state.left_trigger = body[2];
+    g_gamepad_state.right_trigger = body[3];
+    g_gamepad_state.left_x = (int16_t)((uint16_t)body[4] | ((uint16_t)body[5] << 8));
+    g_gamepad_state.left_y = (int16_t)((uint16_t)body[6] | ((uint16_t)body[7] << 8));
+    g_gamepad_state.right_x = (int16_t)((uint16_t)body[8] | ((uint16_t)body[9] << 8));
+    g_gamepad_state.right_y = (int16_t)((uint16_t)body[10] | ((uint16_t)body[11] << 8));
+    g_parsec_connected = (flags & 0x01u) ? 1 : 0;
+    g_last_packet_ms = to_ms_since_boot(get_absolute_time());
+}
+
+static size_t handle_bt_state(const cdc_frame_view_t *req, uint8_t *reply, size_t cap) {
+    if (boot_mode_current() != BOOT_MODE_RUN ||
+        !boot_mode_persona_uses_bluetooth(boot_mode_run_persona())) {
+        uint8_t err[2] = {CDC_ERR_INTERNAL, 1};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    if (req->payload_len != 13) {
+        uint8_t err[2] = {CDC_ERR_BAD_LENGTH, (uint8_t)req->payload_len};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    apply_bt_state_body(req->payload);
+    return 0;
 }
 
 static size_t handle_unique_id(uint8_t seq, uint8_t *reply, size_t cap) {
@@ -248,6 +282,9 @@ size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_ca
         return handle_log_buffer(req->seq, reply, reply_cap);
     case CDC_CMD_REBOOT_TO_BOOTSEL:
         return handle_reboot_to_bootsel(req->seq, reply, reply_cap);
+    case CDC_CMD_BT_STATE:
+    case CDC_CMD_BT_HEARTBEAT:
+        return handle_bt_state(req, reply, reply_cap);
     default: {
         uint8_t err[2] = {CDC_ERR_UNKNOWN_COMMAND, req->command};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, reply_cap);
@@ -307,8 +344,11 @@ void cdc_handlers_poll(void) {
             break;
 
         if (st == CDC_DECODE_OK) {
-            diag_log_printf("cdc: dispatching cmd=0x%02X seq=%u payload=%u bytes",
-                            (unsigned)view.command, (unsigned)view.seq, (unsigned)view.payload_len);
+            if (view.command != CDC_CMD_BT_STATE && view.command != CDC_CMD_BT_HEARTBEAT) {
+                diag_log_printf("cdc: dispatching cmd=0x%02X seq=%u payload=%u bytes",
+                                (unsigned)view.command, (unsigned)view.seq,
+                                (unsigned)view.payload_len);
+            }
             size_t n = cdc_dispatch(&view, tx_frame, sizeof(tx_frame));
             if (n > 0)
                 write_cdc_frame(tx_frame, n);

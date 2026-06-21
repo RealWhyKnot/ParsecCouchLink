@@ -117,9 +117,15 @@ pub const USB_DIAG_IN_BLOCKED_NOT_READY: u8 = 2;
 pub const USB_DIAG_IN_BLOCKED_SHORT_WRITE: u8 = 3;
 
 pub const PICO_STATE_V1_WIRE_SIZE: usize = 104;
-pub const PICO_STATE_WIRE_SIZE: usize = 128;
+pub const PICO_STATE_V2_WIRE_SIZE: usize = 128;
+pub const PICO_STATE_WIRE_SIZE: usize = 176;
 pub const PICO_STATE_V1_VERSION: u8 = 1;
-pub const PICO_STATE_VERSION: u8 = 2;
+pub const PICO_STATE_V2_VERSION: u8 = 2;
+pub const PICO_STATE_VERSION: u8 = 3;
+
+pub const BT_HID_STATUS_STARTED: u8 = 1 << 0;
+pub const BT_HID_STATUS_CONNECTED: u8 = 1 << 1;
+pub const BT_HID_STATUS_SEND_REQUESTED: u8 = 1 << 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UsbConfigurationState {
@@ -271,7 +277,7 @@ impl Persona {
             Persona::XboxOne => "xboxone",
             Persona::Debug => "debug",
             Persona::GenericHid => "generic-hid",
-            Persona::BluetoothHid => "bluetooth-hid",
+            Persona::BluetoothHid => "bluetooth",
             Persona::BluetoothXbox => "bluetooth-xbox",
             Persona::BluetoothPlaystation => "bluetooth-playstation",
         }
@@ -287,10 +293,17 @@ impl Persona {
             Persona::XboxOne => "Xbox One",
             Persona::Debug => "Debug packet capture",
             Persona::GenericHid => "Generic HID gamepad",
-            Persona::BluetoothHid => "Bluetooth HID gamepad",
-            Persona::BluetoothXbox => "Bluetooth HID Xbox button order",
-            Persona::BluetoothPlaystation => "Bluetooth HID PlayStation button order",
+            Persona::BluetoothHid => "Bluetooth",
+            Persona::BluetoothXbox => "Bluetooth Xbox button order",
+            Persona::BluetoothPlaystation => "Bluetooth PlayStation button order",
         }
+    }
+
+    pub fn is_bluetooth(self) -> bool {
+        matches!(
+            self,
+            Persona::BluetoothHid | Persona::BluetoothXbox | Persona::BluetoothPlaystation
+        )
     }
 }
 
@@ -1000,6 +1013,21 @@ pub struct PicoStateDiag {
     pub usb_flags: u8,
     pub activity_flags: u8,
     pub malformed_udp_count: u32,
+    pub bt_flags: u8,
+    pub bt_target: u8,
+    pub bt_last_status: u8,
+    pub bt_report_len: u8,
+    pub bt_cid: u16,
+    pub bt_init_count: u32,
+    pub bt_ready_count: u32,
+    pub bt_open_count: u32,
+    pub bt_close_count: u32,
+    pub bt_can_send_count: u32,
+    pub bt_report_build_count: u32,
+    pub bt_report_send_count: u32,
+    pub bt_send_request_count: u32,
+    pub bt_last_event_ms: u32,
+    pub bt_last_send_ms: u32,
 }
 
 impl PicoStateDiag {
@@ -1047,6 +1075,21 @@ impl PicoStateDiag {
         buf[120] = self.last_in_blocked_reason;
         put_u16_le(&mut buf, 122, self.last_in_blocked_want);
         put_u16_le(&mut buf, 124, self.last_in_blocked_got);
+        buf[126] = self.bt_flags;
+        buf[127] = self.bt_target;
+        buf[128] = self.bt_last_status;
+        buf[129] = self.bt_report_len;
+        put_u16_le(&mut buf, 130, self.bt_cid);
+        put_u32_le(&mut buf, 132, self.bt_init_count);
+        put_u32_le(&mut buf, 136, self.bt_ready_count);
+        put_u32_le(&mut buf, 140, self.bt_open_count);
+        put_u32_le(&mut buf, 144, self.bt_close_count);
+        put_u32_le(&mut buf, 148, self.bt_can_send_count);
+        put_u32_le(&mut buf, 152, self.bt_report_build_count);
+        put_u32_le(&mut buf, 156, self.bt_report_send_count);
+        put_u32_le(&mut buf, 160, self.bt_send_request_count);
+        put_u32_le(&mut buf, 164, self.bt_last_event_ms);
+        put_u32_le(&mut buf, 168, self.bt_last_send_ms);
         let crc =
             crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..PICO_STATE_WIRE_SIZE - 2]);
         buf[PICO_STATE_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
@@ -1055,7 +1098,10 @@ impl PicoStateDiag {
     }
 
     pub fn decode(buf: &[u8]) -> Result<Self, PicoStateDecodeError> {
-        if buf.len() != PICO_STATE_WIRE_SIZE && buf.len() != PICO_STATE_V1_WIRE_SIZE {
+        if buf.len() != PICO_STATE_WIRE_SIZE
+            && buf.len() != PICO_STATE_V2_WIRE_SIZE
+            && buf.len() != PICO_STATE_V1_WIRE_SIZE
+        {
             return Err(PicoStateDecodeError::WrongSize {
                 got: buf.len(),
                 want: PICO_STATE_WIRE_SIZE,
@@ -1080,6 +1126,7 @@ impl PicoStateDiag {
         }
         let version = buf[4];
         if (buf.len() == PICO_STATE_V1_WIRE_SIZE && version != PICO_STATE_V1_VERSION)
+            || (buf.len() == PICO_STATE_V2_WIRE_SIZE && version != PICO_STATE_V2_VERSION)
             || (buf.len() == PICO_STATE_WIRE_SIZE && version != PICO_STATE_VERSION)
         {
             return Err(PicoStateDecodeError::UnsupportedVersion(buf[4]));
@@ -1106,22 +1153,22 @@ impl PicoStateDiag {
             xinput_in_queued_count: read_u32_le(buf, 56),
             xinput_in_sent_count: read_u32_le(buf, 60),
             xinput_out_count: read_u32_le(buf, 64),
-            xinput_in_blocked_not_mounted_count: if version >= PICO_STATE_VERSION {
+            xinput_in_blocked_not_mounted_count: if version >= PICO_STATE_V2_VERSION {
                 read_u32_le(buf, 100)
             } else {
                 0
             },
-            xinput_in_blocked_not_ready_count: if version >= PICO_STATE_VERSION {
+            xinput_in_blocked_not_ready_count: if version >= PICO_STATE_V2_VERSION {
                 read_u32_le(buf, 104)
             } else {
                 0
             },
-            xinput_in_blocked_short_write_count: if version >= PICO_STATE_VERSION {
+            xinput_in_blocked_short_write_count: if version >= PICO_STATE_V2_VERSION {
                 read_u32_le(buf, 108)
             } else {
                 0
             },
-            xinput_in_idle_suppressed_count: if version >= PICO_STATE_VERSION {
+            xinput_in_idle_suppressed_count: if version >= PICO_STATE_V2_VERSION {
                 read_u32_le(buf, 112)
             } else {
                 0
@@ -1131,22 +1178,22 @@ impl PicoStateDiag {
             last_in_queued_ms: read_u32_le(buf, 76),
             last_in_sent_ms: read_u32_le(buf, 80),
             last_out_ms: read_u32_le(buf, 84),
-            last_in_blocked_ms: if version >= PICO_STATE_VERSION {
+            last_in_blocked_ms: if version >= PICO_STATE_V2_VERSION {
                 read_u32_le(buf, 116)
             } else {
                 0
             },
-            last_in_blocked_reason: if version >= PICO_STATE_VERSION {
+            last_in_blocked_reason: if version >= PICO_STATE_V2_VERSION {
                 buf[120]
             } else {
                 0
             },
-            last_in_blocked_want: if version >= PICO_STATE_VERSION {
+            last_in_blocked_want: if version >= PICO_STATE_V2_VERSION {
                 read_u16_le(buf, 122)
             } else {
                 0
             },
-            last_in_blocked_got: if version >= PICO_STATE_VERSION {
+            last_in_blocked_got: if version >= PICO_STATE_V2_VERSION {
                 read_u16_le(buf, 124)
             } else {
                 0
@@ -1157,6 +1204,81 @@ impl PicoStateDiag {
             usb_flags: buf[91],
             activity_flags: buf[92],
             malformed_udp_count: read_u32_le(buf, 96),
+            bt_flags: if version >= PICO_STATE_VERSION {
+                buf[126]
+            } else {
+                0
+            },
+            bt_target: if version >= PICO_STATE_VERSION {
+                buf[127]
+            } else {
+                0
+            },
+            bt_last_status: if version >= PICO_STATE_VERSION {
+                buf[128]
+            } else {
+                0
+            },
+            bt_report_len: if version >= PICO_STATE_VERSION {
+                buf[129]
+            } else {
+                0
+            },
+            bt_cid: if version >= PICO_STATE_VERSION {
+                read_u16_le(buf, 130)
+            } else {
+                0
+            },
+            bt_init_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 132)
+            } else {
+                0
+            },
+            bt_ready_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 136)
+            } else {
+                0
+            },
+            bt_open_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 140)
+            } else {
+                0
+            },
+            bt_close_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 144)
+            } else {
+                0
+            },
+            bt_can_send_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 148)
+            } else {
+                0
+            },
+            bt_report_build_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 152)
+            } else {
+                0
+            },
+            bt_report_send_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 156)
+            } else {
+                0
+            },
+            bt_send_request_count: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 160)
+            } else {
+                0
+            },
+            bt_last_event_ms: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 164)
+            } else {
+                0
+            },
+            bt_last_send_ms: if version >= PICO_STATE_VERSION {
+                read_u32_le(buf, 168)
+            } else {
+                0
+            },
         })
     }
 
@@ -1175,6 +1297,10 @@ impl PicoStateDiag {
             10 => Some(Persona::BluetoothPlaystation),
             _ => None,
         }
+    }
+
+    pub fn bt_target_label(&self) -> &'static str {
+        bt_hid_target_label(self.bt_target)
     }
 
     pub fn to_json_map(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
@@ -1264,7 +1390,82 @@ impl PicoStateDiag {
             "last_in_blocked_got".into(),
             serde_json::json!(self.last_in_blocked_got),
         );
+        out.insert("bt_flags".into(), serde_json::json!(self.bt_flags));
+        out.insert("bt_target".into(), serde_json::json!(self.bt_target));
+        out.insert(
+            "bt_target_label".into(),
+            serde_json::json!(bt_hid_target_label(self.bt_target)),
+        );
+        out.insert(
+            "bt_started".into(),
+            serde_json::json!(self.bt_flags & BT_HID_STATUS_STARTED != 0),
+        );
+        out.insert(
+            "bt_connected".into(),
+            serde_json::json!(self.bt_flags & BT_HID_STATUS_CONNECTED != 0),
+        );
+        out.insert(
+            "bt_send_requested".into(),
+            serde_json::json!(self.bt_flags & BT_HID_STATUS_SEND_REQUESTED != 0),
+        );
+        out.insert(
+            "bt_last_status".into(),
+            serde_json::json!(self.bt_last_status),
+        );
+        out.insert(
+            "bt_report_len".into(),
+            serde_json::json!(self.bt_report_len),
+        );
+        out.insert("bt_cid".into(), serde_json::json!(self.bt_cid));
+        out.insert(
+            "bt_init_count".into(),
+            serde_json::json!(self.bt_init_count),
+        );
+        out.insert(
+            "bt_ready_count".into(),
+            serde_json::json!(self.bt_ready_count),
+        );
+        out.insert(
+            "bt_open_count".into(),
+            serde_json::json!(self.bt_open_count),
+        );
+        out.insert(
+            "bt_close_count".into(),
+            serde_json::json!(self.bt_close_count),
+        );
+        out.insert(
+            "bt_can_send_count".into(),
+            serde_json::json!(self.bt_can_send_count),
+        );
+        out.insert(
+            "bt_report_build_count".into(),
+            serde_json::json!(self.bt_report_build_count),
+        );
+        out.insert(
+            "bt_report_send_count".into(),
+            serde_json::json!(self.bt_report_send_count),
+        );
+        out.insert(
+            "bt_send_request_count".into(),
+            serde_json::json!(self.bt_send_request_count),
+        );
+        out.insert(
+            "bt_last_event_ms".into(),
+            serde_json::json!(self.bt_last_event_ms),
+        );
+        out.insert(
+            "bt_last_send_ms".into(),
+            serde_json::json!(self.bt_last_send_ms),
+        );
         out
+    }
+}
+
+pub fn bt_hid_target_label(target: u8) -> &'static str {
+    match target {
+        1 => "bluetooth-xbox",
+        2 => "bluetooth-playstation",
+        _ => "bluetooth",
     }
 }
 
@@ -1764,6 +1965,10 @@ mod tests {
         assert_eq!(Persona::BluetoothHid.flash_byte(), 8);
         assert_eq!(Persona::BluetoothXbox.flash_byte(), 9);
         assert_eq!(Persona::BluetoothPlaystation.flash_byte(), 10);
+        assert!(Persona::BluetoothHid.is_bluetooth());
+        assert!(Persona::BluetoothXbox.is_bluetooth());
+        assert!(Persona::BluetoothPlaystation.is_bluetooth());
+        assert!(!Persona::GenericHid.is_bluetooth());
     }
 
     #[test]
@@ -2152,6 +2357,21 @@ mod tests {
             usb_flags: USB_DIAG_FLAG_MOUNTED,
             activity_flags: USB_DIAG_ACTIVITY_SENT | USB_DIAG_ACTIVITY_PEER,
             malformed_udp_count: 42,
+            bt_flags: BT_HID_STATUS_STARTED | BT_HID_STATUS_CONNECTED,
+            bt_target: 2,
+            bt_last_status: 0,
+            bt_report_len: 10,
+            bt_cid: 0x1234,
+            bt_init_count: 1,
+            bt_ready_count: 2,
+            bt_open_count: 3,
+            bt_close_count: 4,
+            bt_can_send_count: 5,
+            bt_report_build_count: 6,
+            bt_report_send_count: 7,
+            bt_send_request_count: 8,
+            bt_last_event_ms: 999,
+            bt_last_send_ms: 1001,
         };
 
         let buf = diag.encode();
@@ -2175,6 +2395,11 @@ mod tests {
         assert_eq!(
             json["last_in_blocked_reason"],
             serde_json::json!("short_write")
+        );
+        assert_eq!(json["bt_connected"], serde_json::json!(true));
+        assert_eq!(
+            json["bt_target_label"],
+            serde_json::json!("bluetooth-playstation")
         );
     }
 
@@ -2221,6 +2446,21 @@ mod tests {
             usb_flags: 0,
             activity_flags: 0,
             malformed_udp_count: 0,
+            bt_flags: 0,
+            bt_target: 0,
+            bt_last_status: 0,
+            bt_report_len: 0,
+            bt_cid: 0,
+            bt_init_count: 0,
+            bt_ready_count: 0,
+            bt_open_count: 0,
+            bt_close_count: 0,
+            bt_can_send_count: 0,
+            bt_report_build_count: 0,
+            bt_report_send_count: 0,
+            bt_send_request_count: 0,
+            bt_last_event_ms: 0,
+            bt_last_send_ms: 0,
         }
         .encode();
         buf[20] ^= 0xFF;
@@ -2249,6 +2489,34 @@ mod tests {
         assert_eq!(back.xinput_in_sent_count, 9);
         assert_eq!(back.xinput_in_blocked_not_ready_count, 0);
         assert_eq!(back.last_in_blocked_reason, USB_DIAG_IN_BLOCKED_NONE);
+        assert_eq!(back.bt_init_count, 0);
+        assert_eq!(back.bt_target_label(), "bluetooth");
+    }
+
+    #[test]
+    fn pico_state_v2_decode_defaults_bluetooth_fields() {
+        let mut buf = [0u8; PICO_STATE_V2_WIRE_SIZE];
+        buf[0] = MAGIC;
+        buf[1] = TYPE_PICO_STATE;
+        buf[2] = 6;
+        buf[4] = PICO_STATE_V2_VERSION;
+        buf[5] = PROTO_VERSION;
+        put_u32_le(&mut buf, 100, 12);
+        put_u32_le(&mut buf, 116, 44);
+        buf[120] = USB_DIAG_IN_BLOCKED_NOT_READY;
+        let crc = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740)
+            .checksum(&buf[..PICO_STATE_V2_WIRE_SIZE - 2]);
+        buf[PICO_STATE_V2_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
+        buf[PICO_STATE_V2_WIRE_SIZE - 1] = (crc >> 8) as u8;
+
+        let back = PicoStateDiag::decode(&buf).unwrap();
+        assert_eq!(back.version, PICO_STATE_V2_VERSION);
+        assert_eq!(back.xinput_in_blocked_not_mounted_count, 12);
+        assert_eq!(back.last_in_blocked_ms, 44);
+        assert_eq!(back.last_in_blocked_reason, USB_DIAG_IN_BLOCKED_NOT_READY);
+        assert_eq!(back.bt_flags, 0);
+        assert_eq!(back.bt_report_send_count, 0);
+        assert_eq!(back.bt_target_label(), "bluetooth");
     }
 
     fn make_chunk(idx: u8, flags: u8, total: u8, lost: u32, payload: &[u8]) -> LogChunk {
