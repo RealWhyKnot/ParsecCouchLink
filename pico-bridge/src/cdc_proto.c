@@ -59,9 +59,29 @@ size_t cdc_build_bt_status_payload(const cdc_bt_status_view_t *status, uint8_t *
     put_u32_le(&out[36], status->send_request_count);
     put_u32_le(&out[40], status->last_event_ms);
     put_u32_le(&out[44], status->last_send_ms);
-    out[48] = (uint8_t)name_len;
+    put_u32_le(&out[48], status->get_report_count);
+    put_u32_le(&out[52], status->get_report_success_count);
+    put_u32_le(&out[56], status->get_report_unsupported_count);
+    put_u32_le(&out[60], status->set_report_count);
+    put_u32_le(&out[64], status->set_report_accepted_count);
+    put_u32_le(&out[68], status->set_report_unsupported_count);
+    put_u32_le(&out[72], status->out_report_count);
+    put_u32_le(&out[76], status->out_report_accepted_count);
+    put_u32_le(&out[80], status->out_report_unsupported_count);
+    out[84] = status->last_get_report_id;
+    out[85] = status->last_get_report_type;
+    out[86] = status->last_set_report_id;
+    out[87] = status->last_set_report_type;
+    out[88] = status->last_out_report_id;
+    out[89] = status->last_out_report_type;
+    out[90] = 0;
+    out[91] = 0;
+    put_u16_le(&out[92], status->last_get_report_len);
+    put_u16_le(&out[94], status->last_set_report_len);
+    put_u16_le(&out[96], status->last_out_report_len);
+    out[98] = (uint8_t)name_len;
     if (name_len)
-        memcpy(&out[49], status->local_name, name_len);
+        memcpy(&out[99], status->local_name, name_len);
     return CDC_BT_STATUS_FIXED_LEN + name_len;
 }
 

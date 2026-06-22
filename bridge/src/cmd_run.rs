@@ -1516,6 +1516,15 @@ fn bluetooth_expected_name(persona: Persona) -> &'static str {
     }
 }
 
+fn hid_report_type_name(report_type: u8) -> &'static str {
+    match report_type {
+        1 => "input",
+        2 => "output",
+        3 => "feature",
+        _ => "unknown",
+    }
+}
+
 fn format_bluetooth_peer_state(
     status: Option<&cdc::BtStatus>,
     report_delta: Option<u32>,
@@ -1559,6 +1568,60 @@ fn format_bluetooth_peer_state(
     };
     if status.send_requested() {
         msg.push_str("; send queued");
+    }
+    if status.get_report_count > 0 {
+        msg.push_str(&format!(
+            "; GET_REPORT ok {}/{}",
+            status.get_report_success_count, status.get_report_count
+        ));
+        if status.get_report_unsupported_count > 0 {
+            msg.push_str(&format!(
+                " rejected {}",
+                status.get_report_unsupported_count
+            ));
+        }
+        if status.last_get_report_len > 0 {
+            msg.push_str(&format!(
+                "; last GET {} 0x{:02X} len {}",
+                hid_report_type_name(status.last_get_report_type),
+                status.last_get_report_id,
+                status.last_get_report_len
+            ));
+        }
+    }
+    if status.set_report_count > 0 {
+        msg.push_str(&format!(
+            "; SET_REPORT accepted {}/{}",
+            status.set_report_accepted_count, status.set_report_count
+        ));
+        if status.set_report_unsupported_count > 0 {
+            msg.push_str(&format!(" ignored {}", status.set_report_unsupported_count));
+        }
+        if status.last_set_report_len > 0 {
+            msg.push_str(&format!(
+                "; last SET {} 0x{:02X} len {}",
+                hid_report_type_name(status.last_set_report_type),
+                status.last_set_report_id,
+                status.last_set_report_len
+            ));
+        }
+    }
+    if status.out_report_count > 0 {
+        msg.push_str(&format!(
+            "; interrupt OUT accepted {}/{}",
+            status.out_report_accepted_count, status.out_report_count
+        ));
+        if status.out_report_unsupported_count > 0 {
+            msg.push_str(&format!(" ignored {}", status.out_report_unsupported_count));
+        }
+        if status.last_out_report_len > 0 {
+            msg.push_str(&format!(
+                "; last OUT {} 0x{:02X} len {}",
+                hid_report_type_name(status.last_out_report_type),
+                status.last_out_report_id,
+                status.last_out_report_len
+            ));
+        }
     }
     if status.close_count > 0 {
         msg.push_str(&format!("; disconnects {}", status.close_count));
@@ -2079,10 +2142,25 @@ mod tests {
 
         status.flags = cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED;
         status.report_send_count = 12;
+        status.get_report_count = 2;
+        status.get_report_success_count = 1;
+        status.get_report_unsupported_count = 1;
+        status.last_get_report_type = 3;
+        status.last_get_report_id = 0x02;
+        status.last_get_report_len = 36;
+        status.set_report_count = 1;
+        status.set_report_accepted_count = 1;
+        status.last_set_report_type = 2;
+        status.last_set_report_id = 0x11;
+        status.last_set_report_len = 77;
         let connected = format_bluetooth_peer_state(Some(&status), Some(3), false, None);
         assert!(connected.contains("receiver connected"));
         assert!(connected.contains("HID report len 10"));
         assert!(connected.contains("reports +3 total 12"));
+        assert!(connected.contains("GET_REPORT ok 1/2 rejected 1"));
+        assert!(connected.contains("last GET feature 0x02 len 36"));
+        assert!(connected.contains("SET_REPORT accepted 1/1"));
+        assert!(connected.contains("last SET output 0x11 len 77"));
         assert!(!should_print_bluetooth_pairing_hint(Some(&status)));
     }
 
@@ -2142,6 +2220,24 @@ mod tests {
             send_request_count: report_send_count,
             last_event_ms: 100,
             last_send_ms: if report_send_count > 0 { 120 } else { 0 },
+            get_report_count: 0,
+            get_report_success_count: 0,
+            get_report_unsupported_count: 0,
+            set_report_count: 0,
+            set_report_accepted_count: 0,
+            set_report_unsupported_count: 0,
+            out_report_count: 0,
+            out_report_accepted_count: 0,
+            out_report_unsupported_count: 0,
+            last_get_report_id: 0,
+            last_get_report_type: 0,
+            last_set_report_id: 0,
+            last_set_report_type: 0,
+            last_out_report_id: 0,
+            last_out_report_type: 0,
+            last_get_report_len: 0,
+            last_set_report_len: 0,
+            last_out_report_len: 0,
             local_name: String::new(),
         }
     }

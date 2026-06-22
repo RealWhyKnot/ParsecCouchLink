@@ -102,8 +102,10 @@ pub const HELLO_FLAG_WIFI_JOINED: u8 = 0x02;
 pub const HELLO_FLAG_RUN_MODE_OK: u8 = 0x04;
 pub const HELLO_FLAG_RUN_MODE_ACTIVE: u8 = 0x08;
 
-pub const BT_STATUS_VERSION: u8 = 1;
-pub const BT_STATUS_FIXED_LEN: usize = 49;
+pub const BT_STATUS_VERSION: u8 = 2;
+pub const BT_STATUS_V1_VERSION: u8 = 1;
+pub const BT_STATUS_V1_FIXED_LEN: usize = 49;
+pub const BT_STATUS_FIXED_LEN: usize = 99;
 pub const BT_STATUS_FLAG_STARTED: u8 = 1 << 0;
 pub const BT_STATUS_FLAG_CONNECTED: u8 = 1 << 1;
 pub const BT_STATUS_FLAG_SEND_REQUESTED: u8 = 1 << 2;
@@ -803,6 +805,24 @@ pub struct BtStatus {
     pub send_request_count: u32,
     pub last_event_ms: u32,
     pub last_send_ms: u32,
+    pub get_report_count: u32,
+    pub get_report_success_count: u32,
+    pub get_report_unsupported_count: u32,
+    pub set_report_count: u32,
+    pub set_report_accepted_count: u32,
+    pub set_report_unsupported_count: u32,
+    pub out_report_count: u32,
+    pub out_report_accepted_count: u32,
+    pub out_report_unsupported_count: u32,
+    pub last_get_report_id: u8,
+    pub last_get_report_type: u8,
+    pub last_set_report_id: u8,
+    pub last_set_report_type: u8,
+    pub last_out_report_id: u8,
+    pub last_out_report_type: u8,
+    pub last_get_report_len: u16,
+    pub last_set_report_len: u16,
+    pub last_out_report_len: u16,
     pub local_name: String,
 }
 
@@ -897,24 +917,38 @@ fn read_u32_le(payload: &[u8], offset: usize) -> u32 {
 }
 
 pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
-    if payload.len() < BT_STATUS_FIXED_LEN {
+    if payload.is_empty() {
         bail!("BT_STATUS response truncated ({} bytes)", payload.len());
     }
-    if payload[0] != BT_STATUS_VERSION {
-        bail!(
-            "BT_STATUS version mismatch (got {}, want {})",
+    let version = payload[0];
+    let fixed_len = match version {
+        BT_STATUS_V1_VERSION => BT_STATUS_V1_FIXED_LEN,
+        BT_STATUS_VERSION => BT_STATUS_FIXED_LEN,
+        _ => bail!(
+            "BT_STATUS version mismatch (got {}, want {} or {})",
             payload[0],
+            BT_STATUS_V1_VERSION,
             BT_STATUS_VERSION
-        );
+        ),
+    };
+    if payload.len() < fixed_len {
+        bail!("BT_STATUS response truncated ({} bytes)", payload.len());
     }
-    let name_len = payload[48] as usize;
-    let need = BT_STATUS_FIXED_LEN + name_len;
+    let name_len_offset = if version == BT_STATUS_V1_VERSION {
+        BT_STATUS_V1_FIXED_LEN - 1
+    } else {
+        BT_STATUS_FIXED_LEN - 1
+    };
+    let name_start = fixed_len;
+    let name_len = payload[name_len_offset] as usize;
+    let need = name_start + name_len;
     if payload.len() < need {
         bail!(
             "BT_STATUS local name truncated (need {need} bytes, have {})",
             payload.len()
         );
     }
+    let v2 = version == BT_STATUS_VERSION;
     Ok(BtStatus {
         flags: payload[1],
         target: payload[2],
@@ -931,7 +965,25 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
         send_request_count: read_u32_le(payload, 36),
         last_event_ms: read_u32_le(payload, 40),
         last_send_ms: read_u32_le(payload, 44),
-        local_name: String::from_utf8_lossy(&payload[49..need]).into_owned(),
+        get_report_count: if v2 { read_u32_le(payload, 48) } else { 0 },
+        get_report_success_count: if v2 { read_u32_le(payload, 52) } else { 0 },
+        get_report_unsupported_count: if v2 { read_u32_le(payload, 56) } else { 0 },
+        set_report_count: if v2 { read_u32_le(payload, 60) } else { 0 },
+        set_report_accepted_count: if v2 { read_u32_le(payload, 64) } else { 0 },
+        set_report_unsupported_count: if v2 { read_u32_le(payload, 68) } else { 0 },
+        out_report_count: if v2 { read_u32_le(payload, 72) } else { 0 },
+        out_report_accepted_count: if v2 { read_u32_le(payload, 76) } else { 0 },
+        out_report_unsupported_count: if v2 { read_u32_le(payload, 80) } else { 0 },
+        last_get_report_id: if v2 { payload[84] } else { 0 },
+        last_get_report_type: if v2 { payload[85] } else { 0 },
+        last_set_report_id: if v2 { payload[86] } else { 0 },
+        last_set_report_type: if v2 { payload[87] } else { 0 },
+        last_out_report_id: if v2 { payload[88] } else { 0 },
+        last_out_report_type: if v2 { payload[89] } else { 0 },
+        last_get_report_len: if v2 { read_u16_le(payload, 92) } else { 0 },
+        last_set_report_len: if v2 { read_u16_le(payload, 94) } else { 0 },
+        last_out_report_len: if v2 { read_u16_le(payload, 96) } else { 0 },
+        local_name: String::from_utf8_lossy(&payload[name_start..need]).into_owned(),
     })
 }
 
@@ -1098,8 +1150,26 @@ mod tests {
         payload[36..40].copy_from_slice(&8u32.to_le_bytes());
         payload[40..44].copy_from_slice(&0x11223344u32.to_le_bytes());
         payload[44..48].copy_from_slice(&0x55667788u32.to_le_bytes());
-        payload[48] = name.len() as u8;
-        payload[49..].copy_from_slice(name);
+        payload[48..52].copy_from_slice(&9u32.to_le_bytes());
+        payload[52..56].copy_from_slice(&10u32.to_le_bytes());
+        payload[56..60].copy_from_slice(&11u32.to_le_bytes());
+        payload[60..64].copy_from_slice(&12u32.to_le_bytes());
+        payload[64..68].copy_from_slice(&13u32.to_le_bytes());
+        payload[68..72].copy_from_slice(&14u32.to_le_bytes());
+        payload[72..76].copy_from_slice(&15u32.to_le_bytes());
+        payload[76..80].copy_from_slice(&16u32.to_le_bytes());
+        payload[80..84].copy_from_slice(&17u32.to_le_bytes());
+        payload[84] = 0x02;
+        payload[85] = 3;
+        payload[86] = 0x11;
+        payload[87] = 2;
+        payload[88] = 0x03;
+        payload[89] = 2;
+        payload[92..94].copy_from_slice(&36u16.to_le_bytes());
+        payload[94..96].copy_from_slice(&77u16.to_le_bytes());
+        payload[96..98].copy_from_slice(&8u16.to_le_bytes());
+        payload[98] = name.len() as u8;
+        payload[99..].copy_from_slice(name);
 
         let status = decode_bt_status_payload(&payload).unwrap();
 
@@ -1120,7 +1190,48 @@ mod tests {
         assert_eq!(status.send_request_count, 8);
         assert_eq!(status.last_event_ms, 0x11223344);
         assert_eq!(status.last_send_ms, 0x55667788);
+        assert_eq!(status.get_report_count, 9);
+        assert_eq!(status.get_report_success_count, 10);
+        assert_eq!(status.get_report_unsupported_count, 11);
+        assert_eq!(status.set_report_count, 12);
+        assert_eq!(status.set_report_accepted_count, 13);
+        assert_eq!(status.set_report_unsupported_count, 14);
+        assert_eq!(status.out_report_count, 15);
+        assert_eq!(status.out_report_accepted_count, 16);
+        assert_eq!(status.out_report_unsupported_count, 17);
+        assert_eq!(status.last_get_report_id, 0x02);
+        assert_eq!(status.last_get_report_type, 3);
+        assert_eq!(status.last_set_report_id, 0x11);
+        assert_eq!(status.last_set_report_type, 2);
+        assert_eq!(status.last_out_report_id, 0x03);
+        assert_eq!(status.last_out_report_type, 2);
+        assert_eq!(status.last_get_report_len, 36);
+        assert_eq!(status.last_set_report_len, 77);
+        assert_eq!(status.last_out_report_len, 8);
         assert_eq!(status.local_name, "CouchLink BT HID");
+    }
+
+    #[test]
+    fn bt_status_payload_decodes_v1_wire_shape() {
+        let name = b"Legacy BT";
+        let mut payload = vec![0u8; BT_STATUS_V1_FIXED_LEN + name.len()];
+        payload[0] = BT_STATUS_V1_VERSION;
+        payload[1] = BT_STATUS_FLAG_STARTED;
+        payload[2] = 1;
+        payload[32..36].copy_from_slice(&7u32.to_le_bytes());
+        payload[48] = name.len() as u8;
+        payload[49..].copy_from_slice(name);
+
+        let status = decode_bt_status_payload(&payload).unwrap();
+
+        assert!(status.started());
+        assert!(!status.connected());
+        assert_eq!(status.target, 1);
+        assert_eq!(status.report_send_count, 7);
+        assert_eq!(status.get_report_count, 0);
+        assert_eq!(status.set_report_count, 0);
+        assert_eq!(status.out_report_count, 0);
+        assert_eq!(status.local_name, "Legacy BT");
     }
 
     #[test]
@@ -1131,7 +1242,7 @@ mod tests {
         assert!(decode_bt_status_payload(&bad_version).is_err());
         let mut bad_name = vec![0u8; BT_STATUS_FIXED_LEN];
         bad_name[0] = BT_STATUS_VERSION;
-        bad_name[48] = 1;
+        bad_name[98] = 1;
         assert!(decode_bt_status_payload(&bad_name).is_err());
     }
 }

@@ -38,6 +38,24 @@ static uint32_t bt_hid_report_send_count;
 static uint32_t bt_hid_send_request_count;
 static uint32_t bt_hid_last_event_ms;
 static uint32_t bt_hid_last_send_ms;
+static uint32_t bt_hid_get_report_count;
+static uint32_t bt_hid_get_report_success_count;
+static uint32_t bt_hid_get_report_unsupported_count;
+static uint32_t bt_hid_set_report_count;
+static uint32_t bt_hid_set_report_accepted_count;
+static uint32_t bt_hid_set_report_unsupported_count;
+static uint32_t bt_hid_out_report_count;
+static uint32_t bt_hid_out_report_accepted_count;
+static uint32_t bt_hid_out_report_unsupported_count;
+static uint8_t bt_hid_last_get_report_id;
+static uint8_t bt_hid_last_get_report_type;
+static uint8_t bt_hid_last_set_report_id;
+static uint8_t bt_hid_last_set_report_type;
+static uint8_t bt_hid_last_out_report_id;
+static uint8_t bt_hid_last_out_report_type;
+static uint16_t bt_hid_last_get_report_len;
+static uint16_t bt_hid_last_set_report_len;
+static uint16_t bt_hid_last_out_report_len;
 
 static uint32_t now_ms(void) {
     return to_ms_since_boot(get_absolute_time());
@@ -79,6 +97,83 @@ static void send_pending_report(void) {
     bt_hid_report_send_count++;
     bt_hid_last_send_ms = now_ms();
     bt_hid_next_send_at = make_timeout_time_ms(BT_HID_SEND_INTERVAL_MS);
+}
+
+static int bt_hid_get_report_callback(uint16_t hid_cid, hid_report_type_t report_type,
+                                      uint16_t report_id, int *out_report_size,
+                                      uint8_t *out_report) {
+    (void)hid_cid;
+    bt_hid_get_report_count++;
+    bt_hid_last_get_report_id = (uint8_t)report_id;
+    bt_hid_last_get_report_type = (uint8_t)report_type;
+    bt_hid_last_get_report_len = 0;
+    bt_hid_last_event_ms = now_ms();
+
+    if (!out_report_size || !out_report) {
+        bt_hid_get_report_unsupported_count++;
+        return -1;
+    }
+
+    gamepad_state_t state;
+    copy_gamepad_state(&state);
+    uint16_t len =
+        bt_hid_get_report_payload(bt_hid_target, (uint8_t)report_type, (uint8_t)report_id, &state,
+                                  out_report, BT_HID_MAX_WIRE_REPORT_LEN);
+    *out_report_size = len;
+    bt_hid_last_get_report_len = len;
+    if (len == 0) {
+        bt_hid_get_report_unsupported_count++;
+        return -1;
+    }
+
+    bt_hid_get_report_success_count++;
+    return 1;
+}
+
+static uint16_t safe_report_size(int report_size) {
+    if (report_size <= 0)
+        return 0;
+    if (report_size > 0xFFFF)
+        return 0xFFFFu;
+    return (uint16_t)report_size;
+}
+
+static void bt_hid_set_report_callback(uint16_t hid_cid, hid_report_type_t report_type,
+                                       int report_size, uint8_t *report) {
+    (void)hid_cid;
+    uint8_t report_id = 0;
+    uint16_t payload_len = 0;
+    uint16_t size = safe_report_size(report_size);
+    bool accepted = bt_hid_accept_set_report(bt_hid_target, (uint8_t)report_type, report, size,
+                                             &report_id, &payload_len);
+
+    bt_hid_set_report_count++;
+    bt_hid_last_set_report_id = report_id;
+    bt_hid_last_set_report_type = (uint8_t)report_type;
+    bt_hid_last_set_report_len = payload_len;
+    bt_hid_last_event_ms = now_ms();
+    if (accepted)
+        bt_hid_set_report_accepted_count++;
+    else
+        bt_hid_set_report_unsupported_count++;
+}
+
+static void bt_hid_report_data_callback(uint16_t hid_cid, hid_report_type_t report_type,
+                                        uint16_t report_id, int report_size, uint8_t *report) {
+    (void)hid_cid;
+    uint16_t payload_len = safe_report_size(report_size);
+    bool accepted = bt_hid_accept_output_payload(bt_hid_target, (uint8_t)report_type,
+                                                 (uint8_t)report_id, report, payload_len);
+
+    bt_hid_out_report_count++;
+    bt_hid_last_out_report_id = (uint8_t)report_id;
+    bt_hid_last_out_report_type = (uint8_t)report_type;
+    bt_hid_last_out_report_len = payload_len;
+    bt_hid_last_event_ms = now_ms();
+    if (accepted)
+        bt_hid_out_report_accepted_count++;
+    else
+        bt_hid_out_report_unsupported_count++;
 }
 
 static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet,
@@ -220,6 +315,9 @@ bool bt_hid_init(bt_hid_target_t target) {
     hci_event_callback_registration.callback = &packet_handler;
     hci_add_event_handler(&hci_event_callback_registration);
     hid_device_register_packet_handler(&packet_handler);
+    hid_device_register_report_request_callback(&bt_hid_get_report_callback);
+    hid_device_register_set_report_callback(&bt_hid_set_report_callback);
+    hid_device_register_report_data_callback(&bt_hid_report_data_callback);
 
     bt_hid_started = true;
     bt_hid_init_count++;
@@ -260,6 +358,24 @@ void bt_hid_snapshot(bt_hid_snapshot_t *out) {
     out->send_request_count = bt_hid_send_request_count;
     out->last_event_ms = bt_hid_last_event_ms;
     out->last_send_ms = bt_hid_last_send_ms;
+    out->get_report_count = bt_hid_get_report_count;
+    out->get_report_success_count = bt_hid_get_report_success_count;
+    out->get_report_unsupported_count = bt_hid_get_report_unsupported_count;
+    out->set_report_count = bt_hid_set_report_count;
+    out->set_report_accepted_count = bt_hid_set_report_accepted_count;
+    out->set_report_unsupported_count = bt_hid_set_report_unsupported_count;
+    out->out_report_count = bt_hid_out_report_count;
+    out->out_report_accepted_count = bt_hid_out_report_accepted_count;
+    out->out_report_unsupported_count = bt_hid_out_report_unsupported_count;
+    out->last_get_report_id = bt_hid_last_get_report_id;
+    out->last_get_report_type = bt_hid_last_get_report_type;
+    out->last_set_report_id = bt_hid_last_set_report_id;
+    out->last_set_report_type = bt_hid_last_set_report_type;
+    out->last_out_report_id = bt_hid_last_out_report_id;
+    out->last_out_report_type = bt_hid_last_out_report_type;
+    out->last_get_report_len = bt_hid_last_get_report_len;
+    out->last_set_report_len = bt_hid_last_set_report_len;
+    out->last_out_report_len = bt_hid_last_out_report_len;
 }
 
 void bt_hid_task(void) {

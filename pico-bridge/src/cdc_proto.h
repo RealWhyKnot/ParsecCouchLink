@@ -70,8 +70,10 @@
 #define CDC_HELLO_FLAG_RUN_MODE_OK 0x04
 #define CDC_HELLO_FLAG_RUN_MODE_ACTIVE 0x08
 
-#define CDC_BT_STATUS_VERSION 1
-#define CDC_BT_STATUS_FIXED_LEN 49
+#define CDC_BT_STATUS_VERSION 2
+#define CDC_BT_STATUS_V1_VERSION 1
+#define CDC_BT_STATUS_V1_FIXED_LEN 49
+#define CDC_BT_STATUS_FIXED_LEN 99
 #define CDC_BT_STATUS_MAX_NAME 64
 
 typedef struct {
@@ -90,6 +92,24 @@ typedef struct {
     uint32_t send_request_count;
     uint32_t last_event_ms;
     uint32_t last_send_ms;
+    uint32_t get_report_count;
+    uint32_t get_report_success_count;
+    uint32_t get_report_unsupported_count;
+    uint32_t set_report_count;
+    uint32_t set_report_accepted_count;
+    uint32_t set_report_unsupported_count;
+    uint32_t out_report_count;
+    uint32_t out_report_accepted_count;
+    uint32_t out_report_unsupported_count;
+    uint8_t last_get_report_id;
+    uint8_t last_get_report_type;
+    uint8_t last_set_report_id;
+    uint8_t last_set_report_type;
+    uint8_t last_out_report_id;
+    uint8_t last_out_report_type;
+    uint16_t last_get_report_len;
+    uint16_t last_set_report_len;
+    uint16_t last_out_report_len;
     const char *local_name;
 } cdc_bt_status_view_t;
 

@@ -144,6 +144,24 @@ static void test_bt_status_payload_shape(void) {
         .send_request_count = 8,
         .last_event_ms = 0x11223344,
         .last_send_ms = 0x55667788,
+        .get_report_count = 9,
+        .get_report_success_count = 10,
+        .get_report_unsupported_count = 11,
+        .set_report_count = 12,
+        .set_report_accepted_count = 13,
+        .set_report_unsupported_count = 14,
+        .out_report_count = 15,
+        .out_report_accepted_count = 16,
+        .out_report_unsupported_count = 17,
+        .last_get_report_id = 0x02,
+        .last_get_report_type = 3,
+        .last_set_report_id = 0x11,
+        .last_set_report_type = 2,
+        .last_out_report_id = 0x03,
+        .last_out_report_type = 2,
+        .last_get_report_len = 36,
+        .last_set_report_len = 77,
+        .last_out_report_len = 8,
         .local_name = "CouchLink BT HID",
     };
     uint8_t payload[CDC_BT_STATUS_FIXED_LEN + CDC_BT_STATUS_MAX_NAME];
@@ -167,8 +185,26 @@ static void test_bt_status_payload_shape(void) {
     CHECK(get_u32_le(&payload[36]) == status.send_request_count);
     CHECK(get_u32_le(&payload[40]) == status.last_event_ms);
     CHECK(get_u32_le(&payload[44]) == status.last_send_ms);
-    CHECK(payload[48] == strlen(status.local_name));
-    CHECK(memcmp(&payload[49], status.local_name, strlen(status.local_name)) == 0);
+    CHECK(get_u32_le(&payload[48]) == status.get_report_count);
+    CHECK(get_u32_le(&payload[52]) == status.get_report_success_count);
+    CHECK(get_u32_le(&payload[56]) == status.get_report_unsupported_count);
+    CHECK(get_u32_le(&payload[60]) == status.set_report_count);
+    CHECK(get_u32_le(&payload[64]) == status.set_report_accepted_count);
+    CHECK(get_u32_le(&payload[68]) == status.set_report_unsupported_count);
+    CHECK(get_u32_le(&payload[72]) == status.out_report_count);
+    CHECK(get_u32_le(&payload[76]) == status.out_report_accepted_count);
+    CHECK(get_u32_le(&payload[80]) == status.out_report_unsupported_count);
+    CHECK(payload[84] == status.last_get_report_id);
+    CHECK(payload[85] == status.last_get_report_type);
+    CHECK(payload[86] == status.last_set_report_id);
+    CHECK(payload[87] == status.last_set_report_type);
+    CHECK(payload[88] == status.last_out_report_id);
+    CHECK(payload[89] == status.last_out_report_type);
+    CHECK(get_u16_le(&payload[92]) == status.last_get_report_len);
+    CHECK(get_u16_le(&payload[94]) == status.last_set_report_len);
+    CHECK(get_u16_le(&payload[96]) == status.last_out_report_len);
+    CHECK(payload[98] == strlen(status.local_name));
+    CHECK(memcmp(&payload[99], status.local_name, strlen(status.local_name)) == 0);
 }
 
 int main(void) {

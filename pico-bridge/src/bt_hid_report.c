@@ -98,6 +98,67 @@ static const uint8_t bt_hid_ds4_descriptor[] = {
     0x02, 0xC0,
 };
 
+static const uint8_t bt_hid_ds4_feature_02[] = {
+    0xfe, 0xff, 0x0e, 0x00, 0x04, 0x00, 0xd4, 0x22, 0x2a, 0xdd, 0xbb, 0x22,
+    0x5e, 0xdd, 0x81, 0x22, 0x84, 0xdd, 0x1c, 0x02, 0x1c, 0x02, 0x85, 0x1f,
+    0xb0, 0xe0, 0xc6, 0x20, 0xb5, 0xe0, 0xb1, 0x20, 0x83, 0xdf, 0x0c, 0x00,
+};
+
+static const uint8_t bt_hid_ds4_feature_a3[] = {
+    0x4a, 0x75, 0x6e, 0x20, 0x20, 0x39, 0x20, 0x32, 0x30, 0x31, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x31, 0x32, 0x3a, 0x33, 0x36, 0x3a, 0x34, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x08, 0xb4, 0x01, 0x00, 0x00, 0x00, 0x07, 0xa0, 0x10, 0x20, 0x00, 0xa0, 0x02, 0x00,
+};
+
+static const uint8_t bt_hid_ds4_feature_f2[] = {
+    0x01, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55, 0xf8, 0x2a,
+};
+
+static uint16_t copy_exact(uint8_t *buffer, uint16_t reqlen, const uint8_t *src, uint16_t len) {
+    if (!buffer || !src || reqlen < len)
+        return 0;
+    memcpy(buffer, src, len);
+    return len;
+}
+
+static uint16_t copy_input_payload(bt_hid_target_t target, const gamepad_state_t *state,
+                                   uint8_t report_id, uint8_t *buffer, uint16_t reqlen) {
+    bt_hid_report_t report;
+    gamepad_state_t neutral = {0};
+    bt_hid_build_report(target, state ? state : &neutral, &report);
+    if (report.report_id != report_id || report.len == 0)
+        return 0;
+    return copy_exact(buffer, reqlen, &report.bytes[1], (uint16_t)(report.len - 1u));
+}
+
+static uint16_t get_xbox_input_payload(uint8_t report_id, const gamepad_state_t *state,
+                                       uint8_t *buffer, uint16_t reqlen) {
+    uint8_t neutral = 0;
+    if (report_id == BT_HID_XBOX_REPORT_ID)
+        return copy_input_payload(BT_HID_TARGET_XBOX, state, report_id, buffer, reqlen);
+    if (report_id == BT_HID_XBOX_SYSTEM_REPORT_ID)
+        return copy_exact(buffer, reqlen, &neutral, BT_HID_XBOX_SYSTEM_PAYLOAD_REPORT_LEN);
+    if (report_id == BT_HID_XBOX_STATUS_REPORT_ID)
+        return copy_exact(buffer, reqlen, &neutral, BT_HID_XBOX_STATUS_PAYLOAD_REPORT_LEN);
+    return 0;
+}
+
+static uint16_t get_ds4_feature_payload(uint8_t report_id, uint8_t *buffer, uint16_t reqlen) {
+    switch (report_id) {
+    case BT_HID_PS4_FEATURE_PAIRING_REPORT_ID:
+        return copy_exact(buffer, reqlen, bt_hid_ds4_feature_02,
+                          (uint16_t)sizeof(bt_hid_ds4_feature_02));
+    case BT_HID_PS4_FEATURE_BUILD_DATE_REPORT_ID:
+        return copy_exact(buffer, reqlen, bt_hid_ds4_feature_a3,
+                          (uint16_t)sizeof(bt_hid_ds4_feature_a3));
+    case BT_HID_PS4_FEATURE_AUTH_STATUS_REPORT_ID:
+        return copy_exact(buffer, reqlen, bt_hid_ds4_feature_f2,
+                          (uint16_t)sizeof(bt_hid_ds4_feature_f2));
+    default:
+        return 0;
+    }
+}
+
 static void put_le16(uint8_t *dst, uint16_t value) {
     dst[0] = (uint8_t)(value & 0xFFu);
     dst[1] = (uint8_t)((value >> 8) & 0xFFu);
@@ -374,4 +435,61 @@ void bt_hid_build_report(bt_hid_target_t target, const gamepad_state_t *state,
         build_generic_report(state, out);
         break;
     }
+}
+
+uint16_t bt_hid_get_report_payload(bt_hid_target_t target, uint8_t report_type, uint8_t report_id,
+                                   const gamepad_state_t *state, uint8_t *buffer, uint16_t reqlen) {
+    if (report_type == BT_HID_REPORT_TYPE_INPUT) {
+        switch (target) {
+        case BT_HID_TARGET_XBOX:
+            return get_xbox_input_payload(report_id, state, buffer, reqlen);
+        case BT_HID_TARGET_PLAYSTATION:
+            return copy_input_payload(target, state, report_id, buffer, reqlen);
+        case BT_HID_TARGET_GENERIC:
+        default:
+            return copy_input_payload(BT_HID_TARGET_GENERIC, state, report_id, buffer, reqlen);
+        }
+    }
+
+    if (report_type != BT_HID_REPORT_TYPE_FEATURE)
+        return 0;
+    if (target != BT_HID_TARGET_PLAYSTATION)
+        return 0;
+    return get_ds4_feature_payload(report_id, buffer, reqlen);
+}
+
+bool bt_hid_accept_set_report(bt_hid_target_t target, uint8_t report_type, const uint8_t *report,
+                              uint16_t report_size, uint8_t *report_id, uint16_t *payload_len) {
+    if (!report || report_size == 0)
+        return false;
+
+    uint8_t id = report[0];
+    uint16_t len = (uint16_t)(report_size - 1u);
+    if (report_id)
+        *report_id = id;
+    if (payload_len)
+        *payload_len = len;
+
+    if (report_type != BT_HID_REPORT_TYPE_OUTPUT)
+        return false;
+    if (target == BT_HID_TARGET_XBOX)
+        return id == BT_HID_XBOX_OUTPUT_REPORT_ID && len == BT_HID_XBOX_OUTPUT_PAYLOAD_REPORT_LEN;
+    if (target == BT_HID_TARGET_PLAYSTATION)
+        return id == BT_HID_PS4_REPORT_ID && len == BT_HID_PS4_PAYLOAD_REPORT_LEN;
+    return false;
+}
+
+bool bt_hid_accept_output_payload(bt_hid_target_t target, uint8_t report_type, uint8_t report_id,
+                                  const uint8_t *payload, uint16_t payload_len) {
+    (void)payload;
+    if (payload_len > 0 && !payload)
+        return false;
+    if (report_type != BT_HID_REPORT_TYPE_OUTPUT)
+        return false;
+    if (target == BT_HID_TARGET_XBOX)
+        return report_id == BT_HID_XBOX_OUTPUT_REPORT_ID &&
+               payload_len == BT_HID_XBOX_OUTPUT_PAYLOAD_REPORT_LEN;
+    if (target == BT_HID_TARGET_PLAYSTATION)
+        return report_id == BT_HID_PS4_REPORT_ID && payload_len == BT_HID_PS4_PAYLOAD_REPORT_LEN;
+    return false;
 }

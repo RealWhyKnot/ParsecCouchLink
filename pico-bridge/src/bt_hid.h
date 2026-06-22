@@ -26,6 +26,24 @@ typedef struct {
     uint32_t send_request_count;
     uint32_t last_event_ms;
     uint32_t last_send_ms;
+    uint32_t get_report_count;
+    uint32_t get_report_success_count;
+    uint32_t get_report_unsupported_count;
+    uint32_t set_report_count;
+    uint32_t set_report_accepted_count;
+    uint32_t set_report_unsupported_count;
+    uint32_t out_report_count;
+    uint32_t out_report_accepted_count;
+    uint32_t out_report_unsupported_count;
+    uint8_t last_get_report_id;
+    uint8_t last_get_report_type;
+    uint8_t last_set_report_id;
+    uint8_t last_set_report_type;
+    uint8_t last_out_report_id;
+    uint8_t last_out_report_type;
+    uint16_t last_get_report_len;
+    uint16_t last_set_report_len;
+    uint16_t last_out_report_len;
 } bt_hid_snapshot_t;
 
 bool bt_hid_target_from_persona(run_persona_t persona, bt_hid_target_t *out);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "gamepad_state.h"
@@ -12,14 +13,29 @@ typedef enum {
 
 #define BT_HID_GENERIC_REPORT_ID 0x01u
 #define BT_HID_XBOX_REPORT_ID 0x01u
+#define BT_HID_XBOX_SYSTEM_REPORT_ID 0x02u
+#define BT_HID_XBOX_OUTPUT_REPORT_ID 0x03u
+#define BT_HID_XBOX_STATUS_REPORT_ID 0x04u
 #define BT_HID_PS4_REPORT_ID 0x11u
+#define BT_HID_PS4_FEATURE_PAIRING_REPORT_ID 0x02u
+#define BT_HID_PS4_FEATURE_BUILD_DATE_REPORT_ID 0xA3u
+#define BT_HID_PS4_FEATURE_AUTH_STATUS_REPORT_ID 0xF2u
 #define BT_HID_BUTTON_COUNT 20u
+#define BT_HID_REPORT_TYPE_INPUT 1u
+#define BT_HID_REPORT_TYPE_OUTPUT 2u
+#define BT_HID_REPORT_TYPE_FEATURE 3u
 #define BT_HID_GENERIC_PAYLOAD_REPORT_LEN 9u
 #define BT_HID_GENERIC_WIRE_REPORT_LEN (1u + BT_HID_GENERIC_PAYLOAD_REPORT_LEN)
 #define BT_HID_XBOX_PAYLOAD_REPORT_LEN 15u
 #define BT_HID_XBOX_WIRE_REPORT_LEN (1u + BT_HID_XBOX_PAYLOAD_REPORT_LEN)
+#define BT_HID_XBOX_SYSTEM_PAYLOAD_REPORT_LEN 1u
+#define BT_HID_XBOX_STATUS_PAYLOAD_REPORT_LEN 1u
+#define BT_HID_XBOX_OUTPUT_PAYLOAD_REPORT_LEN 8u
 #define BT_HID_PS4_PAYLOAD_REPORT_LEN 77u
 #define BT_HID_PS4_WIRE_REPORT_LEN (1u + BT_HID_PS4_PAYLOAD_REPORT_LEN)
+#define BT_HID_PS4_FEATURE_PAIRING_PAYLOAD_REPORT_LEN 36u
+#define BT_HID_PS4_FEATURE_BUILD_DATE_PAYLOAD_REPORT_LEN 48u
+#define BT_HID_PS4_FEATURE_AUTH_STATUS_PAYLOAD_REPORT_LEN 15u
 #define BT_HID_MAX_WIRE_REPORT_LEN BT_HID_PS4_WIRE_REPORT_LEN
 #define BT_HID_INTERRUPT_REPORT_LEN (1u + BT_HID_MAX_WIRE_REPORT_LEN)
 
@@ -42,3 +58,9 @@ uint16_t bt_hid_product_id(bt_hid_target_t target);
 uint16_t bt_hid_bcd_version(bt_hid_target_t target);
 void bt_hid_build_report(bt_hid_target_t target, const gamepad_state_t *state,
                          bt_hid_report_t *out);
+uint16_t bt_hid_get_report_payload(bt_hid_target_t target, uint8_t report_type, uint8_t report_id,
+                                   const gamepad_state_t *state, uint8_t *buffer, uint16_t reqlen);
+bool bt_hid_accept_set_report(bt_hid_target_t target, uint8_t report_type, const uint8_t *report,
+                              uint16_t report_size, uint8_t *report_id, uint16_t *payload_len);
+bool bt_hid_accept_output_payload(bt_hid_target_t target, uint8_t report_type, uint8_t report_id,
+                                  const uint8_t *payload, uint16_t payload_len);

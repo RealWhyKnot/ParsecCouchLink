@@ -8,6 +8,22 @@
 
 #define CHECK(expr) assert(expr)
 
+static const uint8_t expected_ds4_feature_02[] = {
+    0xfe, 0xff, 0x0e, 0x00, 0x04, 0x00, 0xd4, 0x22, 0x2a, 0xdd, 0xbb, 0x22,
+    0x5e, 0xdd, 0x81, 0x22, 0x84, 0xdd, 0x1c, 0x02, 0x1c, 0x02, 0x85, 0x1f,
+    0xb0, 0xe0, 0xc6, 0x20, 0xb5, 0xe0, 0xb1, 0x20, 0x83, 0xdf, 0x0c, 0x00,
+};
+
+static const uint8_t expected_ds4_feature_a3[] = {
+    0x4a, 0x75, 0x6e, 0x20, 0x20, 0x39, 0x20, 0x32, 0x30, 0x31, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x31, 0x32, 0x3a, 0x33, 0x36, 0x3a, 0x34, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x01, 0x08, 0xb4, 0x01, 0x00, 0x00, 0x00, 0x07, 0xa0, 0x10, 0x20, 0x00, 0xa0, 0x02, 0x00,
+};
+
+static const uint8_t expected_ds4_feature_f2[] = {
+    0x01, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x55, 0xf8, 0x2a,
+};
+
 static uint32_t report_buttons(const bt_hid_report_t *report) {
     return (uint32_t)report->bytes[1] | ((uint32_t)report->bytes[2] << 8) |
            (((uint32_t)report->bytes[3] & 0x0Fu) << 16);
@@ -228,6 +244,116 @@ static void ds4_profile_matches_expected_identity_and_shape(void) {
           expected_ds4_input_crc(report.bytes, BT_HID_PS4_WIRE_REPORT_LEN - 4u));
 }
 
+static void get_report_payloads_match_interrupt_inputs(void) {
+    gamepad_state_t state = {0};
+    state.buttons = DINPUT_XINPUT_A | DINPUT_XINPUT_DPAD_RIGHT;
+    state.left_trigger = 200;
+
+    uint8_t payload[BT_HID_MAX_WIRE_REPORT_LEN];
+    bt_hid_report_t report;
+
+    bt_hid_build_report(BT_HID_TARGET_GENERIC, &state, &report);
+    uint16_t len =
+        bt_hid_get_report_payload(BT_HID_TARGET_GENERIC, BT_HID_REPORT_TYPE_INPUT,
+                                  BT_HID_GENERIC_REPORT_ID, &state, payload, sizeof(payload));
+    CHECK(len == BT_HID_GENERIC_PAYLOAD_REPORT_LEN);
+    CHECK(memcmp(payload, &report.bytes[1], len) == 0);
+    CHECK(bt_hid_get_report_payload(BT_HID_TARGET_GENERIC, BT_HID_REPORT_TYPE_INPUT,
+                                    BT_HID_GENERIC_REPORT_ID, &state, payload, len - 1) == 0);
+
+    bt_hid_build_report(BT_HID_TARGET_XBOX, &state, &report);
+    len = bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_INPUT,
+                                    BT_HID_XBOX_REPORT_ID, &state, payload, sizeof(payload));
+    CHECK(len == BT_HID_XBOX_PAYLOAD_REPORT_LEN);
+    CHECK(memcmp(payload, &report.bytes[1], len) == 0);
+
+    bt_hid_build_report(BT_HID_TARGET_PLAYSTATION, &state, &report);
+    len = bt_hid_get_report_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_INPUT,
+                                    BT_HID_PS4_REPORT_ID, &state, payload, sizeof(payload));
+    CHECK(len == BT_HID_PS4_PAYLOAD_REPORT_LEN);
+    CHECK(memcmp(payload, &report.bytes[1], len) == 0);
+}
+
+static void xbox_control_reports_are_exact(void) {
+    gamepad_state_t state = {0};
+    uint8_t payload[BT_HID_MAX_WIRE_REPORT_LEN];
+
+    uint16_t len =
+        bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_INPUT,
+                                  BT_HID_XBOX_SYSTEM_REPORT_ID, &state, payload, sizeof(payload));
+    CHECK(len == BT_HID_XBOX_SYSTEM_PAYLOAD_REPORT_LEN);
+    CHECK(payload[0] == 0);
+
+    len = bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_INPUT,
+                                    BT_HID_XBOX_STATUS_REPORT_ID, &state, payload, sizeof(payload));
+    CHECK(len == BT_HID_XBOX_STATUS_PAYLOAD_REPORT_LEN);
+    CHECK(payload[0] == 0);
+
+    CHECK(bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_FEATURE, 0x02, &state,
+                                    payload, sizeof(payload)) == 0);
+}
+
+static void ds4_feature_reports_are_exact_and_conservative(void) {
+    gamepad_state_t state = {0};
+    uint8_t payload[BT_HID_MAX_WIRE_REPORT_LEN];
+
+    uint16_t len = bt_hid_get_report_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_FEATURE,
+                                             BT_HID_PS4_FEATURE_PAIRING_REPORT_ID, &state, payload,
+                                             sizeof(payload));
+    CHECK(len == sizeof(expected_ds4_feature_02));
+    CHECK(memcmp(payload, expected_ds4_feature_02, len) == 0);
+
+    len = bt_hid_get_report_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_FEATURE,
+                                    BT_HID_PS4_FEATURE_BUILD_DATE_REPORT_ID, &state, payload,
+                                    sizeof(payload));
+    CHECK(len == sizeof(expected_ds4_feature_a3));
+    CHECK(memcmp(payload, expected_ds4_feature_a3, len) == 0);
+
+    len = bt_hid_get_report_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_FEATURE,
+                                    BT_HID_PS4_FEATURE_AUTH_STATUS_REPORT_ID, &state, payload,
+                                    sizeof(payload));
+    CHECK(len == sizeof(expected_ds4_feature_f2));
+    CHECK(memcmp(payload, expected_ds4_feature_f2, len) == 0);
+
+    CHECK(bt_hid_get_report_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_FEATURE, 0x03,
+                                    &state, payload, sizeof(payload)) == 0);
+    CHECK(bt_hid_get_report_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_FEATURE, 0x12,
+                                    &state, payload, sizeof(payload)) == 0);
+    CHECK(bt_hid_get_report_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_FEATURE,
+                                    BT_HID_PS4_FEATURE_PAIRING_REPORT_ID, &state, payload,
+                                    sizeof(expected_ds4_feature_02) - 1) == 0);
+}
+
+static void output_report_acceptance_is_exact(void) {
+    uint8_t report_id = 0;
+    uint16_t payload_len = 0;
+    uint8_t xbox_set[1 + BT_HID_XBOX_OUTPUT_PAYLOAD_REPORT_LEN] = {BT_HID_XBOX_OUTPUT_REPORT_ID};
+    uint8_t ds4_set[1 + BT_HID_PS4_PAYLOAD_REPORT_LEN] = {BT_HID_PS4_REPORT_ID};
+
+    CHECK(bt_hid_accept_set_report(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_OUTPUT, xbox_set,
+                                   sizeof(xbox_set), &report_id, &payload_len));
+    CHECK(report_id == BT_HID_XBOX_OUTPUT_REPORT_ID);
+    CHECK(payload_len == BT_HID_XBOX_OUTPUT_PAYLOAD_REPORT_LEN);
+    CHECK(bt_hid_accept_output_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_OUTPUT,
+                                       BT_HID_XBOX_OUTPUT_REPORT_ID, &xbox_set[1],
+                                       BT_HID_XBOX_OUTPUT_PAYLOAD_REPORT_LEN));
+    CHECK(!bt_hid_accept_set_report(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_OUTPUT, xbox_set,
+                                    sizeof(xbox_set) - 1, &report_id, &payload_len));
+
+    CHECK(bt_hid_accept_set_report(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_OUTPUT, ds4_set,
+                                   sizeof(ds4_set), &report_id, &payload_len));
+    CHECK(report_id == BT_HID_PS4_REPORT_ID);
+    CHECK(payload_len == BT_HID_PS4_PAYLOAD_REPORT_LEN);
+    CHECK(bt_hid_accept_output_payload(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_OUTPUT,
+                                       BT_HID_PS4_REPORT_ID, &ds4_set[1],
+                                       BT_HID_PS4_PAYLOAD_REPORT_LEN));
+    CHECK(!bt_hid_accept_set_report(BT_HID_TARGET_PLAYSTATION, BT_HID_REPORT_TYPE_FEATURE, ds4_set,
+                                    sizeof(ds4_set), &report_id, &payload_len));
+    CHECK(!bt_hid_accept_output_payload(BT_HID_TARGET_GENERIC, BT_HID_REPORT_TYPE_OUTPUT,
+                                        BT_HID_XBOX_OUTPUT_REPORT_ID, &xbox_set[1],
+                                        BT_HID_XBOX_OUTPUT_PAYLOAD_REPORT_LEN));
+}
+
 static void target_metadata_is_stable(void) {
     CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_GENERIC), "bluetooth") == 0);
     CHECK(strcmp(bt_hid_target_label(BT_HID_TARGET_XBOX), "bluetooth-xbox") == 0);
@@ -245,6 +371,10 @@ int main(void) {
     generic_report_maps_core_controls();
     xbox_wireless_profile_matches_expected_identity_and_shape();
     ds4_profile_matches_expected_identity_and_shape();
+    get_report_payloads_match_interrupt_inputs();
+    xbox_control_reports_are_exact();
+    ds4_feature_reports_are_exact_and_conservative();
+    output_report_acceptance_is_exact();
     target_metadata_is_stable();
     puts("bt_hid_report tests passed");
     return 0;
