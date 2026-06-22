@@ -4,7 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **bluetooth:** Mimic supported controller profiles (66948a7)
+- **bluetooth:** Report receiver pairing status (bffe562)
+
+### Fixed
+- **bluetooth:** Answer controller feature reports (eab939d)
 
 ---
 
