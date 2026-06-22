@@ -919,13 +919,13 @@ async fn choose_bluetooth_input_mode() -> Result<InputModeChoice> {
             "Bluetooth with PlayStation button ordering",
         ),
     ];
-    match select("Bluetooth input mode", &choices, 0).await? {
-        0 => Ok(InputModeChoice::Persona(protocol::Persona::BluetoothHid)),
-        1 => Ok(InputModeChoice::Persona(protocol::Persona::BluetoothXbox)),
-        _ => Ok(InputModeChoice::Persona(
-            protocol::Persona::BluetoothPlaystation,
-        )),
-    }
+    let persona = match select("Bluetooth input mode", &choices, 0).await? {
+        0 => protocol::Persona::BluetoothHid,
+        1 => protocol::Persona::BluetoothXbox,
+        _ => protocol::Persona::BluetoothPlaystation,
+    };
+    cmd_run::print_bluetooth_pairing_help(persona);
+    Ok(InputModeChoice::Persona(persona))
 }
 
 async fn prepare_routes_for_input_mode(

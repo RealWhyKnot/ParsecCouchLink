@@ -95,6 +95,9 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
                 .with_outcome(format!("mark={mark} desired={}", desired.label())),
         );
     }
+    if desired.is_bluetooth() {
+        cmd_run::print_bluetooth_pairing_help(desired);
+    }
     let pending: Vec<_> = final_targets
         .iter()
         .filter(|t| t.persona != desired)

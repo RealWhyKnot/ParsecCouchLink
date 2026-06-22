@@ -34,6 +34,7 @@
 #define CDC_CMD_REBOOT_TO_BOOTSEL 0x0B
 #define CDC_CMD_BT_STATE 0x0C
 #define CDC_CMD_BT_HEARTBEAT 0x0D
+#define CDC_CMD_BT_GET_STATUS 0x0E
 
 // Response opcodes (high bit set).
 #define CDC_RSP_HELLO 0x81
@@ -48,6 +49,7 @@
 #define CDC_RSP_REBOOT_TO_BOOTSEL 0x8B
 #define CDC_RSP_BT_STATE 0x8C
 #define CDC_RSP_BT_HEARTBEAT 0x8D
+#define CDC_RSP_BT_STATUS 0x8E
 #define CDC_RSP_NACK 0xFE
 
 // Error codes carried in a NACK payload (first byte; second byte is detail).
@@ -68,7 +70,35 @@
 #define CDC_HELLO_FLAG_RUN_MODE_OK 0x04
 #define CDC_HELLO_FLAG_RUN_MODE_ACTIVE 0x08
 
+#define CDC_BT_STATUS_VERSION 1
+#define CDC_BT_STATUS_FIXED_LEN 49
+#define CDC_BT_STATUS_MAX_NAME 64
+
+typedef struct {
+    uint8_t flags;
+    uint8_t target;
+    uint8_t last_status;
+    uint8_t report_len;
+    uint16_t cid;
+    uint32_t init_count;
+    uint32_t ready_count;
+    uint32_t open_count;
+    uint32_t close_count;
+    uint32_t can_send_count;
+    uint32_t report_build_count;
+    uint32_t report_send_count;
+    uint32_t send_request_count;
+    uint32_t last_event_ms;
+    uint32_t last_send_ms;
+    const char *local_name;
+} cdc_bt_status_view_t;
+
 uint16_t cdc_crc16(const uint8_t *data, size_t n);
+
+// Build the BT_STATUS payload body. Returns payload bytes written, or 0
+// when `out_cap` is too small.
+size_t cdc_build_bt_status_payload(const cdc_bt_status_view_t *status, uint8_t *out,
+                                   size_t out_cap);
 
 // Build a response or NACK frame into `out`. Returns total bytes written
 // (always HEADER + payload_len + CRC). `out` must be at least

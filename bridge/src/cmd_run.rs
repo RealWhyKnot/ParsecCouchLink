@@ -723,7 +723,7 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
         bail!("no routes selected");
     }
     validate_routes(&routes)?;
-    let mut bluetooth_usb_links = open_bluetooth_usb_links(&routes)?;
+    let mut bluetooth_usb_links = open_bluetooth_usb_links(&routes, options.quiet)?;
     if options.save_routes {
         save_routes(&routes)?;
     }
@@ -845,6 +845,7 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
             }
             _ = status.tick() => {
                 if !options.quiet {
+                    refresh_bluetooth_statuses(&mut runtime);
                     print_status(&mut runtime);
                 }
                 if !recovery_in_flight && schedule_recovery_if_needed(&mut runtime) {
@@ -915,7 +916,10 @@ fn validate_routes(routes: &[StreamRoute]) -> Result<()> {
     Ok(())
 }
 
-fn open_bluetooth_usb_links(routes: &[StreamRoute]) -> Result<HashMap<u32, cdc::PicoSetup>> {
+fn open_bluetooth_usb_links(
+    routes: &[StreamRoute],
+    quiet: bool,
+) -> Result<HashMap<u32, cdc::PicoSetup>> {
     let needed: HashSet<u32> = routes
         .iter()
         .filter(|route| route.pico.persona.is_bluetooth())
@@ -936,6 +940,12 @@ fn open_bluetooth_usb_links(routes: &[StreamRoute]) -> Result<HashMap<u32, cdc::
             Ok((uid, pico))
         }) {
             Ok((uid, pico)) if needed.contains(&uid) => {
+                if !quiet {
+                    println!(
+                        "Bluetooth USB link ready: Pico {uid:08X} on {}.",
+                        pico.port_name()
+                    );
+                }
                 found.insert(uid, pico);
             }
             Ok((_uid, _pico)) => {}
@@ -1219,6 +1229,10 @@ fn duration_ms_u64(duration: Duration) -> u64 {
 struct RouteRuntime {
     route: StreamRoute,
     bluetooth_usb: Option<cdc::PicoSetup>,
+    bluetooth_status: Option<cdc::BtStatus>,
+    bluetooth_report_delta: Option<u32>,
+    bluetooth_status_unsupported: bool,
+    bluetooth_status_error: Option<String>,
     seq: u8,
     sent_total: u64,
     sent_at_last_status: u64,
@@ -1231,6 +1245,7 @@ struct RouteRuntime {
     last_send_type: &'static str,
     last_recovery_attempt: Option<Instant>,
     recovery_hint_printed: bool,
+    bluetooth_pairing_hint_printed: bool,
 }
 
 impl RouteRuntime {
@@ -1238,6 +1253,10 @@ impl RouteRuntime {
         Self {
             route,
             bluetooth_usb,
+            bluetooth_status: None,
+            bluetooth_report_delta: None,
+            bluetooth_status_unsupported: false,
+            bluetooth_status_error: None,
             seq: 0,
             sent_total: 0,
             sent_at_last_status: 0,
@@ -1250,6 +1269,7 @@ impl RouteRuntime {
             last_send_type: "heartbeat",
             last_recovery_attempt: None,
             recovery_hint_printed: false,
+            bluetooth_pairing_hint_printed: false,
         }
     }
 
@@ -1288,6 +1308,34 @@ impl RouteRuntime {
         self.seq = self.seq.wrapping_add(1);
         self.sent_total += 1;
         Ok(())
+    }
+
+    fn refresh_bluetooth_status(&mut self) {
+        if !self.route.pico.persona.is_bluetooth() || self.bluetooth_status_unsupported {
+            return;
+        }
+        let Some(link) = self.bluetooth_usb.as_mut() else {
+            self.bluetooth_status_error = Some("Pico USB diagnostic port is not open".to_string());
+            return;
+        };
+        match link.bt_status() {
+            Ok(status) => {
+                self.bluetooth_report_delta = self.bluetooth_status.as_ref().map(|previous| {
+                    status
+                        .report_send_count
+                        .saturating_sub(previous.report_send_count)
+                });
+                self.bluetooth_status = Some(status);
+                self.bluetooth_status_error = None;
+            }
+            Err(e) if cdc::error_has_nack_code(&e, cdc::ERR_UNKNOWN_COMMAND) => {
+                self.bluetooth_status_unsupported = true;
+                self.bluetooth_status_error = None;
+            }
+            Err(e) => {
+                self.bluetooth_status_error = Some(short_error(&e));
+            }
+        }
     }
 
     fn next_controller_packet(&mut self) -> Packet {
@@ -1381,7 +1429,38 @@ fn print_stream_intro(routes: &[StreamRoute], local_addr: SocketAddr) {
         println!("Local UDP socket: {local_addr}");
     }
     if bluetooth_routes > 0 {
-        println!("Bluetooth input: PC USB CDC to plugged Pico");
+        println!("Bluetooth path: source controller -> PC USB -> Pico -> Bluetooth receiver.");
+        println!(
+            "  Pair the receiver with the Pico's CouchLink Bluetooth gamepad; PIN is 0000 if requested."
+        );
+        println!(
+            "  Status below reports both the USB input link and the Bluetooth receiver state."
+        );
+    }
+    if routes
+        .iter()
+        .any(|route| is_usb_output_persona(route.pico.persona))
+    {
+        println!(
+            "USB-output note: Wi-Fi counters prove PC-to-Pico input, not console-adapter acceptance."
+        );
+        println!("  If the console sees no input, run `couchlink test usb` or `couchlink bundle`.");
+    }
+    if routes
+        .iter()
+        .any(|route| route.pico.persona == Persona::Keyboard)
+    {
+        println!(
+            "Keyboard mode: only remote Parsec-injected keystrokes are relayed; empty keys means no captured typing yet."
+        );
+    }
+    if routes
+        .iter()
+        .any(|route| route.pico.persona == Persona::Maple)
+    {
+        println!(
+            "Maple mode: the Pico presents Xbox-compatible USB reports for Dreamcast adapters."
+        );
     }
     println!("Press Ctrl+C to stop.");
     println!();
@@ -1395,6 +1474,122 @@ fn print_stream_intro(routes: &[StreamRoute], local_addr: SocketAddr) {
     );
 }
 
+fn is_usb_output_persona(persona: Persona) -> bool {
+    matches!(
+        persona,
+        Persona::Xinput
+            | Persona::Maple
+            | Persona::Ps3
+            | Persona::Ps4
+            | Persona::XboxOne
+            | Persona::GenericHid
+            | Persona::Debug
+    )
+}
+
+fn refresh_bluetooth_statuses(routes: &mut [RouteRuntime]) {
+    for route in routes {
+        route.refresh_bluetooth_status();
+    }
+}
+
+pub fn print_bluetooth_pairing_help(persona: Persona) {
+    if !persona.is_bluetooth() {
+        return;
+    }
+    println!();
+    println!("Bluetooth mode setup");
+    println!("  Keep this Pico plugged into the bridge PC over USB.");
+    println!("  Put the receiver or console adapter into Bluetooth pairing/search mode.");
+    println!(
+        "  Pair with {}. Use PIN 0000 if the receiver asks for one.",
+        bluetooth_expected_name(persona)
+    );
+    println!("  Persona switching still uses Wi-Fi; live controller input then uses PC USB.");
+}
+
+fn bluetooth_expected_name(persona: Persona) -> &'static str {
+    match persona {
+        Persona::BluetoothXbox => "CouchLink BT Xbox",
+        Persona::BluetoothPlaystation => "CouchLink BT PS",
+        Persona::BluetoothHid => "CouchLink BT HID",
+        _ => "CouchLink BT HID",
+    }
+}
+
+fn format_bluetooth_peer_state(
+    status: Option<&cdc::BtStatus>,
+    report_delta: Option<u32>,
+    unsupported: bool,
+    error: Option<&str>,
+) -> String {
+    if unsupported {
+        return "status unavailable: update Pico firmware to show receiver pairing state"
+            .to_string();
+    }
+    if let Some(error) = error {
+        return format!("status unavailable: {error}");
+    }
+    let Some(status) = status else {
+        return "status pending".to_string();
+    };
+    if !status.started() {
+        return "radio starting".to_string();
+    }
+    if !status.connected() {
+        let name = bluetooth_display_name(status);
+        let mut msg = format!("discoverable as \"{name}\"; pair receiver/search mode, PIN 0000");
+        if status.last_status != 0 {
+            msg.push_str(&format!("; last status 0x{:02X}", status.last_status));
+        }
+        if status.close_count > 0 {
+            msg.push_str(&format!("; disconnects {}", status.close_count));
+        }
+        return msg;
+    }
+
+    let mut msg = match report_delta {
+        Some(delta) => format!(
+            "receiver connected; reports +{} total {}",
+            delta, status.report_send_count
+        ),
+        None => format!(
+            "receiver connected; reports total {}",
+            status.report_send_count
+        ),
+    };
+    if status.send_requested() {
+        msg.push_str("; send queued");
+    }
+    if status.close_count > 0 {
+        msg.push_str(&format!("; disconnects {}", status.close_count));
+    }
+    msg
+}
+
+fn bluetooth_display_name(status: &cdc::BtStatus) -> &str {
+    if status.local_name.is_empty() {
+        "CouchLink BT HID"
+    } else {
+        &status.local_name
+    }
+}
+
+fn should_print_bluetooth_pairing_hint(status: Option<&cdc::BtStatus>) -> bool {
+    status.map(|status| !status.connected()).unwrap_or(true)
+}
+
+fn short_error(error: &anyhow::Error) -> String {
+    let text = error.to_string();
+    const MAX_LEN: usize = 120;
+    if text.len() <= MAX_LEN {
+        text
+    } else {
+        let prefix: String = text.chars().take(MAX_LEN).collect();
+        format!("{prefix}...")
+    }
+}
+
 fn print_status(routes: &mut [RouteRuntime]) {
     println!();
     println!("Status");
@@ -1404,7 +1599,12 @@ fn print_status(routes: &mut [RouteRuntime]) {
         let bluetooth_route = route.route.pico.persona.is_bluetooth();
         let inbound_age = route.last_inbound.elapsed();
         let peer_state = if bluetooth_route {
-            "USB CDC input".to_string()
+            format_bluetooth_peer_state(
+                route.bluetooth_status.as_ref(),
+                route.bluetooth_report_delta,
+                route.bluetooth_status_unsupported,
+                route.bluetooth_status_error.as_deref(),
+            )
         } else if route.inbound_total == 0 {
             "no reply yet".to_string()
         } else if inbound_age > PEER_STALE_AFTER {
@@ -1473,7 +1673,7 @@ fn print_status(routes: &mut [RouteRuntime]) {
         );
         if bluetooth_route {
             println!(
-                "  {} -> {} | {} | USB out +{} total {} | {} | {} {}",
+                "  {} -> {} | {} | USB input +{} total {} | Bluetooth {} | {} {}",
                 route.route.source_label(),
                 route.route.pico.uid_hex(),
                 source_state,
@@ -1506,6 +1706,15 @@ fn print_status(routes: &mut [RouteRuntime]) {
                 "    hint: no Pico reply yet. Confirm this Pico is powered and on the same Wi-Fi; run `couchlink bundle` if it stays unreachable."
             );
             route.recovery_hint_printed = true;
+        } else if bluetooth_route
+            && route.sent_total > 180
+            && !route.bluetooth_pairing_hint_printed
+            && should_print_bluetooth_pairing_hint(route.bluetooth_status.as_ref())
+        {
+            println!(
+                "    hint: USB input to the Pico is active. If the game sees nothing, put the receiver in pairing/search mode and pair with the CouchLink Bluetooth gamepad."
+            );
+            route.bluetooth_pairing_hint_printed = true;
         } else if !bluetooth_route
             && route.inbound_total > 0
             && route.last_inbound.elapsed() > PEER_STALE_AFTER
@@ -1846,6 +2055,37 @@ mod tests {
     }
 
     #[test]
+    fn bluetooth_status_formatter_explains_pairing_and_connection() {
+        assert!(format_bluetooth_peer_state(None, None, false, None).contains("pending"));
+        assert!(
+            format_bluetooth_peer_state(None, None, true, None).contains("update Pico firmware")
+        );
+        assert!(
+            format_bluetooth_peer_state(None, None, false, Some("timeout")).contains("timeout")
+        );
+
+        let mut status = bt_status(0, 0, 0);
+        assert!(
+            format_bluetooth_peer_state(Some(&status), None, false, None)
+                .contains("radio starting")
+        );
+
+        status.flags = cdc::BT_STATUS_FLAG_STARTED;
+        status.local_name = "CouchLink BT HID".to_string();
+        let waiting = format_bluetooth_peer_state(Some(&status), None, false, None);
+        assert!(waiting.contains("discoverable as \"CouchLink BT HID\""));
+        assert!(waiting.contains("PIN 0000"));
+        assert!(should_print_bluetooth_pairing_hint(Some(&status)));
+
+        status.flags = cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED;
+        status.report_send_count = 12;
+        let connected = format_bluetooth_peer_state(Some(&status), Some(3), false, None);
+        assert!(connected.contains("receiver connected"));
+        assert!(connected.contains("reports +3 total 12"));
+        assert!(!should_print_bluetooth_pairing_hint(Some(&status)));
+    }
+
+    #[test]
     fn setup_usb_recovery_skips_run_mode_cdc() {
         let hello = cdc::HelloAck {
             proto_version: cdc::PROTO_VERSION,
@@ -1878,5 +2118,30 @@ mod tests {
             classify_setup_usb_hello(&setup),
             SetupUsbMode::SetupModeWithoutCredentials
         );
+    }
+
+    fn bt_status(flags: u8, report_send_count: u32, close_count: u32) -> cdc::BtStatus {
+        cdc::BtStatus {
+            flags,
+            target: 0,
+            last_status: 0,
+            report_len: 10,
+            cid: 0,
+            init_count: 1,
+            ready_count: 1,
+            open_count: if flags & cdc::BT_STATUS_FLAG_CONNECTED != 0 {
+                1
+            } else {
+                0
+            },
+            close_count,
+            can_send_count: report_send_count,
+            report_build_count: report_send_count,
+            report_send_count,
+            send_request_count: report_send_count,
+            last_event_ms: 100,
+            last_send_ms: if report_send_count > 0 { 120 } else { 0 },
+            local_name: String::new(),
+        }
     }
 }

@@ -8,6 +8,8 @@
 
 #include "boot_mode.h"
 #include "boot_mode_policy.h"
+#include "bt_hid.h"
+#include "bt_hid_report.h"
 #include "flash_creds.h"
 #include "gamepad_state.h"
 #include "diag_log.h"
@@ -184,6 +186,46 @@ static size_t handle_bt_state(const cdc_frame_view_t *req, uint8_t *reply, size_
     return 0;
 }
 
+static size_t handle_bt_get_status(const cdc_frame_view_t *req, uint8_t *reply, size_t cap) {
+    if (req->payload_len != 0) {
+        uint8_t err[2] = {CDC_ERR_BAD_LENGTH, (uint8_t)req->payload_len};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    if (boot_mode_current() != BOOT_MODE_RUN ||
+        !boot_mode_persona_uses_bluetooth(boot_mode_run_persona())) {
+        uint8_t err[2] = {CDC_ERR_INTERNAL, 2};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+
+    bt_hid_snapshot_t snap;
+    bt_hid_snapshot(&snap);
+    cdc_bt_status_view_t status = {
+        .flags = snap.flags,
+        .target = snap.target,
+        .last_status = snap.last_status,
+        .report_len = snap.report_len,
+        .cid = snap.cid,
+        .init_count = snap.init_count,
+        .ready_count = snap.ready_count,
+        .open_count = snap.open_count,
+        .close_count = snap.close_count,
+        .can_send_count = snap.can_send_count,
+        .report_build_count = snap.report_build_count,
+        .report_send_count = snap.report_send_count,
+        .send_request_count = snap.send_request_count,
+        .last_event_ms = snap.last_event_ms,
+        .last_send_ms = snap.last_send_ms,
+        .local_name = bt_hid_local_name((bt_hid_target_t)snap.target),
+    };
+    uint8_t payload[CDC_BT_STATUS_FIXED_LEN + CDC_BT_STATUS_MAX_NAME];
+    size_t payload_len = cdc_build_bt_status_payload(&status, payload, sizeof(payload));
+    if (!payload_len) {
+        uint8_t err[2] = {CDC_ERR_INTERNAL, 3};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    return cdc_encode(CDC_RSP_BT_STATUS, req->seq, payload, payload_len, reply, cap);
+}
+
 static size_t handle_unique_id(uint8_t seq, uint8_t *reply, size_t cap) {
     pico_unique_board_id_t id;
     pico_get_unique_board_id(&id);
@@ -285,6 +327,8 @@ size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_ca
     case CDC_CMD_BT_STATE:
     case CDC_CMD_BT_HEARTBEAT:
         return handle_bt_state(req, reply, reply_cap);
+    case CDC_CMD_BT_GET_STATUS:
+        return handle_bt_get_status(req, reply, reply_cap);
     default: {
         uint8_t err[2] = {CDC_ERR_UNKNOWN_COMMAND, req->command};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, reply_cap);

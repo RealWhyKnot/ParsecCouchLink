@@ -50,7 +50,7 @@ Setup is complete. From now on, couchlink runs at logon.
 Confirmed Pico IP: 192.168.50.4
 ```
 
-For USB-output modes, plug the Pico into the USB-to-console adapter. For Bluetooth mode, leave the Pico plugged into the bridge PC over USB so CouchLink can feed it controller state with low latency. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose the Pico's streaming command on the **Basic** tab.
+For USB-output modes, plug the Pico into the USB-to-console adapter. For Bluetooth mode, leave the Pico plugged into the bridge PC over USB so CouchLink can feed it controller state with low latency. Put the receiver or console adapter into Bluetooth pairing/search mode and pair it with the CouchLink Bluetooth gamepad; use PIN `0000` if asked. Start the console, have the remote player join through Parsec, run `couchlink.exe`, and choose the Pico's streaming command on the **Basic** tab.
 
 If automatic Wi-Fi discovery fails later, choose **Enter Pico IP manually** in the guided menu and enter the confirmed IP from setup.
 
@@ -78,7 +78,7 @@ The guided menu can:
 - Set up Wi-Fi, update firmware, read USB logs, or check the console USB adapter for one selected Pico.
 - Open **Advanced** for one-off tools, status, Wi-Fi finder, controller check, Pico debug/recovery, USB adapter checks, logs, support bundles, and command reference.
 
-When streaming starts, the terminal prints live counters so you can see packets going out to the Pico and replies coming back.
+When streaming starts, the terminal prints live counters. USB-output modes show PC-to-Pico Wi-Fi packets and Pico replies; use **Check console USB adapter** or `couchlink.exe test usb` if the console still sees no input. Bluetooth mode shows the PC USB input link plus the Pico's Bluetooth receiver state, including whether it is still discoverable or connected and sending reports.
 
 If the Startup shortcut was added, Windows starts the direct streaming command at logon:
 

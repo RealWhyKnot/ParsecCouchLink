@@ -44,6 +44,7 @@ pub const CMD_GET_LOG_BUFFER: u8 = 0x0A;
 pub const CMD_REBOOT_TO_BOOTSEL: u8 = 0x0B;
 pub const CMD_BT_STATE: u8 = 0x0C;
 pub const CMD_BT_HEARTBEAT: u8 = 0x0D;
+pub const CMD_BT_GET_STATUS: u8 = 0x0E;
 
 // Response opcodes
 pub const RSP_HELLO: u8 = 0x81;
@@ -58,6 +59,7 @@ pub const RSP_LOG_BUFFER: u8 = 0x8A;
 pub const RSP_REBOOT_TO_BOOTSEL: u8 = 0x8B;
 pub const RSP_BT_STATE: u8 = 0x8C;
 pub const RSP_BT_HEARTBEAT: u8 = 0x8D;
+pub const RSP_BT_STATUS: u8 = 0x8E;
 pub const RSP_NACK: u8 = 0xFE;
 
 /// Short human label for a response opcode, used in the rare "unexpected
@@ -77,6 +79,7 @@ fn response_name(command: u8) -> &'static str {
         RSP_REBOOT_TO_BOOTSEL => "REBOOT_TO_BOOTSEL_ACK",
         RSP_BT_STATE => "BT_STATE_ACK",
         RSP_BT_HEARTBEAT => "BT_HEARTBEAT_ACK",
+        RSP_BT_STATUS => "BT_STATUS",
         RSP_NACK => "NACK",
         _ => "unknown",
     }
@@ -98,6 +101,12 @@ pub const HELLO_FLAG_CREDS_PRESENT: u8 = 0x01;
 pub const HELLO_FLAG_WIFI_JOINED: u8 = 0x02;
 pub const HELLO_FLAG_RUN_MODE_OK: u8 = 0x04;
 pub const HELLO_FLAG_RUN_MODE_ACTIVE: u8 = 0x08;
+
+pub const BT_STATUS_VERSION: u8 = 1;
+pub const BT_STATUS_FIXED_LEN: usize = 49;
+pub const BT_STATUS_FLAG_STARTED: u8 = 1 << 0;
+pub const BT_STATUS_FLAG_CONNECTED: u8 = 1 << 1;
+pub const BT_STATUS_FLAG_SEND_REQUESTED: u8 = 1 << 2;
 
 pub fn err_name(code: u8) -> &'static str {
     match code {
@@ -258,6 +267,16 @@ impl PicoSetup {
         command: u8,
         payload: &[u8],
     ) -> Result<Frame> {
+        self.exchange_named_with_timeout(command_label, command, payload, Duration::from_secs(3))
+    }
+
+    fn exchange_named_with_timeout(
+        &mut self,
+        command_label: &str,
+        command: u8,
+        payload: &[u8],
+        timeout: Duration,
+    ) -> Result<Frame> {
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
         let frame = encode(command, seq, payload);
@@ -265,7 +284,7 @@ impl PicoSetup {
         if let Err(e) = self.port.flush() {
             tracing::debug!("cdc: flush after write returned {e:?}");
         }
-        let resp = self.read_one_frame()?;
+        let resp = self.read_one_frame_with_timeout(timeout)?;
         if resp.command == RSP_NACK {
             let code = resp.payload.first().copied().unwrap_or(ERR_INTERNAL);
             let detail = resp.payload.get(1).copied().unwrap_or(0);
@@ -717,6 +736,23 @@ impl PicoSetup {
             Ok((String::from_utf8_lossy(&resp.payload).into_owned(), 0))
         }
     }
+
+    pub fn bt_status(&mut self) -> Result<BtStatus> {
+        let resp = self.exchange_named_with_timeout(
+            "BT_GET_STATUS",
+            CMD_BT_GET_STATUS,
+            &[],
+            Duration::from_millis(250),
+        )?;
+        if resp.command != RSP_BT_STATUS {
+            bail!(
+                "unexpected response 0x{:02X} ({}) to BT_GET_STATUS",
+                resp.command,
+                response_name(resp.command)
+            );
+        }
+        decode_bt_status_payload(&resp.payload)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -748,6 +784,40 @@ impl HelloAck {
 pub struct SelfTestAck {
     pub passed: bool,
     pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BtStatus {
+    pub flags: u8,
+    pub target: u8,
+    pub last_status: u8,
+    pub report_len: u8,
+    pub cid: u16,
+    pub init_count: u32,
+    pub ready_count: u32,
+    pub open_count: u32,
+    pub close_count: u32,
+    pub can_send_count: u32,
+    pub report_build_count: u32,
+    pub report_send_count: u32,
+    pub send_request_count: u32,
+    pub last_event_ms: u32,
+    pub last_send_ms: u32,
+    pub local_name: String,
+}
+
+impl BtStatus {
+    pub fn started(&self) -> bool {
+        self.flags & BT_STATUS_FLAG_STARTED != 0
+    }
+
+    pub fn connected(&self) -> bool {
+        self.flags & BT_STATUS_FLAG_CONNECTED != 0
+    }
+
+    pub fn send_requested(&self) -> bool {
+        self.flags & BT_STATUS_FLAG_SEND_REQUESTED != 0
+    }
 }
 
 /// Outcome of a single HELLO wire exchange, with enough detail for the
@@ -811,6 +881,65 @@ fn short_unique_id_from_payload(payload: &[u8]) -> Result<u32> {
     Ok(u32::from_le_bytes([
         payload[0], payload[1], payload[2], payload[3],
     ]))
+}
+
+fn read_u16_le(payload: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([payload[offset], payload[offset + 1]])
+}
+
+fn read_u32_le(payload: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        payload[offset],
+        payload[offset + 1],
+        payload[offset + 2],
+        payload[offset + 3],
+    ])
+}
+
+pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
+    if payload.len() < BT_STATUS_FIXED_LEN {
+        bail!("BT_STATUS response truncated ({} bytes)", payload.len());
+    }
+    if payload[0] != BT_STATUS_VERSION {
+        bail!(
+            "BT_STATUS version mismatch (got {}, want {})",
+            payload[0],
+            BT_STATUS_VERSION
+        );
+    }
+    let name_len = payload[48] as usize;
+    let need = BT_STATUS_FIXED_LEN + name_len;
+    if payload.len() < need {
+        bail!(
+            "BT_STATUS local name truncated (need {need} bytes, have {})",
+            payload.len()
+        );
+    }
+    Ok(BtStatus {
+        flags: payload[1],
+        target: payload[2],
+        last_status: payload[3],
+        report_len: payload[4],
+        cid: read_u16_le(payload, 6),
+        init_count: read_u32_le(payload, 8),
+        ready_count: read_u32_le(payload, 12),
+        open_count: read_u32_le(payload, 16),
+        close_count: read_u32_le(payload, 20),
+        can_send_count: read_u32_le(payload, 24),
+        report_build_count: read_u32_le(payload, 28),
+        report_send_count: read_u32_le(payload, 32),
+        send_request_count: read_u32_le(payload, 36),
+        last_event_ms: read_u32_le(payload, 40),
+        last_send_ms: read_u32_le(payload, 44),
+        local_name: String::from_utf8_lossy(&payload[49..need]).into_owned(),
+    })
+}
+
+pub fn error_has_nack_code(error: &anyhow::Error, code: u8) -> bool {
+    let needle = format!("code 0x{code:02X}");
+    error
+        .chain()
+        .any(|cause| cause.to_string().contains(&needle))
 }
 
 /// Returns Some(human-readable cause) when the underlying serial I/O
@@ -947,5 +1076,62 @@ mod tests {
         let payload = [0xB6, 0x7E, 0xD3, 0x07, 0xAA, 0xBB, 0xCC, 0xDD];
         assert_eq!(short_unique_id_from_payload(&payload).unwrap(), 0x07D37EB6);
         assert!(short_unique_id_from_payload(&payload[..3]).is_err());
+    }
+
+    #[test]
+    fn bt_status_payload_decodes_wire_shape() {
+        let name = b"CouchLink BT HID";
+        let mut payload = vec![0u8; BT_STATUS_FIXED_LEN + name.len()];
+        payload[0] = BT_STATUS_VERSION;
+        payload[1] = BT_STATUS_FLAG_STARTED | BT_STATUS_FLAG_CONNECTED;
+        payload[2] = 2;
+        payload[3] = 0x44;
+        payload[4] = 10;
+        payload[6..8].copy_from_slice(&0x1234u16.to_le_bytes());
+        payload[8..12].copy_from_slice(&1u32.to_le_bytes());
+        payload[12..16].copy_from_slice(&2u32.to_le_bytes());
+        payload[16..20].copy_from_slice(&3u32.to_le_bytes());
+        payload[20..24].copy_from_slice(&4u32.to_le_bytes());
+        payload[24..28].copy_from_slice(&5u32.to_le_bytes());
+        payload[28..32].copy_from_slice(&6u32.to_le_bytes());
+        payload[32..36].copy_from_slice(&7u32.to_le_bytes());
+        payload[36..40].copy_from_slice(&8u32.to_le_bytes());
+        payload[40..44].copy_from_slice(&0x11223344u32.to_le_bytes());
+        payload[44..48].copy_from_slice(&0x55667788u32.to_le_bytes());
+        payload[48] = name.len() as u8;
+        payload[49..].copy_from_slice(name);
+
+        let status = decode_bt_status_payload(&payload).unwrap();
+
+        assert!(status.started());
+        assert!(status.connected());
+        assert!(!status.send_requested());
+        assert_eq!(status.target, 2);
+        assert_eq!(status.last_status, 0x44);
+        assert_eq!(status.report_len, 10);
+        assert_eq!(status.cid, 0x1234);
+        assert_eq!(status.init_count, 1);
+        assert_eq!(status.ready_count, 2);
+        assert_eq!(status.open_count, 3);
+        assert_eq!(status.close_count, 4);
+        assert_eq!(status.can_send_count, 5);
+        assert_eq!(status.report_build_count, 6);
+        assert_eq!(status.report_send_count, 7);
+        assert_eq!(status.send_request_count, 8);
+        assert_eq!(status.last_event_ms, 0x11223344);
+        assert_eq!(status.last_send_ms, 0x55667788);
+        assert_eq!(status.local_name, "CouchLink BT HID");
+    }
+
+    #[test]
+    fn bt_status_payload_rejects_bad_shape() {
+        assert!(decode_bt_status_payload(&[0; BT_STATUS_FIXED_LEN - 1]).is_err());
+        let mut bad_version = vec![0u8; BT_STATUS_FIXED_LEN];
+        bad_version[0] = BT_STATUS_VERSION + 1;
+        assert!(decode_bt_status_payload(&bad_version).is_err());
+        let mut bad_name = vec![0u8; BT_STATUS_FIXED_LEN];
+        bad_name[0] = BT_STATUS_VERSION;
+        bad_name[48] = 1;
+        assert!(decode_bt_status_payload(&bad_name).is_err());
     }
 }

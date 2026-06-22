@@ -118,6 +118,59 @@ static void test_encode_rejects_oversize(void) {
     CHECK(cdc_encode(0x01, 0, NULL, 0, small, sizeof(small)) == 0);
 }
 
+static uint16_t get_u16_le(const uint8_t *buf) {
+    return (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+}
+
+static uint32_t get_u32_le(const uint8_t *buf) {
+    return (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) | ((uint32_t)buf[2] << 16) |
+           ((uint32_t)buf[3] << 24);
+}
+
+static void test_bt_status_payload_shape(void) {
+    cdc_bt_status_view_t status = {
+        .flags = 0x03,
+        .target = 2,
+        .last_status = 0x44,
+        .report_len = 10,
+        .cid = 0x1234,
+        .init_count = 1,
+        .ready_count = 2,
+        .open_count = 3,
+        .close_count = 4,
+        .can_send_count = 5,
+        .report_build_count = 6,
+        .report_send_count = 7,
+        .send_request_count = 8,
+        .last_event_ms = 0x11223344,
+        .last_send_ms = 0x55667788,
+        .local_name = "CouchLink BT HID",
+    };
+    uint8_t payload[CDC_BT_STATUS_FIXED_LEN + CDC_BT_STATUS_MAX_NAME];
+    size_t n = cdc_build_bt_status_payload(&status, payload, sizeof(payload));
+
+    CHECK(n == CDC_BT_STATUS_FIXED_LEN + strlen(status.local_name));
+    CHECK(payload[0] == CDC_BT_STATUS_VERSION);
+    CHECK(payload[1] == status.flags);
+    CHECK(payload[2] == status.target);
+    CHECK(payload[3] == status.last_status);
+    CHECK(payload[4] == status.report_len);
+    CHECK(payload[5] == 0);
+    CHECK(get_u16_le(&payload[6]) == status.cid);
+    CHECK(get_u32_le(&payload[8]) == status.init_count);
+    CHECK(get_u32_le(&payload[12]) == status.ready_count);
+    CHECK(get_u32_le(&payload[16]) == status.open_count);
+    CHECK(get_u32_le(&payload[20]) == status.close_count);
+    CHECK(get_u32_le(&payload[24]) == status.can_send_count);
+    CHECK(get_u32_le(&payload[28]) == status.report_build_count);
+    CHECK(get_u32_le(&payload[32]) == status.report_send_count);
+    CHECK(get_u32_le(&payload[36]) == status.send_request_count);
+    CHECK(get_u32_le(&payload[40]) == status.last_event_ms);
+    CHECK(get_u32_le(&payload[44]) == status.last_send_ms);
+    CHECK(payload[48] == strlen(status.local_name));
+    CHECK(memcmp(&payload[49], status.local_name, strlen(status.local_name)) == 0);
+}
+
 int main(void) {
     test_crc16_check_vector();
     test_roundtrips();
@@ -127,6 +180,7 @@ int main(void) {
     test_bad_length();
     test_bad_crc();
     test_encode_rejects_oversize();
+    test_bt_status_payload_shape();
 
     if (failures == 0) {
         printf("OK: all cdc_proto tests passed\n");

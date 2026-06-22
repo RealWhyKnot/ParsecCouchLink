@@ -64,6 +64,7 @@ Commands:
 | `REBOOT_TO_BOOTSEL` | Reboot into the ROM BOOTSEL USB bootloader for reflashing. |
 | `BT_STATE` | Bluetooth run-mode input. Payload is one flags byte plus the 12-byte controller state body. No response is sent on success. |
 | `BT_HEARTBEAT` | Bluetooth run-mode heartbeat with the same 13-byte payload shape. No response is sent on success. |
+| `BT_GET_STATUS` | Bluetooth run-mode status query. Response includes the Bluetooth HID target, advertised name, connection flags, last status, channel id, and report counters. |
 
 `HELLO_ACK` keeps the first six legacy identity bytes for older hosts:
 protocol version, compact firmware date fields, board type, and flags. Newer
@@ -72,6 +73,8 @@ four-character development suffix. Development builds report versions such as
 `2026.5.29.7-D69A`; release builds report `2026.5.29.0`.
 
 `HELLO_ACK` flags: bit 0 means saved Wi-Fi credentials are present, bit 1 means Wi-Fi is joined when reported, bit 2 means the firmware can reboot into run mode, and bit 3 means the CDC port is already active in run mode. The bridge uses bit 3 to avoid mistaking Bluetooth run-mode CDC for setup-mode recovery.
+
+`BT_STATUS` payload version 1 starts with `version`, `flags`, `target`, `last_status`, `report_len`, one reserved byte, `cid`, ten little-endian counters (`init`, `ready`, `open`, `close`, `can_send`, `report_build`, `report_send`, `send_request`, `last_event_ms`, `last_send_ms`), then a one-byte advertised-name length followed by the advertised Classic Bluetooth HID name. Flag bit 0 means the Bluetooth stack started, bit 1 means a receiver is connected, and bit 2 means a report send is queued.
 
 ## USB Vendor Diag (setup mode)
 

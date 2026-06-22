@@ -158,6 +158,9 @@ async fn select_for_target(
         current.short_label(),
         names.join(", ")
     );
+    println!(
+        "  Keep the console adapter connected and powered; Auto scores USB enumeration and polling from that adapter."
+    );
 
     let mut best: Option<AutoAttempt> = None;
     for candidate in candidates {
