@@ -246,6 +246,7 @@ struct BluetoothReport {
     live: bool,
     persona: String,
     target_label: String,
+    advertised_name: &'static str,
     expected_connection: &'static str,
     usb_input_required: bool,
     usb_transport: &'static str,
@@ -2603,6 +2604,9 @@ fn build_bluetooth_report(
     let bt_report_send_count = pico_state
         .map(|state| state.bt_report_send_count)
         .unwrap_or(0);
+    let bt_target = pico_state
+        .map(|state| state.bt_target)
+        .unwrap_or_else(|| bluetooth_target_from_persona(target.persona));
     let status =
         bluetooth_report_status(pico_state, bt_started, bt_connected, bt_report_send_count);
     BluetoothReport {
@@ -2612,14 +2616,8 @@ fn build_bluetooth_report(
         peer: Some(target.peer.to_string()),
         live: true,
         persona: target.persona.label().to_string(),
-        target_label: pico_state
-            .map(|state| protocol::bt_hid_target_label(state.bt_target))
-            .unwrap_or_else(|| match target.persona {
-                protocol::Persona::BluetoothXbox => "bluetooth-xbox",
-                protocol::Persona::BluetoothPlaystation => "bluetooth-playstation",
-                _ => "bluetooth",
-            })
-            .to_string(),
+        target_label: protocol::bt_hid_target_label(bt_target).to_string(),
+        advertised_name: bluetooth_advertised_name(bt_target),
         expected_connection: "pc_usb_input_bluetooth_output",
         usb_input_required: true,
         usb_transport: "cdc_framed_controller_state",
@@ -2633,7 +2631,7 @@ fn build_bluetooth_report(
         bt_started,
         bt_connected,
         bt_send_requested,
-        bt_target: pico_state.map(|state| state.bt_target).unwrap_or(0),
+        bt_target,
         bt_last_status: pico_state.map(|state| state.bt_last_status).unwrap_or(0),
         bt_report_len: pico_state.map(|state| state.bt_report_len).unwrap_or(0),
         bt_cid: pico_state.map(|state| state.bt_cid).unwrap_or(0),
@@ -2667,9 +2665,26 @@ fn build_bluetooth_report(
         notes: vec![
             "Bluetooth mode streams controller input from this PC to the Pico over USB CDC.",
             "The Pico then emits a Classic Bluetooth HID gamepad report to the paired receiver.",
+            "The advertised_name field is the exact Bluetooth name the receiver should see.",
             "Wi-Fi discovery may still appear in logs, but live Bluetooth controller packets are not sent over Wi-Fi.",
             "USB adapter survey is skipped for Bluetooth mode because the Pico USB connector stays on the PC.",
         ],
+    }
+}
+
+fn bluetooth_target_from_persona(persona: protocol::Persona) -> u8 {
+    match persona {
+        protocol::Persona::BluetoothXbox => 1,
+        protocol::Persona::BluetoothPlaystation => 2,
+        _ => 0,
+    }
+}
+
+fn bluetooth_advertised_name(target: u8) -> &'static str {
+    match target {
+        1 => "Xbox Wireless Controller",
+        2 => "Wireless Controller",
+        _ => "CouchLink BT HID",
     }
 }
 
@@ -2711,7 +2726,7 @@ fn bluetooth_report_next_steps(status: &str) -> Vec<&'static str> {
             "Move or press the source controller and rerun bundle if report_send_count stays at zero.",
         ],
         _ => vec![
-            "Bluetooth reports were sent. If the receiver still does not react, keep the full bundle and inspect receiver-side pairing or target button-order expectations.",
+            "Bluetooth reports were sent. If the receiver still does not react, keep the full bundle and inspect receiver-side pairing or controller-mimic compatibility.",
         ],
     }
 }
@@ -2737,6 +2752,7 @@ fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
     let _ = writeln!(out, "peer={}", report.peer.as_deref().unwrap_or("none"));
     let _ = writeln!(out, "persona={}", report.persona);
     let _ = writeln!(out, "target_label={}", report.target_label);
+    let _ = writeln!(out, "advertised_name={}", report.advertised_name);
     let _ = writeln!(out, "expected_connection={}", report.expected_connection);
     let _ = writeln!(out, "usb_input_required={}", report.usb_input_required);
     let _ = writeln!(out, "usb_transport={}", report.usb_transport);

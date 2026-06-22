@@ -1497,21 +1497,20 @@ pub fn print_bluetooth_pairing_help(persona: Persona) {
     if !persona.is_bluetooth() {
         return;
     }
+    let expected_name = bluetooth_expected_name(persona);
     println!();
     println!("Bluetooth mode setup");
     println!("  Keep this Pico plugged into the bridge PC over USB.");
+    println!("  The Pico will advertise as {expected_name}.");
     println!("  Put the receiver or console adapter into Bluetooth pairing/search mode.");
-    println!(
-        "  Pair with {}. Use PIN 0000 if the receiver asks for one.",
-        bluetooth_expected_name(persona)
-    );
+    println!("  Pair the receiver with {expected_name}. Use PIN 0000 if it asks for one.");
     println!("  Persona switching still uses Wi-Fi; live controller input then uses PC USB.");
 }
 
 fn bluetooth_expected_name(persona: Persona) -> &'static str {
     match persona {
-        Persona::BluetoothXbox => "CouchLink BT Xbox",
-        Persona::BluetoothPlaystation => "CouchLink BT PS",
+        Persona::BluetoothXbox => "Xbox Wireless Controller",
+        Persona::BluetoothPlaystation => "Wireless Controller",
         Persona::BluetoothHid => "CouchLink BT HID",
         _ => "CouchLink BT HID",
     }
@@ -1550,12 +1549,12 @@ fn format_bluetooth_peer_state(
 
     let mut msg = match report_delta {
         Some(delta) => format!(
-            "receiver connected; reports +{} total {}",
-            delta, status.report_send_count
+            "receiver connected; HID report len {}; reports +{} total {}",
+            status.report_len, delta, status.report_send_count
         ),
         None => format!(
-            "receiver connected; reports total {}",
-            status.report_send_count
+            "receiver connected; HID report len {}; reports total {}",
+            status.report_len, status.report_send_count
         ),
     };
     if status.send_requested() {
@@ -1711,8 +1710,9 @@ fn print_status(routes: &mut [RouteRuntime]) {
             && !route.bluetooth_pairing_hint_printed
             && should_print_bluetooth_pairing_hint(route.bluetooth_status.as_ref())
         {
+            let expected_name = bluetooth_expected_name(route.route.pico.persona);
             println!(
-                "    hint: USB input to the Pico is active. If the game sees nothing, put the receiver in pairing/search mode and pair with the CouchLink Bluetooth gamepad."
+                "    hint: USB input to the Pico is active. If the game sees nothing, put the receiver in pairing/search mode and pair with {expected_name}."
             );
             route.bluetooth_pairing_hint_printed = true;
         } else if !bluetooth_route
@@ -2081,6 +2081,7 @@ mod tests {
         status.report_send_count = 12;
         let connected = format_bluetooth_peer_state(Some(&status), Some(3), false, None);
         assert!(connected.contains("receiver connected"));
+        assert!(connected.contains("HID report len 10"));
         assert!(connected.contains("reports +3 total 12"));
         assert!(!should_print_bluetooth_pairing_hint(Some(&status)));
     }

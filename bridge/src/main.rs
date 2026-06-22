@@ -298,7 +298,7 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to Bluetooth with Xbox button ordering.
+    /// Switch a Pico to Bluetooth as an Xbox Wireless Controller.
     #[command(name = "bluetooth-xbox", alias = "bt-xbox", alias = "blueretro-xbox")]
     BluetoothXbox {
         /// Select a Pico by UID, IP, or board name. Repeat to select more than one.
@@ -313,7 +313,7 @@ enum Command {
         #[arg(long)]
         no_stream: bool,
     },
-    /// Switch a Pico to Bluetooth with PlayStation button ordering.
+    /// Switch a Pico to Bluetooth as a DualShock 4 Wireless Controller.
     #[command(
         name = "bluetooth-playstation",
         alias = "bt-playstation",

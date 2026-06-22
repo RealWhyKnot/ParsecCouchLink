@@ -175,7 +175,7 @@ Add `--no-stream` to change the persona without starting a stream. PS3 is tried 
 
 Bluetooth mode is for a wireless receiver or adapter that accepts a Classic Bluetooth HID gamepad. Unlike the USB-output modes, the Pico stays plugged into the bridge PC. CouchLink sends each controller frame to the Pico over USB CDC, and the Pico sends Bluetooth HID reports to the paired receiver.
 
-Pairing is receiver-side: run a Bluetooth command, leave the Pico plugged into the bridge PC over USB, then put the receiver or console adapter into Bluetooth pairing/search mode. Pair with the CouchLink Bluetooth gamepad (`CouchLink BT HID`, `CouchLink BT Xbox`, or `CouchLink BT PS`). Use PIN `0000` if the receiver asks for one. Do not pair the Pico to Windows for console play; Windows seeing the Pico as pairable only proves the Pico is advertising.
+Pairing is receiver-side: run a Bluetooth command, leave the Pico plugged into the bridge PC over USB, then put the receiver or console adapter into Bluetooth pairing/search mode. Pair with the advertised controller name for the selected mode: `CouchLink BT HID` for generic Bluetooth, `Xbox Wireless Controller` for Xbox, or `Wireless Controller` for DualShock 4 / PlayStation. Use PIN `0000` if the receiver asks for one. Do not pair the Pico to Windows for console play; Windows seeing the Pico as pairable only proves the Pico is advertising.
 
 Switch a Pico to generic Bluetooth mode and start streaming:
 
@@ -183,7 +183,7 @@ Switch a Pico to generic Bluetooth mode and start streaming:
 .\couchlink.exe bluetooth
 ```
 
-Target-specific button ordering is also available:
+Controller-specific Bluetooth mimics are also available:
 
 ```powershell
 .\couchlink.exe bluetooth-xbox

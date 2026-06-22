@@ -189,9 +189,9 @@ pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> 
         protocol::Persona::XboxOne => "Xbox One XGIP",
         protocol::Persona::Debug => "Debug XInput packet capture",
         protocol::Persona::GenericHid => "Generic HID gamepad",
-        protocol::Persona::BluetoothHid => "Bluetooth PC USB input",
-        protocol::Persona::BluetoothXbox => "Bluetooth Xbox-order PC USB input",
-        protocol::Persona::BluetoothPlaystation => "Bluetooth PlayStation-order PC USB input",
+        protocol::Persona::BluetoothHid => "Bluetooth generic HID PC USB input",
+        protocol::Persona::BluetoothXbox => "Bluetooth Xbox Wireless Controller PC USB input",
+        protocol::Persona::BluetoothPlaystation => "Bluetooth DualShock 4 PC USB input",
     };
     let mut out = String::new();
     let _ = writeln!(out, "  {}", usb_verdict(diag, device_label));

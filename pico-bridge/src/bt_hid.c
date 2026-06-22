@@ -16,7 +16,7 @@
 #define BT_HID_HOST_MIN_TIMEOUT 3200u
 #define BT_HID_SUPERVISION_TIMEOUT 3200u
 
-static uint8_t hid_service_buffer[300];
+static uint8_t hid_service_buffer[1024];
 static uint8_t device_id_sdp_service_buffer[100];
 static btstack_packet_callback_registration_t hci_event_callback_registration;
 
@@ -70,6 +70,8 @@ static void request_send_now(bool force) {
 
 static void send_pending_report(void) {
     uint8_t interrupt_report[BT_HID_INTERRUPT_REPORT_LEN];
+    if (bt_hid_pending_report.len > BT_HID_MAX_WIRE_REPORT_LEN)
+        return;
     interrupt_report[0] = 0xA1u;
     memcpy(&interrupt_report[1], bt_hid_pending_report.bytes, bt_hid_pending_report.len);
     hid_device_send_interrupt_message(bt_hid_cid, interrupt_report,
@@ -209,8 +211,8 @@ bool bt_hid_init(bt_hid_target_t target) {
 
     memset(device_id_sdp_service_buffer, 0, sizeof(device_id_sdp_service_buffer));
     device_id_create_sdp_record(device_id_sdp_service_buffer, sdp_create_service_record_handle(),
-                                DEVICE_ID_VENDOR_ID_SOURCE_USB, 0x2E8Au, bt_hid_product_id(target),
-                                0x0100u);
+                                DEVICE_ID_VENDOR_ID_SOURCE_USB, bt_hid_vendor_id(target),
+                                bt_hid_product_id(target), bt_hid_bcd_version(target));
     sdp_register_service(device_id_sdp_service_buffer);
 
     hid_device_init(BT_HID_BOOT_DEVICE, descriptor_len, descriptor);

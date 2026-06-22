@@ -912,14 +912,17 @@ async fn choose_playstation_input_mode() -> Result<InputModeChoice> {
 
 async fn choose_bluetooth_input_mode() -> Result<InputModeChoice> {
     let choices = vec![
-        menu_item("Bluetooth", "generic Bluetooth gamepad"),
-        menu_item("Bluetooth Xbox", "Bluetooth with Xbox button ordering"),
+        menu_item("Generic HID", "CouchLink Bluetooth HID gamepad"),
         menu_item(
-            "Bluetooth PlayStation",
-            "Bluetooth with PlayStation button ordering",
+            "Xbox Wireless Controller",
+            "advertise as a supported Xbox Bluetooth controller",
+        ),
+        menu_item(
+            "DualShock 4",
+            "advertise as a supported PlayStation Wireless Controller",
         ),
     ];
-    let persona = match select("Bluetooth input mode", &choices, 0).await? {
+    let persona = match select("Bluetooth controller to mimic", &choices, 0).await? {
         0 => protocol::Persona::BluetoothHid,
         1 => protocol::Persona::BluetoothXbox,
         _ => protocol::Persona::BluetoothPlaystation,

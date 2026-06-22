@@ -9,7 +9,7 @@ static const uint8_t bt_hid_gamepad_descriptor[] = {
     0x05, 0x01, // Usage Page (Generic Desktop)
     0x09, 0x05, // Usage (Game Pad)
     0xA1, 0x01, // Collection (Application)
-    0x85, BT_HID_REPORT_ID,
+    0x85, BT_HID_GENERIC_REPORT_ID,
     0x05, 0x09, // Usage Page (Button)
     0x19, 0x01, // Usage Minimum (Button 1)
     0x29, BT_HID_BUTTON_COUNT,
@@ -45,6 +45,82 @@ static const uint8_t bt_hid_gamepad_descriptor[] = {
     0xC0,       // End Collection
 };
 
+static const uint8_t bt_hid_xbox_descriptor[] = {
+    0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01, 0x09, 0x01, 0xA1, 0x00, 0x09, 0x30, 0x09, 0x31,
+    0x15, 0x00, 0x27, 0xFF, 0xFF, 0x00, 0x00, 0x95, 0x02, 0x75, 0x10, 0x81, 0x02, 0xC0, 0x09, 0x01,
+    0xA1, 0x00, 0x09, 0x33, 0x09, 0x34, 0x15, 0x00, 0x27, 0xFF, 0xFF, 0x00, 0x00, 0x95, 0x02, 0x75,
+    0x10, 0x81, 0x02, 0xC0, 0x05, 0x01, 0x09, 0x32, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x95, 0x01, 0x75,
+    0x0A, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00, 0x75, 0x06, 0x95, 0x01, 0x81, 0x03, 0x05, 0x01, 0x09,
+    0x35, 0x15, 0x00, 0x26, 0xFF, 0x03, 0x95, 0x01, 0x75, 0x0A, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00,
+    0x75, 0x06, 0x95, 0x01, 0x81, 0x03, 0x05, 0x01, 0x09, 0x39, 0x15, 0x01, 0x25, 0x08, 0x35, 0x00,
+    0x46, 0x3B, 0x01, 0x66, 0x14, 0x00, 0x75, 0x04, 0x95, 0x01, 0x81, 0x42, 0x75, 0x04, 0x95, 0x01,
+    0x15, 0x00, 0x25, 0x00, 0x35, 0x00, 0x45, 0x00, 0x65, 0x00, 0x81, 0x03, 0x05, 0x09, 0x19, 0x01,
+    0x29, 0x0A, 0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x0A, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00,
+    0x75, 0x06, 0x95, 0x01, 0x81, 0x03, 0x05, 0x01, 0x09, 0x80, 0x85, 0x02, 0xA1, 0x00, 0x09, 0x85,
+    0x15, 0x00, 0x25, 0x01, 0x95, 0x01, 0x75, 0x01, 0x81, 0x02, 0x15, 0x00, 0x25, 0x00, 0x75, 0x07,
+    0x95, 0x01, 0x81, 0x03, 0xC0, 0x05, 0x0F, 0x09, 0x21, 0x85, 0x03, 0xA1, 0x02, 0x09, 0x97, 0x15,
+    0x00, 0x25, 0x01, 0x75, 0x04, 0x95, 0x01, 0x91, 0x02, 0x15, 0x00, 0x25, 0x00, 0x75, 0x04, 0x95,
+    0x01, 0x91, 0x03, 0x09, 0x70, 0x15, 0x00, 0x25, 0x64, 0x75, 0x08, 0x95, 0x04, 0x91, 0x02, 0x09,
+    0x50, 0x66, 0x01, 0x10, 0x55, 0x0E, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x91,
+    0x02, 0x09, 0xA7, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x91, 0x02, 0x65, 0x00,
+    0x55, 0x00, 0x09, 0x7C, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x91, 0x02, 0xC0,
+    0x85, 0x04, 0x05, 0x06, 0x09, 0x20, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x81,
+    0x02, 0xC0,
+};
+
+static const uint8_t bt_hid_ds4_descriptor[] = {
+    0x05, 0x01, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x01, 0x75, 0x08, 0x95, 0x0A, 0x81, 0x02, 0x06, 0x04,
+    0xFF, 0x85, 0x02, 0x09, 0x24, 0x95, 0x24, 0xB1, 0x02, 0x85, 0xA3, 0x09, 0x25, 0x95, 0x30, 0xB1,
+    0x02, 0x85, 0x05, 0x09, 0x26, 0x95, 0x28, 0xB1, 0x02, 0x85, 0x06, 0x09, 0x27, 0x95, 0x34, 0xB1,
+    0x02, 0x85, 0x07, 0x09, 0x28, 0x95, 0x30, 0xB1, 0x02, 0x85, 0x08, 0x09, 0x29, 0x95, 0x2F, 0xB1,
+    0x02, 0x06, 0x03, 0xFF, 0x85, 0x03, 0x09, 0x21, 0x95, 0x26, 0xB1, 0x02, 0x85, 0x04, 0x09, 0x22,
+    0x95, 0x2E, 0xB1, 0x02, 0x85, 0xF0, 0x09, 0x47, 0x95, 0x3F, 0xB1, 0x02, 0x85, 0xF1, 0x09, 0x48,
+    0x95, 0x3F, 0xB1, 0x02, 0x85, 0xF2, 0x09, 0x49, 0x95, 0x0F, 0xB1, 0x02, 0x85, 0x11, 0x06, 0x00,
+    0xFF, 0x09, 0x20, 0x95, 0x02, 0x81, 0x02, 0x05, 0x01, 0x09, 0x30, 0x09, 0x31, 0x09, 0x32, 0x09,
+    0x35, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x04, 0x81, 0x02, 0x09, 0x39, 0x15, 0x00,
+    0x25, 0x07, 0x75, 0x04, 0x95, 0x01, 0x81, 0x42, 0x05, 0x09, 0x19, 0x01, 0x29, 0x0E, 0x15, 0x00,
+    0x25, 0x01, 0x75, 0x01, 0x95, 0x0E, 0x81, 0x02, 0x75, 0x06, 0x95, 0x01, 0x81, 0x01, 0x05, 0x01,
+    0x09, 0x33, 0x09, 0x34, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x02, 0x81, 0x02, 0x06,
+    0x00, 0xFF, 0x09, 0x20, 0x95, 0x03, 0x81, 0x02, 0x05, 0x01, 0x19, 0x40, 0x29, 0x42, 0x16, 0x00,
+    0x80, 0x26, 0x00, 0x7F, 0x75, 0x10, 0x95, 0x03, 0x81, 0x02, 0x19, 0x43, 0x29, 0x45, 0x16, 0x00,
+    0xE0, 0x26, 0xFF, 0x1F, 0x95, 0x03, 0x81, 0x02, 0x06, 0x00, 0xFF, 0x09, 0x20, 0x15, 0x00, 0x26,
+    0xFF, 0x00, 0x75, 0x08, 0x95, 0x31, 0x81, 0x02, 0x09, 0x21, 0x75, 0x08, 0x95, 0x4D, 0x91, 0x02,
+    0x85, 0x12, 0x09, 0x22, 0x95, 0x8D, 0x81, 0x02, 0x09, 0x23, 0x91, 0x02, 0x85, 0x13, 0x09, 0x24,
+    0x95, 0xCD, 0x81, 0x02, 0x09, 0x25, 0x91, 0x02, 0x85, 0x14, 0x09, 0x26, 0x96, 0x0D, 0x01, 0x81,
+    0x02, 0x09, 0x27, 0x91, 0x02, 0x85, 0x15, 0x09, 0x28, 0x96, 0x4D, 0x01, 0x81, 0x02, 0x09, 0x29,
+    0x91, 0x02, 0x85, 0x16, 0x09, 0x2A, 0x96, 0x8D, 0x01, 0x81, 0x02, 0x09, 0x2B, 0x91, 0x02, 0x85,
+    0x17, 0x09, 0x2C, 0x96, 0xCD, 0x01, 0x81, 0x02, 0x09, 0x2D, 0x91, 0x02, 0x85, 0x18, 0x09, 0x2E,
+    0x96, 0x0D, 0x02, 0x81, 0x02, 0x09, 0x2F, 0x91, 0x02, 0x85, 0x19, 0x09, 0x30, 0x96, 0x22, 0x02,
+    0x81, 0x02, 0x09, 0x31, 0x91, 0x02, 0x06, 0x80, 0xFF, 0x85, 0x82, 0x09, 0x22, 0x95, 0x3F, 0xB1,
+    0x02, 0x85, 0x83, 0x09, 0x23, 0xB1, 0x02, 0x85, 0x84, 0x09, 0x24, 0xB1, 0x02, 0x85, 0x90, 0x09,
+    0x30, 0xB1, 0x02, 0x85, 0x91, 0x09, 0x31, 0xB1, 0x02, 0x85, 0x92, 0x09, 0x32, 0xB1, 0x02, 0x85,
+    0x93, 0x09, 0x33, 0xB1, 0x02, 0x85, 0xA0, 0x09, 0x40, 0xB1, 0x02, 0x85, 0xA4, 0x09, 0x44, 0xB1,
+    0x02, 0xC0,
+};
+
+static void put_le16(uint8_t *dst, uint16_t value) {
+    dst[0] = (uint8_t)(value & 0xFFu);
+    dst[1] = (uint8_t)((value >> 8) & 0xFFu);
+}
+
+static void put_le32(uint8_t *dst, uint32_t value) {
+    dst[0] = (uint8_t)(value & 0xFFu);
+    dst[1] = (uint8_t)((value >> 8) & 0xFFu);
+    dst[2] = (uint8_t)((value >> 16) & 0xFFu);
+    dst[3] = (uint8_t)((value >> 24) & 0xFFu);
+}
+
+static uint32_t crc32_le_update(uint32_t crc, const uint8_t *data, uint8_t n) {
+    for (uint8_t i = 0; i < n; i++) {
+        crc ^= data[i];
+        for (uint8_t bit = 0; bit < 8; bit++) {
+            uint32_t mask = 0u - (crc & 1u);
+            crc = (crc >> 1) ^ (0xEDB88320u & mask);
+        }
+    }
+    return crc;
+}
+
 static uint8_t centered_axis_x_to_hid(int16_t value) {
     uint8_t scaled = dinput_axis_x_to_hid(value);
     return value == 0 ? 0x80 : scaled;
@@ -55,9 +131,28 @@ static uint8_t centered_axis_y_to_hid(int16_t value) {
     return value == 0 ? 0x80 : scaled;
 }
 
+static uint16_t centered_axis_x_to_hid16(int16_t value) {
+    return (uint16_t)((int32_t)value + 32768);
+}
+
+static uint16_t centered_axis_y_to_hid16(int16_t value) {
+    if (value == 0)
+        return 0x8000u;
+    return (uint16_t)((int32_t)32767 - value);
+}
+
+static uint16_t trigger_to_hid10(uint8_t value) {
+    return (uint16_t)(((uint32_t)value * 1023u + 127u) / 255u);
+}
+
 static void set_button(uint32_t *buttons, uint8_t one_based_index, bool active) {
     if (active && one_based_index >= 1 && one_based_index <= BT_HID_BUTTON_COUNT)
         *buttons |= 1u << (one_based_index - 1u);
+}
+
+static void set_button16(uint16_t *buttons, uint8_t one_based_index, bool active) {
+    if (active && one_based_index >= 1 && one_based_index <= 16)
+        *buttons |= (uint16_t)(1u << (one_based_index - 1u));
 }
 
 static bool xbutton(const gamepad_state_t *state, uint16_t mask) {
@@ -86,67 +181,110 @@ static uint32_t generic_buttons(const gamepad_state_t *state) {
     return out;
 }
 
-static uint32_t xbox_buttons(const gamepad_state_t *state) {
-    uint32_t out = 0;
-    set_button(&out, 1, xbutton(state, DINPUT_XINPUT_A));
-    set_button(&out, 2, xbutton(state, DINPUT_XINPUT_B));
-    set_button(&out, 3, xbutton(state, DINPUT_XINPUT_X));
-    set_button(&out, 4, xbutton(state, DINPUT_XINPUT_Y));
-    set_button(&out, 5, xbutton(state, DINPUT_XINPUT_LEFT_SHOULDER));
-    set_button(&out, 6, xbutton(state, DINPUT_XINPUT_RIGHT_SHOULDER));
-    set_button(&out, 7, state->left_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD);
-    set_button(&out, 8, state->right_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD);
-    set_button(&out, 9, xbutton(state, DINPUT_XINPUT_BACK));
-    set_button(&out, 10, xbutton(state, DINPUT_XINPUT_START));
-    set_button(&out, 11, xbutton(state, DINPUT_XINPUT_LEFT_THUMB));
-    set_button(&out, 12, xbutton(state, DINPUT_XINPUT_RIGHT_THUMB));
-    set_button(&out, 13, xbutton(state, DINPUT_XINPUT_GUIDE));
-    set_button(&out, 14, xbutton(state, DINPUT_XINPUT_DPAD_UP));
-    set_button(&out, 15, xbutton(state, DINPUT_XINPUT_DPAD_DOWN));
-    set_button(&out, 16, xbutton(state, DINPUT_XINPUT_DPAD_LEFT));
-    set_button(&out, 17, xbutton(state, DINPUT_XINPUT_DPAD_RIGHT));
+static uint8_t xbox_hat_from_dinput(uint8_t dinput_hat) {
+    return dinput_hat == DINPUT_HAT_NEUTRAL ? 0u : (uint8_t)(dinput_hat + 1u);
+}
+
+static uint16_t xbox_buttons(const gamepad_state_t *state) {
+    uint16_t out = 0;
+    set_button16(&out, 1, xbutton(state, DINPUT_XINPUT_A));
+    set_button16(&out, 2, xbutton(state, DINPUT_XINPUT_B));
+    set_button16(&out, 3, xbutton(state, DINPUT_XINPUT_X));
+    set_button16(&out, 4, xbutton(state, DINPUT_XINPUT_Y));
+    set_button16(&out, 5, xbutton(state, DINPUT_XINPUT_LEFT_SHOULDER));
+    set_button16(&out, 6, xbutton(state, DINPUT_XINPUT_RIGHT_SHOULDER));
+    set_button16(&out, 7, xbutton(state, DINPUT_XINPUT_BACK));
+    set_button16(&out, 8, xbutton(state, DINPUT_XINPUT_START));
+    set_button16(&out, 9, xbutton(state, DINPUT_XINPUT_LEFT_THUMB));
+    set_button16(&out, 10, xbutton(state, DINPUT_XINPUT_RIGHT_THUMB));
     return out;
 }
 
-static uint32_t playstation_buttons(const gamepad_state_t *state) {
-    uint32_t out = 0;
-    set_button(&out, 1, xbutton(state, DINPUT_XINPUT_X));
-    set_button(&out, 2, xbutton(state, DINPUT_XINPUT_A));
-    set_button(&out, 3, xbutton(state, DINPUT_XINPUT_B));
-    set_button(&out, 4, xbutton(state, DINPUT_XINPUT_Y));
-    set_button(&out, 5, xbutton(state, DINPUT_XINPUT_LEFT_SHOULDER));
-    set_button(&out, 6, xbutton(state, DINPUT_XINPUT_RIGHT_SHOULDER));
-    set_button(&out, 7, state->left_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD);
-    set_button(&out, 8, state->right_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD);
-    set_button(&out, 9, xbutton(state, DINPUT_XINPUT_BACK));
-    set_button(&out, 10, xbutton(state, DINPUT_XINPUT_START));
-    set_button(&out, 11, xbutton(state, DINPUT_XINPUT_LEFT_THUMB));
-    set_button(&out, 12, xbutton(state, DINPUT_XINPUT_RIGHT_THUMB));
-    set_button(&out, 13, xbutton(state, DINPUT_XINPUT_GUIDE));
-    set_button(&out, 14, xbutton(state, DINPUT_XINPUT_DPAD_UP));
-    set_button(&out, 15, xbutton(state, DINPUT_XINPUT_DPAD_DOWN));
-    set_button(&out, 16, xbutton(state, DINPUT_XINPUT_DPAD_LEFT));
-    set_button(&out, 17, xbutton(state, DINPUT_XINPUT_DPAD_RIGHT));
-    return out;
+static void build_generic_report(const gamepad_state_t *state, bt_hid_report_t *out) {
+    out->len = BT_HID_GENERIC_WIRE_REPORT_LEN;
+    out->report_id = BT_HID_GENERIC_REPORT_ID;
+    out->bytes[0] = BT_HID_GENERIC_REPORT_ID;
+
+    uint32_t buttons = generic_buttons(state);
+    uint8_t hat = dinput_hat_from_buttons(state->buttons);
+
+    out->bytes[1] = (uint8_t)(buttons & 0xFFu);
+    out->bytes[2] = (uint8_t)((buttons >> 8) & 0xFFu);
+    out->bytes[3] = (uint8_t)(((buttons >> 16) & 0x0Fu) | ((hat & 0x0Fu) << 4));
+    out->bytes[4] = centered_axis_x_to_hid(state->left_x);
+    out->bytes[5] = centered_axis_y_to_hid(state->left_y);
+    out->bytes[6] = centered_axis_x_to_hid(state->right_x);
+    out->bytes[7] = centered_axis_y_to_hid(state->right_y);
+    out->bytes[8] = state->left_trigger;
+    out->bytes[9] = state->right_trigger;
 }
 
-static uint32_t buttons_for_target(bt_hid_target_t target, const gamepad_state_t *state) {
-    switch (target) {
-    case BT_HID_TARGET_XBOX:
-        return xbox_buttons(state);
-    case BT_HID_TARGET_PLAYSTATION:
-        return playstation_buttons(state);
-    case BT_HID_TARGET_GENERIC:
-    default:
-        return generic_buttons(state);
-    }
+static void build_xbox_report(const gamepad_state_t *state, bt_hid_report_t *out) {
+    out->len = BT_HID_XBOX_WIRE_REPORT_LEN;
+    out->report_id = BT_HID_XBOX_REPORT_ID;
+    out->bytes[0] = BT_HID_XBOX_REPORT_ID;
+
+    put_le16(&out->bytes[1], centered_axis_x_to_hid16(state->left_x));
+    put_le16(&out->bytes[3], centered_axis_y_to_hid16(state->left_y));
+    put_le16(&out->bytes[5], centered_axis_x_to_hid16(state->right_x));
+    put_le16(&out->bytes[7], centered_axis_y_to_hid16(state->right_y));
+    put_le16(&out->bytes[9], trigger_to_hid10(state->left_trigger) & 0x03FFu);
+    put_le16(&out->bytes[11], trigger_to_hid10(state->right_trigger) & 0x03FFu);
+    out->bytes[13] = xbox_hat_from_dinput(dinput_hat_from_buttons(state->buttons)) & 0x0Fu;
+    put_le16(&out->bytes[14], xbox_buttons(state) & 0x03FFu);
+}
+
+static void finish_ds4_crc(bt_hid_report_t *out) {
+    uint8_t seed = 0xA1u;
+    uint32_t crc = crc32_le_update(0xFFFFFFFFu, &seed, 1u);
+    crc = ~crc32_le_update(crc, out->bytes, BT_HID_PS4_WIRE_REPORT_LEN - 4u);
+    put_le32(&out->bytes[BT_HID_PS4_WIRE_REPORT_LEN - 4u], crc);
+}
+
+static void build_ds4_report(const gamepad_state_t *state, bt_hid_report_t *out) {
+    dinput_report_t usb_report;
+    dinput_build_ps4_report(state, 0, &usb_report);
+
+    out->len = BT_HID_PS4_WIRE_REPORT_LEN;
+    out->report_id = BT_HID_PS4_REPORT_ID;
+    out->bytes[0] = BT_HID_PS4_REPORT_ID;
+    out->bytes[1] = 0xC0u;
+    out->bytes[2] = 0x00u;
+    out->bytes[3] = usb_report.bytes[1];
+    out->bytes[4] = usb_report.bytes[2];
+    out->bytes[5] = usb_report.bytes[3];
+    out->bytes[6] = usb_report.bytes[4];
+    out->bytes[7] = usb_report.bytes[5];
+    out->bytes[8] = usb_report.bytes[6];
+    out->bytes[9] = usb_report.bytes[7];
+    out->bytes[10] = usb_report.bytes[8];
+    out->bytes[11] = usb_report.bytes[9];
+    out->bytes[12] = usb_report.bytes[10];
+    out->bytes[13] = usb_report.bytes[11];
+    out->bytes[32] = 0x09u;
+    out->bytes[35] = 0x01u;
+    finish_ds4_crc(out);
 }
 
 const uint8_t *bt_hid_descriptor(bt_hid_target_t target, uint16_t *len) {
-    (void)target;
+    const uint8_t *descriptor = bt_hid_gamepad_descriptor;
+    uint16_t descriptor_len = (uint16_t)sizeof(bt_hid_gamepad_descriptor);
+    switch (target) {
+    case BT_HID_TARGET_XBOX:
+        descriptor = bt_hid_xbox_descriptor;
+        descriptor_len = (uint16_t)sizeof(bt_hid_xbox_descriptor);
+        break;
+    case BT_HID_TARGET_PLAYSTATION:
+        descriptor = bt_hid_ds4_descriptor;
+        descriptor_len = (uint16_t)sizeof(bt_hid_ds4_descriptor);
+        break;
+    case BT_HID_TARGET_GENERIC:
+    default:
+        break;
+    }
     if (len)
-        *len = (uint16_t)sizeof(bt_hid_gamepad_descriptor);
-    return bt_hid_gamepad_descriptor;
+        *len = descriptor_len;
+    return descriptor;
 }
 
 const char *bt_hid_target_label(bt_hid_target_t target) {
@@ -164,9 +302,9 @@ const char *bt_hid_target_label(bt_hid_target_t target) {
 const char *bt_hid_local_name(bt_hid_target_t target) {
     switch (target) {
     case BT_HID_TARGET_XBOX:
-        return "CouchLink BT Xbox 00:00:00:00:00:00";
+        return "Xbox Wireless Controller";
     case BT_HID_TARGET_PLAYSTATION:
-        return "CouchLink BT PS 00:00:00:00:00:00";
+        return "Wireless Controller";
     case BT_HID_TARGET_GENERIC:
     default:
         return "CouchLink BT HID 00:00:00:00:00:00";
@@ -176,44 +314,64 @@ const char *bt_hid_local_name(bt_hid_target_t target) {
 const char *bt_hid_service_name(bt_hid_target_t target) {
     switch (target) {
     case BT_HID_TARGET_XBOX:
-        return "CouchLink Bluetooth Xbox HID";
+        return "Xbox Wireless Controller";
     case BT_HID_TARGET_PLAYSTATION:
-        return "CouchLink Bluetooth PlayStation HID";
+        return "Wireless Controller";
     case BT_HID_TARGET_GENERIC:
     default:
         return "CouchLink Bluetooth HID";
     }
 }
 
+uint16_t bt_hid_vendor_id(bt_hid_target_t target) {
+    switch (target) {
+    case BT_HID_TARGET_XBOX:
+        return 0x045Eu;
+    case BT_HID_TARGET_PLAYSTATION:
+        return 0x054Cu;
+    case BT_HID_TARGET_GENERIC:
+    default:
+        return 0x2E8Au;
+    }
+}
+
 uint16_t bt_hid_product_id(bt_hid_target_t target) {
     switch (target) {
     case BT_HID_TARGET_XBOX:
-        return 0xCB11u;
+        return 0x02FDu;
     case BT_HID_TARGET_PLAYSTATION:
-        return 0xCB12u;
+        return 0x05C4u;
     case BT_HID_TARGET_GENERIC:
     default:
         return 0xCB10u;
     }
 }
 
+uint16_t bt_hid_bcd_version(bt_hid_target_t target) {
+    switch (target) {
+    case BT_HID_TARGET_XBOX:
+        return 0x0903u;
+    case BT_HID_TARGET_PLAYSTATION:
+        return 0x0100u;
+    case BT_HID_TARGET_GENERIC:
+    default:
+        return 0x0100u;
+    }
+}
+
 void bt_hid_build_report(bt_hid_target_t target, const gamepad_state_t *state,
                          bt_hid_report_t *out) {
     memset(out, 0, sizeof(*out));
-    out->len = BT_HID_WIRE_REPORT_LEN;
-    out->report_id = BT_HID_REPORT_ID;
-    out->bytes[0] = BT_HID_REPORT_ID;
-
-    uint32_t buttons = buttons_for_target(target, state);
-    uint8_t hat = dinput_hat_from_buttons(state->buttons);
-
-    out->bytes[1] = (uint8_t)(buttons & 0xFFu);
-    out->bytes[2] = (uint8_t)((buttons >> 8) & 0xFFu);
-    out->bytes[3] = (uint8_t)(((buttons >> 16) & 0x0Fu) | ((hat & 0x0Fu) << 4));
-    out->bytes[4] = centered_axis_x_to_hid(state->left_x);
-    out->bytes[5] = centered_axis_y_to_hid(state->left_y);
-    out->bytes[6] = centered_axis_x_to_hid(state->right_x);
-    out->bytes[7] = centered_axis_y_to_hid(state->right_y);
-    out->bytes[8] = state->left_trigger;
-    out->bytes[9] = state->right_trigger;
+    switch (target) {
+    case BT_HID_TARGET_XBOX:
+        build_xbox_report(state, out);
+        break;
+    case BT_HID_TARGET_PLAYSTATION:
+        build_ds4_report(state, out);
+        break;
+    case BT_HID_TARGET_GENERIC:
+    default:
+        build_generic_report(state, out);
+        break;
+    }
 }

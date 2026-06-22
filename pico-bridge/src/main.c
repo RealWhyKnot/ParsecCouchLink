@@ -431,13 +431,13 @@ int main(void) {
             persona_name = "generic HID gamepad";
             break;
         case RUN_PERSONA_BT_HID:
-            persona_name = "Bluetooth";
+            persona_name = "Bluetooth generic HID";
             break;
         case RUN_PERSONA_BT_XBOX:
-            persona_name = "Bluetooth Xbox button order";
+            persona_name = "Bluetooth Xbox Wireless Controller";
             break;
         case RUN_PERSONA_BT_PS:
-            persona_name = "Bluetooth PlayStation button order";
+            persona_name = "Bluetooth DualShock 4";
             break;
         }
     }

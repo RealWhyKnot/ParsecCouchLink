@@ -293,9 +293,9 @@ impl Persona {
             Persona::XboxOne => "Xbox One",
             Persona::Debug => "Debug packet capture",
             Persona::GenericHid => "Generic HID gamepad",
-            Persona::BluetoothHid => "Bluetooth",
-            Persona::BluetoothXbox => "Bluetooth Xbox button order",
-            Persona::BluetoothPlaystation => "Bluetooth PlayStation button order",
+            Persona::BluetoothHid => "Bluetooth generic HID",
+            Persona::BluetoothXbox => "Bluetooth Xbox Wireless Controller",
+            Persona::BluetoothPlaystation => "Bluetooth DualShock 4",
         }
     }
 
