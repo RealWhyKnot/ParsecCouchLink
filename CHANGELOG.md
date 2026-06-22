@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.22.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.22.0-beta) -- 2026-06-22
+
 ### Added
 - **bluetooth:** Mimic supported controller profiles (66948a7)
 - **bluetooth:** Report receiver pairing status (bffe562)
