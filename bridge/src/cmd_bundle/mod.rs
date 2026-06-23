@@ -17,17 +17,15 @@ mod sysinfo;
 mod usb_enum;
 mod usb_packet_summary;
 mod usb_packets;
+mod zip_writer;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::Local;
-use zip::write::SimpleFileOptions;
-use zip::ZipWriter;
 
 use crate::{
     cmd_auto, cmd_persona, cmd_run, cmd_usb_diag, config, debug_packets, journal, pico_cache,
@@ -48,32 +46,29 @@ use bluetooth_report::{
     build_bluetooth_report, format_bluetooth_report_json, format_bluetooth_report_text,
     BluetoothReport,
 };
-use collect::{bundle_log_prefix, collect_crash_file_names, collect_setup_transcript_names};
+use collect::{collect_crash_file_names, collect_setup_transcript_names};
 use debug_capture::{
     debug_capture_evidence_report_json, debug_capture_overall_status, debug_capture_verdict_text,
 };
 use host_snapshot::capture_host_snapshots;
 use manifest::{build_manifest, ManifestHostSnapshot, ManifestPicoCapture};
 use pico_diag::{capture_pico_diag, DiagOutcome};
-use redact::redact_bundle_text;
 use sysinfo::{build_system_info, run_doctor_silently};
 use usb_enum::{
-    capture_usb_devices, capture_windows_usb_events, classify_pico_enum, parent_only_stub_text,
-    vendor_not_found_stub_text, PicoEnumState,
+    capture_usb_devices, capture_windows_usb_events, classify_pico_enum, PicoEnumState,
 };
 use usb_packet_summary::{
-    control_transfers_text_for_sources, control_transfers_text_for_text,
-    enumeration_analysis_text_for_sources, enumeration_analysis_text_for_text,
-    hid_reports_text_for_sources, hid_reports_text_for_text, packet_timeline_text_for_sources,
-    packet_timeline_text_for_text, records_jsonl_for_sources, records_jsonl_for_text,
-    summarize_sources, summarize_text, UsbPacketSummarySource,
+    control_transfers_text_for_sources, enumeration_analysis_text_for_sources,
+    hid_reports_text_for_sources, packet_timeline_text_for_sources, records_jsonl_for_sources,
+    summarize_sources, UsbPacketSummarySource,
 };
 use usb_packets::{
-    aggregate_initial_usb_capture_text, aggregate_usb_packets, count_retained_debug_packet_lines,
+    aggregate_initial_usb_capture_text, count_retained_debug_packet_lines,
     count_usb_packet_event_lines, count_usb_packet_harvest_lines, count_usb_packet_lines,
     count_usb_packet_stats_lines, duration_ms_u64, usb_packets_text_from_debug_snapshot,
     usb_packets_text_from_diag,
 };
+use zip_writer::{write_bundle_zip, BundleZipContents};
 
 const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
 const BUNDLE_PERSONA_WAIT: Duration = Duration::from_secs(60);
@@ -504,319 +499,38 @@ pub async fn build_bundle(out_path: PathBuf) -> Result<BundleSummary> {
 
     let doctor_text = run_doctor_silently().await;
 
-    let f = std::fs::File::create(&out_path)
-        .with_context(|| format!("creating {}", out_path.display()))?;
-    let mut zip = ZipWriter::new(f);
-    let opts = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o644);
-
-    zip.start_file("manifest.json", opts)?;
-    zip.write_all(redact_bundle_text(&manifest_json).as_bytes())?;
-
-    zip.start_file("bundle-capture.txt", opts)?;
-    zip.write_all(redact_bundle_text(&capture_log.text()).as_bytes())?;
-
-    zip.start_file("doctor.txt", opts)?;
-    zip.write_all(redact_bundle_text(&doctor_text).as_bytes())?;
-
-    // Always write pico-diag.txt. The body is a self-narrating stub
-    // when capture failed; the per-variant message names the failing
-    // step so the bundle is actionable without reading the bridge log.
-    // VendorNotFound and parent-only VendorOpenFailed are special: their
-    // stub text depends on the USB topology captured in pico_enum_state.
-    let pico_diag_body = match (&diag, &pico_enum_state) {
-        (DiagOutcome::VendorNotFound, _) => vendor_not_found_stub_text(&pico_enum_state),
-        (DiagOutcome::VendorOpenFailed { .. }, PicoEnumState::EnumeratedParentOnly) => {
-            parent_only_stub_text()
-        }
-        _ => diag.stub_text(),
-    };
-    zip.start_file("pico-diag.txt", opts)?;
-    zip.write_all(redact_bundle_text(&pico_diag_body).as_bytes())?;
-
-    // usb-diag.txt: structured run-mode USB counters from the Pico. This
-    // complements pico-diag.txt's firmware log ring with the current USB
-    // mount, descriptor, input-report, and host OUT counters.
-    zip.start_file("usb-diag.txt", opts)?;
-    zip.write_all(redact_bundle_text(&usb_diag.text).as_bytes())?;
-
-    zip.start_file("adapter-connection.txt", opts)?;
-    zip.write_all(redact_bundle_text(&adapter_connection_text).as_bytes())?;
-
-    zip.start_file("adapter-connection.json", opts)?;
-    zip.write_all(redact_bundle_text(&adapter_connection_json).as_bytes())?;
-
-    zip.start_file("initial-usb-capture.txt", opts)?;
-    zip.write_all(redact_bundle_text(&initial_usb_capture_text).as_bytes())?;
-
-    zip.start_file("adapter-survey.txt", opts)?;
-    zip.write_all(redact_bundle_text(&adapter_survey_text).as_bytes())?;
-
-    zip.start_file("adapter-survey.json", opts)?;
-    zip.write_all(redact_bundle_text(&adapter_survey_json).as_bytes())?;
-
-    zip.start_file("bluetooth-report.txt", opts)?;
-    zip.write_all(redact_bundle_text(&bluetooth_report_text).as_bytes())?;
-
-    zip.start_file("bluetooth-report.json", opts)?;
-    zip.write_all(redact_bundle_text(&bluetooth_report_json).as_bytes())?;
-
-    for pico in &per_pico_captures {
-        let base = pico.manifest.path.trim_end_matches('/');
-        zip.start_file(format!("{base}/state.json"), opts)?;
-        zip.write_all(redact_bundle_text(&pico.state_json).as_bytes())?;
-
-        zip.start_file(format!("{base}/pico-diag.txt"), opts)?;
-        zip.write_all(redact_bundle_text(&pico.pico_diag_text).as_bytes())?;
-
-        zip.start_file(format!("{base}/usb-diag.txt"), opts)?;
-        zip.write_all(redact_bundle_text(&pico.usb_diag_text).as_bytes())?;
-
-        zip.start_file(format!("{base}/initial-usb-capture.txt"), opts)?;
-        zip.write_all(redact_bundle_text(&pico.initial_usb_capture_text).as_bytes())?;
-
-        if !pico.adapter_survey_text.is_empty() {
-            zip.start_file(format!("{base}/adapter-survey.txt"), opts)?;
-            zip.write_all(redact_bundle_text(&pico.adapter_survey_text).as_bytes())?;
-        }
-
-        if !pico.adapter_survey_json.is_empty() {
-            zip.start_file(format!("{base}/adapter-survey.json"), opts)?;
-            zip.write_all(redact_bundle_text(&pico.adapter_survey_json).as_bytes())?;
-        }
-
-        if !pico.bluetooth_report_text.is_empty() {
-            zip.start_file(format!("{base}/bluetooth-report.txt"), opts)?;
-            zip.write_all(redact_bundle_text(&pico.bluetooth_report_text).as_bytes())?;
-        }
-
-        if !pico.bluetooth_report_json.is_empty() {
-            zip.start_file(format!("{base}/bluetooth-report.json"), opts)?;
-            zip.write_all(redact_bundle_text(&pico.bluetooth_report_json).as_bytes())?;
-        }
-
-        zip.start_file(format!("{base}/usb-packets.txt"), opts)?;
-        zip.write_all(redact_bundle_text(&pico.usb_packets_text).as_bytes())?;
-
-        zip.start_file(format!("{base}/usb-packets-summary.json"), opts)?;
-        let summary_json = serde_json::to_string_pretty(&summarize_text(&pico.usb_packets_text))?;
-        zip.write_all(redact_bundle_text(&summary_json).as_bytes())?;
-
-        zip.start_file(format!("{base}/usb-packets.jsonl"), opts)?;
-        let records_jsonl = records_jsonl_for_text(
-            &pico.manifest.uid,
-            &format!("{base}/usb-packets.txt"),
-            &pico.usb_packets_text,
-        )?;
-        zip.write_all(redact_bundle_text(&records_jsonl).as_bytes())?;
-
-        zip.start_file(format!("{base}/usb-control-transfers.txt"), opts)?;
-        let control_transfers = control_transfers_text_for_text(
-            &pico.manifest.uid,
-            &format!("{base}/usb-packets.txt"),
-            &pico.usb_packets_text,
-        );
-        zip.write_all(redact_bundle_text(&control_transfers).as_bytes())?;
-
-        zip.start_file(format!("{base}/usb-hid-reports.txt"), opts)?;
-        let hid_reports = hid_reports_text_for_text(
-            &pico.manifest.uid,
-            &format!("{base}/usb-packets.txt"),
-            &pico.usb_packets_text,
-        );
-        zip.write_all(redact_bundle_text(&hid_reports).as_bytes())?;
-
-        zip.start_file(format!("{base}/usb-packet-timeline.txt"), opts)?;
-        let packet_timeline = packet_timeline_text_for_text(
-            &pico.manifest.uid,
-            &format!("{base}/usb-packets.txt"),
-            &pico.usb_packets_text,
-        );
-        zip.write_all(redact_bundle_text(&packet_timeline).as_bytes())?;
-
-        zip.start_file(format!("{base}/usb-enumeration-analysis.txt"), opts)?;
-        let enumeration_analysis = enumeration_analysis_text_for_text(
-            &pico.manifest.uid,
-            &format!("{base}/usb-packets.txt"),
-            &pico.usb_packets_text,
-        );
-        zip.write_all(redact_bundle_text(&enumeration_analysis).as_bytes())?;
-    }
-
-    zip.start_file("usb-packets.txt", opts)?;
-    zip.write_all(
-        redact_bundle_text(&aggregate_usb_packets(
-            &per_pico_captures,
-            &retained_debug_packet_logs,
-        ))
-        .as_bytes(),
-    )?;
-
-    zip.start_file("usb-packets-summary.json", opts)?;
-    zip.write_all(redact_bundle_text(&usb_packet_summary_json).as_bytes())?;
-
-    zip.start_file("usb-packets.jsonl", opts)?;
-    zip.write_all(redact_bundle_text(&usb_packet_records_jsonl).as_bytes())?;
-
-    zip.start_file("usb-control-transfers.txt", opts)?;
-    zip.write_all(redact_bundle_text(&usb_control_transfers_text).as_bytes())?;
-
-    zip.start_file("usb-hid-reports.txt", opts)?;
-    zip.write_all(redact_bundle_text(&usb_hid_reports_text).as_bytes())?;
-
-    zip.start_file("usb-packet-timeline.txt", opts)?;
-    zip.write_all(redact_bundle_text(&usb_packet_timeline_text).as_bytes())?;
-
-    zip.start_file("usb-enumeration-analysis.txt", opts)?;
-    zip.write_all(redact_bundle_text(&usb_enumeration_analysis_text).as_bytes())?;
-
-    zip.start_file("debug-capture-verdict.txt", opts)?;
-    zip.write_all(redact_bundle_text(&debug_capture_verdict).as_bytes())?;
-
-    zip.start_file("debug-capture-evidence.json", opts)?;
-    zip.write_all(redact_bundle_text(&debug_capture_evidence_json).as_bytes())?;
-
-    for log in &retained_debug_packet_logs {
-        zip.start_file(format!("debug-packets/{}", log.name), opts)?;
-        zip.write_all(redact_bundle_text(&log.text).as_bytes())?;
-    }
-
-    if let Some(text) = cache_current.as_ref() {
-        zip.start_file("diagnostics/pico-state-current.json", opts)?;
-        zip.write_all(redact_bundle_text(text).as_bytes())?;
-    }
-    if let Some(text) = cache_history.as_ref() {
-        zip.start_file("diagnostics/pico-state-history.jsonl", opts)?;
-        zip.write_all(redact_bundle_text(text).as_bytes())?;
-    }
-
-    for snapshot in &host_snapshots {
-        zip.start_file(snapshot.manifest.path.as_str(), opts)?;
-        zip.write_all(redact_bundle_text(&snapshot.text).as_bytes())?;
-    }
-
-    // system-info.txt: always present. Captures the Windows build,
-    // couchlink version, last-known Pico identity, short hostname.
-    zip.start_file("system-info.txt", opts)?;
-    zip.write_all(redact_bundle_text(&system_info).as_bytes())?;
-
-    // usb-devices.txt: pnputil dump if available (Windows 10 1903+),
-    // otherwise a SetupAPI-via-serialport fallback so the bundle always
-    // has *something* describing the USB topology at bundle time.
-    if let Some((text, method)) = usb_devices.as_ref() {
-        zip.start_file("usb-devices.txt", opts)?;
-        zip.write_all(format!("# capture method: {method}\n\n").as_bytes())?;
-        zip.write_all(redact_bundle_text(text).as_bytes())?;
-    } else {
-        zip.start_file("usb-devices.txt", opts)?;
-        zip.write_all(
-            b"(USB device enumeration unavailable: pnputil is missing AND the serialport \
-              fallback returned an error. Run `pnputil /enum-devices /class USB /connected` \
-              manually and attach the output.)",
-        )?;
-    }
-
-    // usb-events.txt: recent OS-level USB events from the Windows event
-    // log. Catches the class of failure that pnputil can't show -- driver
-    // bind failures, descriptor request timeouts, surprise removals --
-    // because those events surface in the System log via the usbhub /
-    // usbser / Kernel-PnP providers rather than in the pnputil snapshot.
-    if let Some(text) = usb_events.as_ref() {
-        zip.start_file("usb-events.txt", opts)?;
-        zip.write_all(b"# Windows event log entries from the last 15 minutes\n")?;
-        zip.write_all(b"# filtered to USB / usbhub / usbser / Kernel-PnP providers\n\n")?;
-        zip.write_all(redact_bundle_text(text).as_bytes())?;
-    } else {
-        zip.start_file("usb-events.txt", opts)?;
-        zip.write_all(
-            b"(Get-WinEvent returned no output -- either no recent USB events were \
-              recorded, the Windows PowerShell event log cmdlet timed out, or the \
-              capture script returned an error. This is not necessarily a problem; \
-              uneventful enumeration leaves no trace.)",
-        )?;
-    }
-
-    // Crash files from crash_dir(). Errors at each step are logged at
-    // debug -- a locked-by-antivirus crash dir, a permissions change,
-    // or a vanished file used to be invisible.
-    if let Ok(crash_dir) = config::crash_dir() {
-        if crash_dir.is_dir() {
-            match std::fs::read_dir(&crash_dir) {
-                Ok(entries) => {
-                    for entry in entries {
-                        let entry = match entry {
-                            Ok(e) => e,
-                            Err(e) => {
-                                tracing::debug!(
-                                    "bundle: could not read entry in {}: {e}",
-                                    crash_dir.display()
-                                );
-                                continue;
-                            }
-                        };
-                        let p = entry.path();
-                        if !p.is_file() {
-                            continue;
-                        }
-                        let Some(name) = p.file_name() else { continue };
-                        match std::fs::read(&p) {
-                            Ok(bytes) => {
-                                zip.start_file(
-                                    format!("crashes/{}", name.to_string_lossy()),
-                                    opts,
-                                )?;
-                                let text = String::from_utf8_lossy(&bytes);
-                                zip.write_all(redact_bundle_text(&text).as_bytes())?;
-                            }
-                            Err(e) => {
-                                tracing::debug!(
-                                    "bundle: could not read crash file {}: {e}",
-                                    p.display(),
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "bundle: could not enumerate crash dir {}: {e}",
-                        crash_dir.display()
-                    );
-                }
-            }
-        }
-    }
-
-    // Logs: last 5 couchlink.*.log (bridge, written by tracing-appender's
-    // daily rotation as couchlink.YYYY-MM-DD.log) and last 5 setup-*.log
-    // (PowerShell transcripts from setup.ps1).
-    // The bridge prefix was previously "couchlink-" which never matched
-    // tracing-appender's actual filename format and silently produced
-    // bundles with zero bridge logs.
-    if let Ok(log_dir) = config::log_dir() {
-        bundle_log_prefix(&log_dir, "couchlink.", &mut zip, opts)?;
-        bundle_log_prefix(&log_dir, "setup-", &mut zip, opts)?;
-    }
-
-    // State journal: short append-only timeline of bridge events. The
-    // rotating log has full detail; the journal has the headlines.
-    if let Some(jp) = journal::path() {
-        if jp.is_file() {
-            match std::fs::read(&jp) {
-                Ok(bytes) => {
-                    zip.start_file("state-journal.log", opts)?;
-                    let text = String::from_utf8_lossy(&bytes);
-                    zip.write_all(redact_bundle_text(&text).as_bytes())?;
-                }
-                Err(e) => {
-                    tracing::debug!("bundle: could not read state journal: {e}");
-                }
-            }
-        }
-    }
-
-    zip.finish()?;
+    write_bundle_zip(BundleZipContents {
+        out_path: &out_path,
+        manifest_json: &manifest_json,
+        capture_log: &capture_log,
+        doctor_text: &doctor_text,
+        diag: &diag,
+        pico_enum_state: &pico_enum_state,
+        usb_diag: &usb_diag,
+        adapter_connection_text: &adapter_connection_text,
+        adapter_connection_json: &adapter_connection_json,
+        initial_usb_capture_text: &initial_usb_capture_text,
+        adapter_survey_text: &adapter_survey_text,
+        adapter_survey_json: &adapter_survey_json,
+        bluetooth_report_text: &bluetooth_report_text,
+        bluetooth_report_json: &bluetooth_report_json,
+        per_pico_captures: &per_pico_captures,
+        retained_debug_packet_logs: &retained_debug_packet_logs,
+        usb_packet_summary_json: &usb_packet_summary_json,
+        usb_packet_records_jsonl: &usb_packet_records_jsonl,
+        usb_control_transfers_text: &usb_control_transfers_text,
+        usb_hid_reports_text: &usb_hid_reports_text,
+        usb_packet_timeline_text: &usb_packet_timeline_text,
+        usb_enumeration_analysis_text: &usb_enumeration_analysis_text,
+        debug_capture_verdict: &debug_capture_verdict,
+        debug_capture_evidence_json: &debug_capture_evidence_json,
+        cache_current: &cache_current,
+        cache_history: &cache_history,
+        host_snapshots: &host_snapshots,
+        system_info: &system_info,
+        usb_devices: &usb_devices,
+        usb_events: &usb_events,
+    })?;
     tracing::info!(
         "bundle: run finished out_path={} per_pico={} usb_packets={} retained_debug_packets={} retained_debug_packet_logs={} host_snapshots={} cache_included={}",
         out_path.display(),
@@ -2190,11 +1904,12 @@ pub async fn run(output: Option<PathBuf>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::usb_packets::aggregate_usb_packets;
     use super::{
         adapter_connection_json, adapter_connection_report, adapter_connection_text,
         adapter_survey_bundle_json, adapter_survey_candidates, adapter_survey_report_json,
         adapter_survey_text, aggregate_adapter_survey_text, aggregate_bluetooth_report_text,
-        aggregate_initial_usb_capture_text, aggregate_usb_packets, bluetooth_report_bundle_json,
+        aggregate_initial_usb_capture_text, bluetooth_report_bundle_json,
         bluetooth_usb_packets_stub, build_adapter_survey_report, build_bluetooth_report,
         count_usb_packet_event_lines, count_usb_packet_harvest_lines, count_usb_packet_lines,
         count_usb_packet_stats_lines, debug_capture_evidence_report_json,
