@@ -4,8 +4,8 @@
 # locally and in CI.
 #
 #   cmake -S pico-bridge/tests -B build-host-tests
-#   cmake --build build-host-tests
-#   ctest --test-dir build-host-tests --output-on-failure
+#   cmake --build build-host-tests --config Debug
+#   ctest --test-dir build-host-tests -C Debug --output-on-failure
 cmake_minimum_required(VERSION 3.13)
 project(couchlink_host_tests C)
 

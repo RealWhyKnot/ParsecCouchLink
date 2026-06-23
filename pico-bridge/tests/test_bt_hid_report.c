@@ -37,6 +37,10 @@ static uint16_t read_le16(const uint8_t *src) {
     return (uint16_t)src[0] | ((uint16_t)src[1] << 8);
 }
 
+static uint32_t read_le24(const uint8_t *src) {
+    return (uint32_t)src[0] | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16);
+}
+
 static uint32_t read_le32(const uint8_t *src) {
     return (uint32_t)src[0] | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16) |
            ((uint32_t)src[3] << 24);
@@ -63,6 +67,17 @@ static bool descriptor_contains_report_id(const uint8_t *descriptor, uint16_t le
                                           uint8_t report_id) {
     for (uint16_t i = 0; i + 1 < len; i++) {
         if (descriptor[i] == 0x85 && descriptor[i + 1] == report_id)
+            return true;
+    }
+    return false;
+}
+
+static bool descriptor_contains_sequence(const uint8_t *descriptor, uint16_t len,
+                                         const uint8_t *needle, uint16_t needle_len) {
+    if (!descriptor || !needle || needle_len == 0 || needle_len > len)
+        return false;
+    for (uint16_t i = 0; i + needle_len <= len; i++) {
+        if (memcmp(&descriptor[i], needle, needle_len) == 0)
             return true;
     }
     return false;
@@ -148,13 +163,18 @@ static void generic_report_maps_core_controls(void) {
 static void xbox_wireless_profile_matches_expected_identity_and_shape(void) {
     uint16_t len = 0;
     const uint8_t *descriptor = bt_hid_descriptor(BT_HID_TARGET_XBOX, &len);
+    const uint8_t sim_brake_usage[] = {0x05, 0x02, 0x09, 0xC5};
+    const uint8_t consumer_record_usage[] = {0x05, 0x0C, 0x0A, 0xB2, 0x00};
 
     CHECK(descriptor != NULL);
-    CHECK(len == 306u);
+    CHECK(len == 283u);
     CHECK(descriptor_contains_report_id(descriptor, len, 0x01));
-    CHECK(descriptor_contains_report_id(descriptor, len, 0x02));
     CHECK(descriptor_contains_report_id(descriptor, len, 0x03));
-    CHECK(descriptor_contains_report_id(descriptor, len, 0x04));
+    CHECK(!descriptor_contains_report_id(descriptor, len, 0x02));
+    CHECK(!descriptor_contains_report_id(descriptor, len, 0x04));
+    CHECK(descriptor_contains_sequence(descriptor, len, sim_brake_usage, sizeof(sim_brake_usage)));
+    CHECK(descriptor_contains_sequence(descriptor, len, consumer_record_usage,
+                                       sizeof(consumer_record_usage)));
     CHECK(strcmp(bt_hid_local_name(BT_HID_TARGET_XBOX), "Xbox Wireless Controller") == 0);
     CHECK(strcmp(bt_hid_service_name(BT_HID_TARGET_XBOX), "Xbox Wireless Controller") == 0);
     CHECK(bt_hid_vendor_id(BT_HID_TARGET_XBOX) == 0x045Eu);
@@ -173,11 +193,12 @@ static void xbox_wireless_profile_matches_expected_identity_and_shape(void) {
     CHECK((read_le16(&report.bytes[9]) & 0x03FFu) == 0);
     CHECK((read_le16(&report.bytes[11]) & 0x03FFu) == 0);
     CHECK((report.bytes[13] & 0x0Fu) == 0);
-    CHECK((read_le16(&report.bytes[14]) & 0x03FFu) == 0);
+    CHECK(read_le24(&report.bytes[14]) == 0);
 
     gamepad_state_t state = {0};
     state.buttons = DINPUT_XINPUT_A | DINPUT_XINPUT_X | DINPUT_XINPUT_DPAD_UP |
-                    DINPUT_XINPUT_DPAD_RIGHT | DINPUT_XINPUT_START;
+                    DINPUT_XINPUT_DPAD_RIGHT | DINPUT_XINPUT_START | DINPUT_XINPUT_BACK |
+                    DINPUT_XINPUT_GUIDE | DINPUT_XINPUT_LEFT_THUMB | DINPUT_XINPUT_RIGHT_THUMB;
     state.left_trigger = 255;
     state.left_x = -32768;
     state.left_y = 32767;
@@ -190,9 +211,13 @@ static void xbox_wireless_profile_matches_expected_identity_and_shape(void) {
     CHECK(read_le16(&report.bytes[7]) == 0xFFFFu);
     CHECK((read_le16(&report.bytes[9]) & 0x03FFu) == 0x03FFu);
     CHECK((report.bytes[13] & 0x0Fu) == 0x02u);
-    CHECK((read_le16(&report.bytes[14]) & (1u << 0)) != 0); // A
-    CHECK((read_le16(&report.bytes[14]) & (1u << 2)) != 0); // X
-    CHECK((read_le16(&report.bytes[14]) & (1u << 7)) != 0); // Start
+    CHECK((read_le24(&report.bytes[14]) & (1u << 0)) != 0);  // A
+    CHECK((read_le24(&report.bytes[14]) & (1u << 3)) != 0);  // X
+    CHECK((read_le24(&report.bytes[14]) & (1u << 10)) != 0); // View
+    CHECK((read_le24(&report.bytes[14]) & (1u << 11)) != 0); // Menu
+    CHECK((read_le24(&report.bytes[14]) & (1u << 12)) != 0); // Xbox
+    CHECK((read_le24(&report.bytes[14]) & (1u << 13)) != 0); // Left stick
+    CHECK((read_le24(&report.bytes[14]) & (1u << 14)) != 0); // Right stick
 }
 
 static void ds4_profile_matches_expected_identity_and_shape(void) {
@@ -278,16 +303,13 @@ static void xbox_control_reports_are_exact(void) {
     gamepad_state_t state = {0};
     uint8_t payload[BT_HID_MAX_WIRE_REPORT_LEN];
 
-    uint16_t len =
-        bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_INPUT,
-                                  BT_HID_XBOX_SYSTEM_REPORT_ID, &state, payload, sizeof(payload));
-    CHECK(len == BT_HID_XBOX_SYSTEM_PAYLOAD_REPORT_LEN);
-    CHECK(payload[0] == 0);
+    uint16_t len = bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_INPUT, 0x02,
+                                             &state, payload, sizeof(payload));
+    CHECK(len == 0);
 
-    len = bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_INPUT,
-                                    BT_HID_XBOX_STATUS_REPORT_ID, &state, payload, sizeof(payload));
-    CHECK(len == BT_HID_XBOX_STATUS_PAYLOAD_REPORT_LEN);
-    CHECK(payload[0] == 0);
+    len = bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_INPUT, 0x04, &state,
+                                    payload, sizeof(payload));
+    CHECK(len == 0);
 
     CHECK(bt_hid_get_report_payload(BT_HID_TARGET_XBOX, BT_HID_REPORT_TYPE_FEATURE, 0x02, &state,
                                     payload, sizeof(payload)) == 0);

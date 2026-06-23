@@ -89,7 +89,7 @@ cargo test --manifest-path bridge\Cargo.toml
 Run the C host tests for firmware setup and boot-mode policy code:
 
 ```powershell
-cmake -S pico-bridge -B build-host-tests -DPICO_BRIDGE_HOST_TESTS=ON
+cmake -S pico-bridge\tests -B build-host-tests
 cmake --build build-host-tests --config Debug
 ctest --test-dir build-host-tests -C Debug --output-on-failure
 ```
