@@ -27,6 +27,9 @@ pub(super) struct BluetoothReport {
     pub(super) usb_diag_captured: bool,
     pub(super) bt_status_cdc_captured: bool,
     pub(super) bt_status_cdc_error: Option<String>,
+    pub(super) bt_status_version: Option<u8>,
+    pub(super) bt_decoded_status_version: Option<u8>,
+    pub(super) bt_status_newer_than_host: bool,
     pub(super) pico_diag_captured: bool,
     pub(super) status: &'static str,
     pub(super) warning: bool,
@@ -86,6 +89,26 @@ pub(super) struct BluetoothReport {
     pub(super) bt_last_encryption_enabled: Option<u8>,
     pub(super) bt_last_disconnection_reason: Option<u8>,
     pub(super) bt_last_hid_open_status: Option<u8>,
+    pub(super) bt_reconnect_state: Option<u8>,
+    pub(super) bt_reconnect_cycle_attempts: Option<u8>,
+    pub(super) bt_last_reconnect_status: Option<u8>,
+    pub(super) bt_last_reconnect_reason: Option<u8>,
+    pub(super) bt_reconnect_schedule_count: Option<u32>,
+    pub(super) bt_reconnect_attempt_count: Option<u32>,
+    pub(super) bt_reconnect_success_count: Option<u32>,
+    pub(super) bt_reconnect_failed_count: Option<u32>,
+    pub(super) bt_reconnect_blocked_count: Option<u32>,
+    pub(super) bt_last_reconnect_ms: Option<u32>,
+    pub(super) bt_connection_complete_count: Option<u32>,
+    pub(super) bt_last_connection_complete_status: Option<u8>,
+    pub(super) bt_last_connection_complete_link_type: Option<u8>,
+    pub(super) bt_last_connection_complete_ms: Option<u32>,
+    pub(super) bt_incoming_l2cap_connection_count: Option<u32>,
+    pub(super) bt_incoming_l2cap_hid_control_count: Option<u32>,
+    pub(super) bt_incoming_l2cap_hid_interrupt_count: Option<u32>,
+    pub(super) bt_last_incoming_l2cap_psm: Option<u16>,
+    pub(super) bt_last_incoming_l2cap_local_cid: Option<u16>,
+    pub(super) bt_last_incoming_l2cap_ms: Option<u32>,
     pub(super) usb_mounted: Option<bool>,
     pub(super) usb_suspended: Option<bool>,
     pub(super) usb_mount_count: Option<u32>,
@@ -165,6 +188,13 @@ pub(super) fn build_bluetooth_report(
     } else {
         "none"
     };
+    let bt_reconnect_schedule_count = bt_status.map(|status| status.reconnect_schedule_count);
+    let bt_reconnect_attempt_count = bt_status.map(|status| status.reconnect_attempt_count);
+    let bt_reconnect_failed_count = bt_status.map(|status| status.reconnect_failed_count);
+    let bt_reconnect_blocked_count = bt_status.map(|status| status.reconnect_blocked_count);
+    let bt_connection_complete_count = bt_status.map(|status| status.connection_complete_count);
+    let bt_incoming_l2cap_connection_count =
+        bt_status.map(|status| status.incoming_l2cap_connection_count);
     let bt_receiver_contact = bluetooth_receiver_contact(BluetoothContactState {
         bt_started,
         bt_connected,
@@ -175,6 +205,16 @@ pub(super) fn build_bluetooth_report(
             .map(|status| status.hid_open_failed_count)
             .unwrap_or(0),
         bt_security_contact_seen: bt_security_contact_from_cdc || bt_security_contact_from_diag,
+        bt_reconnect_pending: bt_status
+            .map(|status| status.reconnect_pending() || status.reconnect_in_progress())
+            .unwrap_or(false),
+        bt_reconnect_activity_seen: bt_status
+            .map(|status| status.reconnect_activity_seen())
+            .unwrap_or(false),
+        bt_reconnect_attempt_count: bt_reconnect_attempt_count.unwrap_or(0),
+        bt_reconnect_failed_count: bt_reconnect_failed_count.unwrap_or(0),
+        bt_reconnect_blocked_count: bt_reconnect_blocked_count.unwrap_or(0),
+        bt_incoming_l2cap_connection_count: bt_incoming_l2cap_connection_count.unwrap_or(0),
         bt_get_report_count: bt_get_report_count.unwrap_or(0),
         bt_set_report_count: bt_set_report_count.unwrap_or(0),
         bt_out_report_count: bt_out_report_count.unwrap_or(0),
@@ -184,7 +224,7 @@ pub(super) fn build_bluetooth_report(
             .unwrap_or(0),
     });
     BluetoothReport {
-        artifact_schema_version: 3,
+        artifact_schema_version: 4,
         uid: uid.to_string(),
         path: path.to_string(),
         peer: Some(target.peer.to_string()),
@@ -200,6 +240,11 @@ pub(super) fn build_bluetooth_report(
         usb_diag_captured: usb_diag.is_some(),
         bt_status_cdc_captured,
         bt_status_cdc_error: input.bt_status_error,
+        bt_status_version: bt_status.map(|status| status.status_version),
+        bt_decoded_status_version: bt_status.map(|status| status.decoded_status_version),
+        bt_status_newer_than_host: bt_status
+            .map(|status| status.newer_status_version())
+            .unwrap_or(false),
         pico_diag_captured: !input.pico_diag_text.trim().is_empty(),
         status,
         warning: status != "reports_sent",
@@ -298,6 +343,31 @@ pub(super) fn build_bluetooth_report(
         bt_last_encryption_enabled: bt_status.map(|status| status.last_encryption_enabled),
         bt_last_disconnection_reason: bt_status.map(|status| status.last_disconnection_reason),
         bt_last_hid_open_status: bt_status.map(|status| status.last_hid_open_status),
+        bt_reconnect_state: bt_status.map(|status| status.reconnect_state),
+        bt_reconnect_cycle_attempts: bt_status.map(|status| status.reconnect_cycle_attempts),
+        bt_last_reconnect_status: bt_status.map(|status| status.last_reconnect_status),
+        bt_last_reconnect_reason: bt_status.map(|status| status.last_reconnect_reason),
+        bt_reconnect_schedule_count,
+        bt_reconnect_attempt_count,
+        bt_reconnect_success_count: bt_status.map(|status| status.reconnect_success_count),
+        bt_reconnect_failed_count,
+        bt_reconnect_blocked_count,
+        bt_last_reconnect_ms: bt_status.map(|status| status.last_reconnect_ms),
+        bt_connection_complete_count,
+        bt_last_connection_complete_status: bt_status
+            .map(|status| status.last_connection_complete_status),
+        bt_last_connection_complete_link_type: bt_status
+            .map(|status| status.last_connection_complete_link_type),
+        bt_last_connection_complete_ms: bt_status.map(|status| status.last_connection_complete_ms),
+        bt_incoming_l2cap_connection_count,
+        bt_incoming_l2cap_hid_control_count: bt_status
+            .map(|status| status.incoming_l2cap_hid_control_count),
+        bt_incoming_l2cap_hid_interrupt_count: bt_status
+            .map(|status| status.incoming_l2cap_hid_interrupt_count),
+        bt_last_incoming_l2cap_psm: bt_status.map(|status| status.last_incoming_l2cap_psm),
+        bt_last_incoming_l2cap_local_cid: bt_status
+            .map(|status| status.last_incoming_l2cap_local_cid),
+        bt_last_incoming_l2cap_ms: bt_status.map(|status| status.last_incoming_l2cap_ms),
         usb_mounted: usb_diag.map(|diag| diag.mounted()),
         usb_suspended: usb_diag.map(|diag| diag.suspended()),
         usb_mount_count: usb_diag.map(|diag| diag.mount_count),
@@ -317,6 +387,7 @@ pub(super) fn build_bluetooth_report(
             "BlueRetro users should try generic HID with couchlink bluetooth or blueretro before relying on the Xbox-named Classic HID mimic.",
             "Wi-Fi discovery may still appear in logs, but live Bluetooth controller packets are not sent over Wi-Fi.",
             "USB adapter survey is skipped for Bluetooth mode because the Pico USB connector stays on the PC.",
+            "The live Bluetooth run command is a continuous streaming loop; stop it manually after pairing or after capturing enough status.",
         ],
     }
 }
@@ -345,6 +416,12 @@ struct BluetoothContactState {
     bt_close_count: u32,
     bt_hid_open_failed_count: u32,
     bt_security_contact_seen: bool,
+    bt_reconnect_pending: bool,
+    bt_reconnect_activity_seen: bool,
+    bt_reconnect_attempt_count: u32,
+    bt_reconnect_failed_count: u32,
+    bt_reconnect_blocked_count: u32,
+    bt_incoming_l2cap_connection_count: u32,
     bt_get_report_count: u32,
     bt_set_report_count: u32,
     bt_out_report_count: u32,
@@ -364,6 +441,15 @@ fn bluetooth_receiver_contact(state: BluetoothContactState) -> &'static str {
         "hid_receiver_contact_seen"
     } else if state.bt_hid_open_failed_count > 0 || state.bt_last_status != 0 {
         "hid_open_failed"
+    } else if state.bt_incoming_l2cap_connection_count > 0 {
+        "hid_l2cap_incoming_no_hid_open"
+    } else if state.bt_reconnect_attempt_count > 0
+        || state.bt_reconnect_failed_count > 0
+        || state.bt_reconnect_blocked_count > 0
+    {
+        "hid_reconnect_attempted_no_hid_open"
+    } else if state.bt_reconnect_pending || state.bt_reconnect_activity_seen {
+        "hid_reconnect_pending"
     } else if state.bt_security_contact_seen {
         "pairing_security_contact_no_hid_open"
     } else if state.bt_ready_count > 0 {
@@ -425,6 +511,29 @@ pub(super) fn bluetooth_report_next_steps(
                 "For BlueRetro, try generic HID with couchlink bluetooth or blueretro before relying on bluetooth-xbox or blueretro-xbox.",
             ]
         }
+        "waiting_for_receiver" if bt_receiver_contact == "hid_reconnect_pending" => {
+            vec![
+                "Pairing/security completed and the Pico scheduled an active Classic HID reconnect to the paired receiver.",
+                "Keep the receiver powered and in range, wait a few seconds, then rerun couchlink bundle if HID does not open.",
+                "If this repeats on BlueRetro, clear the adapter pairing and try generic HID with couchlink bluetooth or blueretro.",
+            ]
+        }
+        "waiting_for_receiver"
+            if bt_receiver_contact == "hid_reconnect_attempted_no_hid_open" =>
+        {
+            vec![
+                "The Pico actively tried to reconnect the paired receiver, but no Classic HID control or interrupt channel opened.",
+                "Keep this bundle with bt_reconnect and bt_acl_l2cap counters; they show whether paging failed, ACL connected, or a HID channel was attempted.",
+                "For BlueRetro, clear receiver pairing and test generic HID with couchlink bluetooth or blueretro before the Xbox-named Classic HID mimic.",
+            ]
+        }
+        "waiting_for_receiver" if bt_receiver_contact == "hid_l2cap_incoming_no_hid_open" => {
+            vec![
+                "The receiver reached a Classic HID L2CAP channel, but BTstack did not report a completed HID open.",
+                "Keep this bundle and inspect the bt_acl_l2cap counters with receiver-side or HCI logs if available.",
+                "Clear receiver pairing and retry generic HID if the Xbox-named Classic HID mimic still does not open.",
+            ]
+        }
         "waiting_for_receiver" => {
             vec![
                 "Put the target Bluetooth receiver or adapter into pairing mode and pair with the CouchLink Bluetooth device.",
@@ -480,6 +589,21 @@ pub(super) fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
     if let Some(error) = &report.bt_status_cdc_error {
         let _ = writeln!(out, "bt_status_cdc_error={error}");
     }
+    let _ = writeln!(
+        out,
+        "bt_status_version={}",
+        format_option_u8(report.bt_status_version)
+    );
+    let _ = writeln!(
+        out,
+        "bt_decoded_status_version={}",
+        format_option_u8(report.bt_decoded_status_version)
+    );
+    let _ = writeln!(
+        out,
+        "bt_status_newer_than_host={}",
+        report.bt_status_newer_than_host
+    );
     let _ = writeln!(out, "pico_diag_captured={}", report.pico_diag_captured);
     let _ = writeln!(out, "bt_receiver_contact={}", report.bt_receiver_contact);
     let _ = writeln!(out);
@@ -711,6 +835,112 @@ pub(super) fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
     );
     let _ = writeln!(out);
 
+    out.push_str("bt_reconnect=\n");
+    let _ = writeln!(
+        out,
+        "- reconnect_state={}",
+        format_option_hex_u8(report.bt_reconnect_state)
+    );
+    let _ = writeln!(
+        out,
+        "- reconnect_cycle_attempts={}",
+        format_option_u8(report.bt_reconnect_cycle_attempts)
+    );
+    let _ = writeln!(
+        out,
+        "- last_reconnect_status={}",
+        format_option_hex_u8(report.bt_last_reconnect_status)
+    );
+    let _ = writeln!(
+        out,
+        "- last_reconnect_reason={}",
+        format_option_u8(report.bt_last_reconnect_reason)
+    );
+    let _ = writeln!(
+        out,
+        "- reconnect_schedule_count={}",
+        format_option_u32(report.bt_reconnect_schedule_count)
+    );
+    let _ = writeln!(
+        out,
+        "- reconnect_attempt_count={}",
+        format_option_u32(report.bt_reconnect_attempt_count)
+    );
+    let _ = writeln!(
+        out,
+        "- reconnect_success_count={}",
+        format_option_u32(report.bt_reconnect_success_count)
+    );
+    let _ = writeln!(
+        out,
+        "- reconnect_failed_count={}",
+        format_option_u32(report.bt_reconnect_failed_count)
+    );
+    let _ = writeln!(
+        out,
+        "- reconnect_blocked_count={}",
+        format_option_u32(report.bt_reconnect_blocked_count)
+    );
+    let _ = writeln!(
+        out,
+        "- last_reconnect_ms={}",
+        format_option_u32(report.bt_last_reconnect_ms)
+    );
+    let _ = writeln!(out);
+
+    out.push_str("bt_acl_l2cap=\n");
+    let _ = writeln!(
+        out,
+        "- connection_complete_count={}",
+        format_option_u32(report.bt_connection_complete_count)
+    );
+    let _ = writeln!(
+        out,
+        "- last_connection_complete_status={}",
+        format_option_hex_u8(report.bt_last_connection_complete_status)
+    );
+    let _ = writeln!(
+        out,
+        "- last_connection_complete_link_type={}",
+        format_option_u8(report.bt_last_connection_complete_link_type)
+    );
+    let _ = writeln!(
+        out,
+        "- last_connection_complete_ms={}",
+        format_option_u32(report.bt_last_connection_complete_ms)
+    );
+    let _ = writeln!(
+        out,
+        "- incoming_l2cap_connection_count={}",
+        format_option_u32(report.bt_incoming_l2cap_connection_count)
+    );
+    let _ = writeln!(
+        out,
+        "- incoming_l2cap_hid_control_count={}",
+        format_option_u32(report.bt_incoming_l2cap_hid_control_count)
+    );
+    let _ = writeln!(
+        out,
+        "- incoming_l2cap_hid_interrupt_count={}",
+        format_option_u32(report.bt_incoming_l2cap_hid_interrupt_count)
+    );
+    let _ = writeln!(
+        out,
+        "- last_incoming_l2cap_psm={}",
+        format_option_hex_u16(report.bt_last_incoming_l2cap_psm)
+    );
+    let _ = writeln!(
+        out,
+        "- last_incoming_l2cap_local_cid={}",
+        format_option_hex_u16(report.bt_last_incoming_l2cap_local_cid)
+    );
+    let _ = writeln!(
+        out,
+        "- last_incoming_l2cap_ms={}",
+        format_option_u32(report.bt_last_incoming_l2cap_ms)
+    );
+    let _ = writeln!(out);
+
     out.push_str("pc_usb_input=\n");
     let _ = writeln!(out, "- mounted={}", format_option_bool(report.usb_mounted));
     let _ = writeln!(
@@ -821,6 +1051,12 @@ pub(super) fn format_option_u8(value: Option<u8>) -> String {
 pub(super) fn format_option_hex_u8(value: Option<u8>) -> String {
     value
         .map(|v| format!("0x{v:02X}"))
+        .unwrap_or_else(|| "not_captured".to_string())
+}
+
+pub(super) fn format_option_hex_u16(value: Option<u16>) -> String {
+    value
+        .map(|v| format!("0x{v:04X}"))
         .unwrap_or_else(|| "not_captured".to_string())
 }
 

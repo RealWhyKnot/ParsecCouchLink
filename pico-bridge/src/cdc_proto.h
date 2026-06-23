@@ -70,12 +70,14 @@
 #define CDC_HELLO_FLAG_RUN_MODE_OK 0x04
 #define CDC_HELLO_FLAG_RUN_MODE_ACTIVE 0x08
 
-#define CDC_BT_STATUS_VERSION 3
+#define CDC_BT_STATUS_VERSION 4
 #define CDC_BT_STATUS_V1_VERSION 1
 #define CDC_BT_STATUS_V1_FIXED_LEN 49
 #define CDC_BT_STATUS_V2_VERSION 2
 #define CDC_BT_STATUS_V2_FIXED_LEN 99
-#define CDC_BT_STATUS_FIXED_LEN 153
+#define CDC_BT_STATUS_V3_VERSION 3
+#define CDC_BT_STATUS_V3_FIXED_LEN 153
+#define CDC_BT_STATUS_FIXED_LEN 213
 #define CDC_BT_STATUS_MAX_NAME 64
 
 typedef struct {
@@ -129,6 +131,26 @@ typedef struct {
     uint8_t last_encryption_enabled;
     uint8_t last_disconnection_reason;
     uint8_t last_hid_open_status;
+    uint8_t reconnect_state;
+    uint8_t reconnect_cycle_attempts;
+    uint8_t last_reconnect_status;
+    uint8_t last_reconnect_reason;
+    uint32_t reconnect_schedule_count;
+    uint32_t reconnect_attempt_count;
+    uint32_t reconnect_success_count;
+    uint32_t reconnect_failed_count;
+    uint32_t reconnect_blocked_count;
+    uint32_t last_reconnect_ms;
+    uint32_t connection_complete_count;
+    uint8_t last_connection_complete_status;
+    uint8_t last_connection_complete_link_type;
+    uint32_t last_connection_complete_ms;
+    uint32_t incoming_l2cap_connection_count;
+    uint32_t incoming_l2cap_hid_control_count;
+    uint32_t incoming_l2cap_hid_interrupt_count;
+    uint16_t last_incoming_l2cap_psm;
+    uint16_t last_incoming_l2cap_local_cid;
+    uint32_t last_incoming_l2cap_ms;
     const char *local_name;
 } cdc_bt_status_view_t;
 

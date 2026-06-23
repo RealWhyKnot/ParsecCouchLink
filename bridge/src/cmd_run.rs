@@ -1036,9 +1036,10 @@ fn print_status(routes: &mut [RouteRuntime]) {
         );
         if bluetooth_route {
             println!(
-                "  {} -> {} | {} | USB input +{} total {} | Bluetooth {} | {} {}",
+                "  {} -> {} ({}) | {} | PC USB input +{} total {} | Bluetooth output {} | {} {}",
                 route.route.source_label(),
                 route.route.pico.uid_hex(),
+                route.route.pico.persona.label(),
                 source_state,
                 sent_delta,
                 route.sent_total,

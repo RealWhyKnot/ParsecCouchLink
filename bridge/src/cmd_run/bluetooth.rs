@@ -110,6 +110,7 @@ pub fn print_bluetooth_pairing_help(persona: Persona) {
     println!("  The Pico will advertise as {expected_name}.");
     println!("  Put the receiver or console adapter into Bluetooth pairing/search mode.");
     println!("  Pair the receiver with {expected_name}. Use PIN 0000 if it asks for one.");
+    println!("  This command keeps streaming status and controller input until you stop it.");
     if persona == Persona::BluetoothXbox {
         println!(
             "  For BlueRetro, try generic HID with couchlink bluetooth or blueretro before relying on the Xbox-named Classic HID mimic."
@@ -155,11 +156,81 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
     if !status.started() {
         return "radio starting".to_string();
     }
+    let version_note = if status.newer_status_version() {
+        format!(
+            "newer BT_STATUS v{} decoded as v{}; update CouchLink; ",
+            status.status_version, status.decoded_status_version
+        )
+    } else {
+        String::new()
+    };
     if !status.connected() {
         let name = bluetooth_display_name(status);
+        if status.incoming_hid_l2cap_seen() {
+            let mut msg = format!(
+                "{version_note}receiver reached HID L2CAP for \"{name}\" but no Classic HID channel opened"
+            );
+            msg.push_str(&format!(
+                "; incoming control {} interrupt {} last PSM 0x{:04X}",
+                status.incoming_l2cap_hid_control_count,
+                status.incoming_l2cap_hid_interrupt_count,
+                status.last_incoming_l2cap_psm
+            ));
+            if status.last_connection_complete_status != 0 {
+                msg.push_str(&format!(
+                    "; ACL status 0x{:02X}",
+                    status.last_connection_complete_status
+                ));
+            }
+            msg.push_str("; keep bundle with receiver-side logs if it repeats");
+            return msg;
+        }
+        if status.reconnect_pending() || status.reconnect_in_progress() {
+            let phase = if status.reconnect_in_progress() {
+                "in progress"
+            } else {
+                "scheduled"
+            };
+            let mut msg = format!(
+                "{version_note}pairing/security seen for \"{name}\"; HID reconnect {phase}"
+            );
+            msg.push_str(&format!(
+                "; attempts {}/6 scheduled {}",
+                status.reconnect_cycle_attempts, status.reconnect_schedule_count
+            ));
+            if status.connection_complete_count > 0 {
+                msg.push_str(&format!(
+                    "; ACL completes {} last 0x{:02X}",
+                    status.connection_complete_count, status.last_connection_complete_status
+                ));
+            }
+            return msg;
+        }
+        if status.reconnect_activity_seen() {
+            let mut msg = format!(
+                "{version_note}pairing/security seen for \"{name}\"; HID reconnect attempts {} failed {} blocked {}; no Classic HID channel opened",
+                status.reconnect_attempt_count,
+                status.reconnect_failed_count,
+                status.reconnect_blocked_count
+            );
+            if status.connection_complete_count > 0 {
+                msg.push_str(&format!(
+                    "; ACL completes {} last status 0x{:02X}",
+                    status.connection_complete_count, status.last_connection_complete_status
+                ));
+            }
+            if status.last_reconnect_status != 0 {
+                msg.push_str(&format!(
+                    "; last reconnect status 0x{:02X}",
+                    status.last_reconnect_status
+                ));
+            }
+            msg.push_str("; BlueRetro: try generic HID with couchlink bluetooth or blueretro");
+            return msg;
+        }
         if status.pairing_security_contact_seen() || status.hid_open_failed_count > 0 {
             let mut msg = format!(
-                "pairing/security seen for \"{name}\" but no Classic HID channel opened; clear receiver pairing and pair again"
+                "{version_note}pairing/security seen for \"{name}\" but no Classic HID channel opened; clear receiver pairing and pair again"
             );
             msg.push_str("; BlueRetro: try generic HID with couchlink bluetooth or blueretro");
             if status.user_confirmation_request_count > 0 {
@@ -194,7 +265,9 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
             }
             return msg;
         }
-        let mut msg = format!("discoverable as \"{name}\"; pair receiver/search mode, PIN 0000");
+        let mut msg = format!(
+            "{version_note}discoverable as \"{name}\"; pair receiver/search mode, PIN 0000"
+        );
         if status.last_status != 0 {
             msg.push_str(&format!("; last status 0x{:02X}", status.last_status));
         }
@@ -273,6 +346,12 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
     }
     if status.close_count > 0 {
         msg.push_str(&format!("; disconnects {}", status.close_count));
+    }
+    if status.newer_status_version() {
+        msg.push_str(&format!(
+            "; newer BT_STATUS v{} decoded as v{}; update CouchLink",
+            status.status_version, status.decoded_status_version
+        ));
     }
     msg
 }

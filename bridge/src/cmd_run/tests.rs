@@ -249,6 +249,14 @@ fn bluetooth_status_formatter_explains_pairing_and_connection() {
     assert!(waiting.contains("PIN 0000"));
     assert!(should_print_bluetooth_pairing_hint(Some(&status)));
 
+    status.status_version = cdc::BT_STATUS_VERSION + 1;
+    status.decoded_status_version = cdc::BT_STATUS_V3_VERSION;
+    let newer = format_bluetooth_peer_state(Some(&status), None, false, None);
+    assert!(newer.contains("newer BT_STATUS"));
+    assert!(newer.contains("update CouchLink"));
+    status.status_version = cdc::BT_STATUS_VERSION;
+    status.decoded_status_version = cdc::BT_STATUS_VERSION;
+
     status.user_confirmation_request_count = 2;
     status.user_confirmation_response_count = 2;
     status.local_name = "Xbox Wireless Controller".to_string();
@@ -258,6 +266,34 @@ fn bluetooth_status_formatter_explains_pairing_and_connection() {
     assert!(pairing_contact.contains("couchlink bluetooth or blueretro"));
     status.user_confirmation_request_count = 0;
     status.user_confirmation_response_count = 0;
+
+    status.link_key_notification_count = 1;
+    status.reconnect_state = 0x03;
+    status.reconnect_schedule_count = 1;
+    let reconnect_pending = format_bluetooth_peer_state(Some(&status), None, false, None);
+    assert!(reconnect_pending.contains("HID reconnect scheduled"));
+    assert!(reconnect_pending.contains("attempts 0/6"));
+
+    status.reconnect_state = 0x01;
+    status.reconnect_cycle_attempts = 2;
+    status.reconnect_attempt_count = 2;
+    status.reconnect_failed_count = 1;
+    status.reconnect_blocked_count = 0;
+    status.last_reconnect_status = 0x04;
+    status.connection_complete_count = 2;
+    status.last_connection_complete_status = 0x04;
+    let reconnect_attempted = format_bluetooth_peer_state(Some(&status), None, false, None);
+    assert!(reconnect_attempted.contains("HID reconnect attempts 2 failed 1"));
+    assert!(reconnect_attempted.contains("ACL completes 2 last status 0x04"));
+    status.link_key_notification_count = 0;
+    status.reconnect_state = 0;
+    status.reconnect_cycle_attempts = 0;
+    status.reconnect_schedule_count = 0;
+    status.reconnect_attempt_count = 0;
+    status.reconnect_failed_count = 0;
+    status.last_reconnect_status = 0;
+    status.connection_complete_count = 0;
+    status.last_connection_complete_status = 0;
 
     status.flags = cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED;
     status.report_send_count = 12;
@@ -320,6 +356,8 @@ fn setup_usb_recovery_skips_run_mode_cdc() {
 
 fn bt_status(flags: u8, report_send_count: u32, close_count: u32) -> cdc::BtStatus {
     cdc::BtStatus {
+        status_version: cdc::BT_STATUS_VERSION,
+        decoded_status_version: cdc::BT_STATUS_VERSION,
         flags,
         target: 0,
         last_status: 0,
@@ -374,6 +412,26 @@ fn bt_status(flags: u8, report_send_count: u32, close_count: u32) -> cdc::BtStat
         last_encryption_enabled: 0,
         last_disconnection_reason: 0,
         last_hid_open_status: 0,
+        reconnect_state: 0,
+        reconnect_cycle_attempts: 0,
+        last_reconnect_status: 0,
+        last_reconnect_reason: 0,
+        reconnect_schedule_count: 0,
+        reconnect_attempt_count: 0,
+        reconnect_success_count: 0,
+        reconnect_failed_count: 0,
+        reconnect_blocked_count: 0,
+        last_reconnect_ms: 0,
+        connection_complete_count: 0,
+        last_connection_complete_status: 0,
+        last_connection_complete_link_type: 0,
+        last_connection_complete_ms: 0,
+        incoming_l2cap_connection_count: 0,
+        incoming_l2cap_hid_control_count: 0,
+        incoming_l2cap_hid_interrupt_count: 0,
+        last_incoming_l2cap_psm: 0,
+        last_incoming_l2cap_local_cid: 0,
+        last_incoming_l2cap_ms: 0,
         local_name: String::new(),
     }
 }

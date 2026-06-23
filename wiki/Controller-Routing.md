@@ -173,7 +173,7 @@ Add `--no-stream` to change the persona without starting a stream. PS3 is tried 
 
 ## Bluetooth Mode
 
-Bluetooth mode is for a wireless receiver or adapter that accepts a Classic Bluetooth HID gamepad. Unlike the USB-output modes, the Pico stays plugged into the bridge PC. CouchLink sends each controller frame to the Pico over USB CDC, and the Pico sends Bluetooth HID reports to the paired receiver.
+Bluetooth mode is for a wireless receiver or adapter that accepts a Classic Bluetooth HID gamepad. Unlike the USB-output modes, the Pico stays plugged into the bridge PC. CouchLink sends each controller frame to the Pico over USB CDC, and the Pico sends Bluetooth HID reports to the paired receiver. The live Bluetooth command is a streaming loop and keeps printing status until you stop it.
 
 Pairing is receiver-side: run a Bluetooth command, leave the Pico plugged into the bridge PC over USB, then put the receiver or console adapter into Bluetooth pairing/search mode. Pair with the advertised controller name for the selected mode: `CouchLink BT HID` for generic Bluetooth, `Xbox Wireless Controller` for Xbox, or `Wireless Controller` for DualShock 4 / PlayStation. Use PIN `0000` if the receiver asks for one. Do not pair the Pico to Windows for console play; Windows seeing the Pico as pairable only proves the Pico is advertising.
 
@@ -192,9 +192,9 @@ Controller-specific Bluetooth mimics are also available:
 
 For BlueRetro adapters, start with generic HID (`.\couchlink.exe bluetooth` or `.\couchlink.exe blueretro`) before relying on `bluetooth-xbox` / `blueretro-xbox`. The Xbox-named mode is a Classic Bluetooth HID mimic that advertises as `Xbox Wireless Controller`; it is not Xbox BLE/HOGP mode and is not proven Xbox One / Series compatibility.
 
-The stream will not start unless the selected Bluetooth-mode Pico is also visible as the CouchLink USB diagnostic device on the PC. This avoids the extra Wi-Fi hop for live controller input.
+The stream will not start unless the selected Bluetooth-mode Pico is also visible as the CouchLink USB diagnostic device on the PC. This avoids the extra Wi-Fi hop for live controller input. In Bluetooth mode, the plugged-in Pico is the bridge input/diagnostic path, not the console-side controller output; pick the Parsec virtual controller or local test controller as the source slot, and use the Bluetooth receiver/adapter as the output.
 
-During streaming, the status lines separate the local USB input link from the Bluetooth receiver link. `USB input` counters show controller frames reaching the Pico. `Bluetooth discoverable` means the Pico is waiting for the receiver. `pairing/security seen` means the receiver reached Bluetooth security but did not open a Classic HID channel. `Bluetooth receiver connected` plus increasing report counts means the Pico is sending Bluetooth HID reports to the paired receiver.
+During streaming, the status lines separate the local USB input link from the Bluetooth receiver link. `PC USB input` counters show controller frames reaching the Pico. `discoverable` means the Pico is waiting for the receiver. `pairing/security seen` means the receiver reached Bluetooth security but did not open a Classic HID channel. `HID reconnect scheduled` or `HID reconnect attempts` means the Pico is actively trying to open HID to the paired receiver after pairing. `receiver connected` plus increasing report counts means the Pico is sending Bluetooth HID reports to the paired receiver.
 
 ### If the player's typing isn't reaching the game
 

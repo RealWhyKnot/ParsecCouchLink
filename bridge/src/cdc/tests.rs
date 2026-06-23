@@ -87,8 +87,28 @@ fn bt_status_payload_decodes_wire_shape() {
     payload[145] = 1;
     payload[146] = 0x13;
     payload[147] = 0x44;
-    payload[152] = name.len() as u8;
-    payload[153..].copy_from_slice(name);
+    payload[152] = 0x07;
+    payload[153] = 2;
+    payload[154] = 0x21;
+    payload[155] = 4;
+    payload[156..160].copy_from_slice(&28u32.to_le_bytes());
+    payload[160..164].copy_from_slice(&29u32.to_le_bytes());
+    payload[164..168].copy_from_slice(&30u32.to_le_bytes());
+    payload[168..172].copy_from_slice(&31u32.to_le_bytes());
+    payload[172..176].copy_from_slice(&32u32.to_le_bytes());
+    payload[176..180].copy_from_slice(&0x1020_3040u32.to_le_bytes());
+    payload[180..184].copy_from_slice(&33u32.to_le_bytes());
+    payload[184] = 0x35;
+    payload[185] = 1;
+    payload[188..192].copy_from_slice(&0x4050_6070u32.to_le_bytes());
+    payload[192..196].copy_from_slice(&34u32.to_le_bytes());
+    payload[196..200].copy_from_slice(&35u32.to_le_bytes());
+    payload[200..204].copy_from_slice(&36u32.to_le_bytes());
+    payload[204..206].copy_from_slice(&0x0013u16.to_le_bytes());
+    payload[206..208].copy_from_slice(&0x0041u16.to_le_bytes());
+    payload[208..212].copy_from_slice(&0x5060_7080u32.to_le_bytes());
+    payload[212] = name.len() as u8;
+    payload[213..].copy_from_slice(name);
 
     let status = decode_bt_status_payload(&payload).unwrap();
 
@@ -144,8 +164,65 @@ fn bt_status_payload_decodes_wire_shape() {
     assert_eq!(status.last_encryption_enabled, 1);
     assert_eq!(status.last_disconnection_reason, 0x13);
     assert_eq!(status.last_hid_open_status, 0x44);
+    assert_eq!(status.reconnect_state, 0x07);
+    assert!(status.reconnect_peer_known());
+    assert!(status.reconnect_pending());
+    assert!(status.reconnect_in_progress());
+    assert!(!status.reconnect_maxed());
+    assert_eq!(status.reconnect_cycle_attempts, 2);
+    assert_eq!(status.last_reconnect_status, 0x21);
+    assert_eq!(status.last_reconnect_reason, 4);
+    assert_eq!(status.reconnect_schedule_count, 28);
+    assert_eq!(status.reconnect_attempt_count, 29);
+    assert_eq!(status.reconnect_success_count, 30);
+    assert_eq!(status.reconnect_failed_count, 31);
+    assert_eq!(status.reconnect_blocked_count, 32);
+    assert_eq!(status.last_reconnect_ms, 0x10203040);
+    assert!(status.reconnect_activity_seen());
+    assert_eq!(status.connection_complete_count, 33);
+    assert_eq!(status.last_connection_complete_status, 0x35);
+    assert_eq!(status.last_connection_complete_link_type, 1);
+    assert_eq!(status.last_connection_complete_ms, 0x40506070);
+    assert_eq!(status.incoming_l2cap_connection_count, 34);
+    assert_eq!(status.incoming_l2cap_hid_control_count, 35);
+    assert_eq!(status.incoming_l2cap_hid_interrupt_count, 36);
+    assert_eq!(status.last_incoming_l2cap_psm, 0x0013);
+    assert_eq!(status.last_incoming_l2cap_local_cid, 0x0041);
+    assert_eq!(status.last_incoming_l2cap_ms, 0x50607080);
+    assert!(status.incoming_hid_l2cap_seen());
     assert!(status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "CouchLink BT HID");
+}
+
+#[test]
+fn bt_status_payload_decodes_v3_wire_shape() {
+    let name = b"Security BT";
+    let mut payload = vec![0u8; BT_STATUS_V3_FIXED_LEN + name.len()];
+    payload[0] = BT_STATUS_V3_VERSION;
+    payload[1] = BT_STATUS_FLAG_STARTED;
+    payload[2] = 1;
+    payload[106..110].copy_from_slice(&4u32.to_le_bytes());
+    payload[110..114].copy_from_slice(&4u32.to_le_bytes());
+    payload[122..126].copy_from_slice(&1u32.to_le_bytes());
+    payload[146] = 0x16;
+    payload[152] = name.len() as u8;
+    payload[153..].copy_from_slice(name);
+
+    let status = decode_bt_status_payload(&payload).unwrap();
+
+    assert_eq!(status.status_version, BT_STATUS_V3_VERSION);
+    assert_eq!(status.decoded_status_version, BT_STATUS_V3_VERSION);
+    assert!(status.started());
+    assert_eq!(status.target, 1);
+    assert_eq!(status.user_confirmation_request_count, 4);
+    assert_eq!(status.user_confirmation_response_count, 4);
+    assert_eq!(status.link_key_notification_count, 1);
+    assert_eq!(status.last_disconnection_reason, 0x16);
+    assert!(status.pairing_security_contact_seen());
+    assert_eq!(status.reconnect_attempt_count, 0);
+    assert_eq!(status.connection_complete_count, 0);
+    assert_eq!(status.incoming_l2cap_connection_count, 0);
+    assert_eq!(status.local_name, "Security BT");
 }
 
 #[test]
@@ -168,6 +245,9 @@ fn bt_status_payload_decodes_v2_wire_shape() {
     assert_eq!(status.pin_code_request_count, 0);
     assert_eq!(status.user_confirmation_request_count, 0);
     assert_eq!(status.hid_open_failed_count, 0);
+    assert_eq!(status.reconnect_attempt_count, 0);
+    assert_eq!(status.connection_complete_count, 0);
+    assert_eq!(status.incoming_l2cap_connection_count, 0);
     assert!(!status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "Previous BT");
 }
@@ -195,6 +275,9 @@ fn bt_status_payload_decodes_v1_wire_shape() {
     assert_eq!(status.pin_code_request_count, 0);
     assert_eq!(status.user_confirmation_request_count, 0);
     assert_eq!(status.hid_open_failed_count, 0);
+    assert_eq!(status.reconnect_attempt_count, 0);
+    assert_eq!(status.connection_complete_count, 0);
+    assert_eq!(status.incoming_l2cap_connection_count, 0);
     assert!(!status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "Legacy BT");
 }
@@ -203,10 +286,31 @@ fn bt_status_payload_decodes_v1_wire_shape() {
 fn bt_status_payload_rejects_bad_shape() {
     assert!(decode_bt_status_payload(&[0; BT_STATUS_FIXED_LEN - 1]).is_err());
     let mut bad_version = vec![0u8; BT_STATUS_FIXED_LEN];
-    bad_version[0] = BT_STATUS_VERSION + 1;
+    bad_version[0] = 0;
     assert!(decode_bt_status_payload(&bad_version).is_err());
     let mut bad_name = vec![0u8; BT_STATUS_FIXED_LEN];
     bad_name[0] = BT_STATUS_VERSION;
-    bad_name[152] = 1;
+    bad_name[212] = 1;
     assert!(decode_bt_status_payload(&bad_name).is_err());
+}
+
+#[test]
+fn bt_status_payload_decodes_future_version_prefix() {
+    let mut payload = vec![0u8; BT_STATUS_V3_FIXED_LEN + 8];
+    payload[0] = BT_STATUS_VERSION + 1;
+    payload[1] = BT_STATUS_FLAG_STARTED;
+    payload[2] = 1;
+    payload[106..110].copy_from_slice(&2u32.to_le_bytes());
+    payload[146] = 0x16;
+
+    let status = decode_bt_status_payload(&payload).unwrap();
+
+    assert_eq!(status.status_version, BT_STATUS_VERSION + 1);
+    assert_eq!(status.decoded_status_version, BT_STATUS_V3_VERSION);
+    assert!(status.newer_status_version());
+    assert!(status.started());
+    assert_eq!(status.user_confirmation_request_count, 2);
+    assert_eq!(status.last_disconnection_reason, 0x16);
+    assert_eq!(status.reconnect_attempt_count, 0);
+    assert_eq!(status.local_name, "");
 }

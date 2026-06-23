@@ -3,10 +3,12 @@ use anyhow::{bail, Result};
 use super::{
     BT_STATUS_FIXED_LEN, BT_STATUS_FLAG_CONNECTED, BT_STATUS_FLAG_SEND_REQUESTED,
     BT_STATUS_FLAG_STARTED, BT_STATUS_V1_FIXED_LEN, BT_STATUS_V1_VERSION, BT_STATUS_V2_FIXED_LEN,
-    BT_STATUS_V2_VERSION, BT_STATUS_VERSION,
+    BT_STATUS_V2_VERSION, BT_STATUS_V3_FIXED_LEN, BT_STATUS_V3_VERSION, BT_STATUS_VERSION,
 };
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BtStatus {
+    pub status_version: u8,
+    pub decoded_status_version: u8,
     pub flags: u8,
     pub target: u8,
     pub last_status: u8,
@@ -57,6 +59,26 @@ pub struct BtStatus {
     pub last_encryption_enabled: u8,
     pub last_disconnection_reason: u8,
     pub last_hid_open_status: u8,
+    pub reconnect_state: u8,
+    pub reconnect_cycle_attempts: u8,
+    pub last_reconnect_status: u8,
+    pub last_reconnect_reason: u8,
+    pub reconnect_schedule_count: u32,
+    pub reconnect_attempt_count: u32,
+    pub reconnect_success_count: u32,
+    pub reconnect_failed_count: u32,
+    pub reconnect_blocked_count: u32,
+    pub last_reconnect_ms: u32,
+    pub connection_complete_count: u32,
+    pub last_connection_complete_status: u8,
+    pub last_connection_complete_link_type: u8,
+    pub last_connection_complete_ms: u32,
+    pub incoming_l2cap_connection_count: u32,
+    pub incoming_l2cap_hid_control_count: u32,
+    pub incoming_l2cap_hid_interrupt_count: u32,
+    pub last_incoming_l2cap_psm: u16,
+    pub last_incoming_l2cap_local_cid: u16,
+    pub last_incoming_l2cap_ms: u32,
     pub local_name: String,
 }
 
@@ -85,6 +107,42 @@ impl BtStatus {
             || self.disconnection_complete_count > 0
             || self.last_security_event_ms > 0
     }
+
+    pub fn newer_status_version(&self) -> bool {
+        self.status_version > BT_STATUS_VERSION
+    }
+
+    pub fn reconnect_peer_known(&self) -> bool {
+        self.reconnect_state & 0x01 != 0
+    }
+
+    pub fn reconnect_pending(&self) -> bool {
+        self.reconnect_state & 0x02 != 0
+    }
+
+    pub fn reconnect_in_progress(&self) -> bool {
+        self.reconnect_state & 0x04 != 0
+    }
+
+    pub fn reconnect_maxed(&self) -> bool {
+        self.reconnect_state & 0x08 != 0
+    }
+
+    pub fn reconnect_activity_seen(&self) -> bool {
+        self.reconnect_schedule_count > 0
+            || self.reconnect_attempt_count > 0
+            || self.reconnect_success_count > 0
+            || self.reconnect_failed_count > 0
+            || self.reconnect_blocked_count > 0
+            || self.last_reconnect_ms > 0
+    }
+
+    pub fn incoming_hid_l2cap_seen(&self) -> bool {
+        self.incoming_l2cap_connection_count > 0
+            || self.incoming_l2cap_hid_control_count > 0
+            || self.incoming_l2cap_hid_interrupt_count > 0
+            || self.last_incoming_l2cap_psm != 0
+    }
 }
 
 fn read_u16_le(payload: &[u8], offset: usize) -> u16 {
@@ -108,35 +166,58 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
     let fixed_len = match version {
         BT_STATUS_V1_VERSION => BT_STATUS_V1_FIXED_LEN,
         BT_STATUS_V2_VERSION => BT_STATUS_V2_FIXED_LEN,
+        BT_STATUS_V3_VERSION => BT_STATUS_V3_FIXED_LEN,
         BT_STATUS_VERSION => BT_STATUS_FIXED_LEN,
+        newer if newer > BT_STATUS_VERSION => BT_STATUS_V3_FIXED_LEN,
         _ => bail!(
-            "BT_STATUS version mismatch (got {}, want {}, {}, or {})",
+            "BT_STATUS version mismatch (got {}, want {}, {}, {}, or {})",
             payload[0],
             BT_STATUS_V1_VERSION,
             BT_STATUS_V2_VERSION,
+            BT_STATUS_V3_VERSION,
             BT_STATUS_VERSION
         ),
     };
     if payload.len() < fixed_len {
         bail!("BT_STATUS response truncated ({} bytes)", payload.len());
     }
+    let decode_name = version <= BT_STATUS_VERSION;
     let name_len_offset = match version {
         BT_STATUS_V1_VERSION => BT_STATUS_V1_FIXED_LEN - 1,
         BT_STATUS_V2_VERSION => BT_STATUS_V2_FIXED_LEN - 1,
-        _ => BT_STATUS_FIXED_LEN - 1,
+        BT_STATUS_V3_VERSION => BT_STATUS_V3_FIXED_LEN - 1,
+        BT_STATUS_VERSION => BT_STATUS_FIXED_LEN - 1,
+        _ => payload.len(),
     };
     let name_start = fixed_len;
-    let name_len = payload[name_len_offset] as usize;
-    let need = name_start + name_len;
+    let name_len = if decode_name {
+        payload[name_len_offset] as usize
+    } else {
+        0
+    };
+    let need = if decode_name {
+        name_start + name_len
+    } else {
+        name_start
+    };
     if payload.len() < need {
         bail!(
             "BT_STATUS local name truncated (need {need} bytes, have {})",
             payload.len()
         );
     }
-    let has_v2 = version == BT_STATUS_V2_VERSION || version == BT_STATUS_VERSION;
-    let has_v3 = version == BT_STATUS_VERSION;
+    let has_v2 = version == BT_STATUS_V2_VERSION
+        || version == BT_STATUS_V3_VERSION
+        || version >= BT_STATUS_VERSION;
+    let has_v3 = version == BT_STATUS_V3_VERSION || version >= BT_STATUS_VERSION;
+    let has_v4 = version == BT_STATUS_VERSION;
     Ok(BtStatus {
+        status_version: version,
+        decoded_status_version: if version > BT_STATUS_VERSION {
+            BT_STATUS_V3_VERSION
+        } else {
+            version
+        },
         flags: payload[1],
         target: payload[2],
         last_status: payload[3],
@@ -187,6 +268,26 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
         last_encryption_enabled: if has_v3 { payload[145] } else { 0 },
         last_disconnection_reason: if has_v3 { payload[146] } else { 0 },
         last_hid_open_status: if has_v3 { payload[147] } else { 0 },
+        reconnect_state: if has_v4 { payload[152] } else { 0 },
+        reconnect_cycle_attempts: if has_v4 { payload[153] } else { 0 },
+        last_reconnect_status: if has_v4 { payload[154] } else { 0 },
+        last_reconnect_reason: if has_v4 { payload[155] } else { 0 },
+        reconnect_schedule_count: if has_v4 { read_u32_le(payload, 156) } else { 0 },
+        reconnect_attempt_count: if has_v4 { read_u32_le(payload, 160) } else { 0 },
+        reconnect_success_count: if has_v4 { read_u32_le(payload, 164) } else { 0 },
+        reconnect_failed_count: if has_v4 { read_u32_le(payload, 168) } else { 0 },
+        reconnect_blocked_count: if has_v4 { read_u32_le(payload, 172) } else { 0 },
+        last_reconnect_ms: if has_v4 { read_u32_le(payload, 176) } else { 0 },
+        connection_complete_count: if has_v4 { read_u32_le(payload, 180) } else { 0 },
+        last_connection_complete_status: if has_v4 { payload[184] } else { 0 },
+        last_connection_complete_link_type: if has_v4 { payload[185] } else { 0 },
+        last_connection_complete_ms: if has_v4 { read_u32_le(payload, 188) } else { 0 },
+        incoming_l2cap_connection_count: if has_v4 { read_u32_le(payload, 192) } else { 0 },
+        incoming_l2cap_hid_control_count: if has_v4 { read_u32_le(payload, 196) } else { 0 },
+        incoming_l2cap_hid_interrupt_count: if has_v4 { read_u32_le(payload, 200) } else { 0 },
+        last_incoming_l2cap_psm: if has_v4 { read_u16_le(payload, 204) } else { 0 },
+        last_incoming_l2cap_local_cid: if has_v4 { read_u16_le(payload, 206) } else { 0 },
+        last_incoming_l2cap_ms: if has_v4 { read_u32_le(payload, 208) } else { 0 },
         local_name: String::from_utf8_lossy(&payload[name_start..need]).into_owned(),
     })
 }

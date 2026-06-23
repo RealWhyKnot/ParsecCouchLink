@@ -179,6 +179,26 @@ static void test_bt_status_payload_shape(void) {
         .last_encryption_enabled = 1,
         .last_disconnection_reason = 0x13,
         .last_hid_open_status = 0x44,
+        .reconnect_state = 0x07,
+        .reconnect_cycle_attempts = 2,
+        .last_reconnect_status = 0x21,
+        .last_reconnect_reason = 4,
+        .reconnect_schedule_count = 28,
+        .reconnect_attempt_count = 29,
+        .reconnect_success_count = 30,
+        .reconnect_failed_count = 31,
+        .reconnect_blocked_count = 32,
+        .last_reconnect_ms = 0x10203040,
+        .connection_complete_count = 33,
+        .last_connection_complete_status = 0x35,
+        .last_connection_complete_link_type = 1,
+        .last_connection_complete_ms = 0x40506070,
+        .incoming_l2cap_connection_count = 34,
+        .incoming_l2cap_hid_control_count = 35,
+        .incoming_l2cap_hid_interrupt_count = 36,
+        .last_incoming_l2cap_psm = 0x0013,
+        .last_incoming_l2cap_local_cid = 0x0041,
+        .last_incoming_l2cap_ms = 0x50607080,
         .local_name = "CouchLink BT HID",
     };
     uint8_t payload[CDC_BT_STATUS_FIXED_LEN + CDC_BT_STATUS_MAX_NAME];
@@ -241,16 +261,40 @@ static void test_bt_status_payload_shape(void) {
     CHECK(payload[149] == 0);
     CHECK(payload[150] == 0);
     CHECK(payload[151] == 0);
-    CHECK(payload[152] == strlen(status.local_name));
-    CHECK(memcmp(&payload[153], status.local_name, strlen(status.local_name)) == 0);
+    CHECK(payload[152] == status.reconnect_state);
+    CHECK(payload[153] == status.reconnect_cycle_attempts);
+    CHECK(payload[154] == status.last_reconnect_status);
+    CHECK(payload[155] == status.last_reconnect_reason);
+    CHECK(get_u32_le(&payload[156]) == status.reconnect_schedule_count);
+    CHECK(get_u32_le(&payload[160]) == status.reconnect_attempt_count);
+    CHECK(get_u32_le(&payload[164]) == status.reconnect_success_count);
+    CHECK(get_u32_le(&payload[168]) == status.reconnect_failed_count);
+    CHECK(get_u32_le(&payload[172]) == status.reconnect_blocked_count);
+    CHECK(get_u32_le(&payload[176]) == status.last_reconnect_ms);
+    CHECK(get_u32_le(&payload[180]) == status.connection_complete_count);
+    CHECK(payload[184] == status.last_connection_complete_status);
+    CHECK(payload[185] == status.last_connection_complete_link_type);
+    CHECK(payload[186] == 0);
+    CHECK(payload[187] == 0);
+    CHECK(get_u32_le(&payload[188]) == status.last_connection_complete_ms);
+    CHECK(get_u32_le(&payload[192]) == status.incoming_l2cap_connection_count);
+    CHECK(get_u32_le(&payload[196]) == status.incoming_l2cap_hid_control_count);
+    CHECK(get_u32_le(&payload[200]) == status.incoming_l2cap_hid_interrupt_count);
+    CHECK(get_u16_le(&payload[204]) == status.last_incoming_l2cap_psm);
+    CHECK(get_u16_le(&payload[206]) == status.last_incoming_l2cap_local_cid);
+    CHECK(get_u32_le(&payload[208]) == status.last_incoming_l2cap_ms);
+    CHECK(payload[212] == strlen(status.local_name));
+    CHECK(memcmp(&payload[213], status.local_name, strlen(status.local_name)) == 0);
 }
 
 static void test_bt_status_version_lengths(void) {
-    CHECK(CDC_BT_STATUS_VERSION == 3);
+    CHECK(CDC_BT_STATUS_VERSION == 4);
     CHECK(CDC_BT_STATUS_V1_FIXED_LEN == 49);
     CHECK(CDC_BT_STATUS_V2_VERSION == 2);
     CHECK(CDC_BT_STATUS_V2_FIXED_LEN == 99);
-    CHECK(CDC_BT_STATUS_FIXED_LEN == 153);
+    CHECK(CDC_BT_STATUS_V3_VERSION == 3);
+    CHECK(CDC_BT_STATUS_V3_FIXED_LEN == 153);
+    CHECK(CDC_BT_STATUS_FIXED_LEN == 213);
 }
 
 int main(void) {

@@ -77,12 +77,14 @@ pub const HELLO_FLAG_WIFI_JOINED: u8 = 0x02;
 pub const HELLO_FLAG_RUN_MODE_OK: u8 = 0x04;
 pub const HELLO_FLAG_RUN_MODE_ACTIVE: u8 = 0x08;
 
-pub const BT_STATUS_VERSION: u8 = 3;
+pub const BT_STATUS_VERSION: u8 = 4;
 pub const BT_STATUS_V1_VERSION: u8 = 1;
 pub const BT_STATUS_V1_FIXED_LEN: usize = 49;
 pub const BT_STATUS_V2_VERSION: u8 = 2;
 pub const BT_STATUS_V2_FIXED_LEN: usize = 99;
-pub const BT_STATUS_FIXED_LEN: usize = 153;
+pub const BT_STATUS_V3_VERSION: u8 = 3;
+pub const BT_STATUS_V3_FIXED_LEN: usize = 153;
+pub const BT_STATUS_FIXED_LEN: usize = 213;
 pub const BT_STATUS_FLAG_STARTED: u8 = 1 << 0;
 pub const BT_STATUS_FLAG_CONNECTED: u8 = 1 << 1;
 pub const BT_STATUS_FLAG_SEND_REQUESTED: u8 = 1 << 2;

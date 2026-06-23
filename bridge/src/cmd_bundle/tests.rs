@@ -571,6 +571,97 @@ fn bluetooth_report_statuses_are_actionable() {
     );
     assert_eq!(value["bt_security_event_source"], "diag_log");
 
+    let mut reconnect_pending_status = bluetooth_cdc_status(cdc::BT_STATUS_FLAG_STARTED, 0);
+    reconnect_pending_status.target = 1;
+    reconnect_pending_status.local_name = "Xbox Wireless Controller".to_string();
+    reconnect_pending_status.user_confirmation_request_count = 1;
+    reconnect_pending_status.user_confirmation_response_count = 1;
+    reconnect_pending_status.link_key_notification_count = 1;
+    reconnect_pending_status.reconnect_state = 0x03;
+    reconnect_pending_status.reconnect_cycle_attempts = 0;
+    reconnect_pending_status.reconnect_schedule_count = 1;
+    let reconnect_pending = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&bluetooth_pico_state(protocol::BT_HID_STATUS_STARTED, 0)),
+            Some(&reconnect_pending_status),
+            None,
+            "bt_hid: reconnect scheduled reason=1 attempt=1/6 delay_ms=600\n",
+        ),
+    );
+    assert_eq!(reconnect_pending.status, "waiting_for_receiver");
+    assert_eq!(
+        reconnect_pending.bt_receiver_contact,
+        "hid_reconnect_pending"
+    );
+    assert_eq!(reconnect_pending.bt_reconnect_schedule_count, Some(1));
+    let text = format_bluetooth_report_text(&reconnect_pending);
+    assert!(text.contains("bt_reconnect="));
+    assert!(text.contains("- reconnect_schedule_count=1"));
+    assert!(reconnect_pending
+        .next_steps
+        .iter()
+        .any(|step| step.contains("scheduled an active Classic HID reconnect")));
+
+    let mut reconnect_attempted_status = reconnect_pending_status.clone();
+    reconnect_attempted_status.reconnect_state = 0x01;
+    reconnect_attempted_status.reconnect_cycle_attempts = 2;
+    reconnect_attempted_status.reconnect_attempt_count = 2;
+    reconnect_attempted_status.reconnect_failed_count = 2;
+    reconnect_attempted_status.last_reconnect_status = 0x04;
+    reconnect_attempted_status.connection_complete_count = 2;
+    reconnect_attempted_status.last_connection_complete_status = 0x04;
+    let reconnect_attempted = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&bluetooth_pico_state(protocol::BT_HID_STATUS_STARTED, 0)),
+            Some(&reconnect_attempted_status),
+            None,
+            "bt_hid: reconnect attempt returned status=0x04 attempt=2/6\n",
+        ),
+    );
+    assert_eq!(
+        reconnect_attempted.bt_receiver_contact,
+        "hid_reconnect_attempted_no_hid_open"
+    );
+    assert_eq!(reconnect_attempted.bt_connection_complete_count, Some(2));
+    let text = format_bluetooth_report_text(&reconnect_attempted);
+    assert!(text.contains("bt_acl_l2cap="));
+    assert!(text.contains("- connection_complete_count=2"));
+    let value: serde_json::Value =
+        serde_json::from_str(&format_bluetooth_report_json(&reconnect_attempted)).unwrap();
+    assert_eq!(
+        value["bt_receiver_contact"],
+        "hid_reconnect_attempted_no_hid_open"
+    );
+    assert_eq!(value["bt_reconnect_attempt_count"], 2);
+
+    let mut l2cap_status = reconnect_pending_status.clone();
+    l2cap_status.reconnect_state = 0x01;
+    l2cap_status.incoming_l2cap_connection_count = 1;
+    l2cap_status.incoming_l2cap_hid_control_count = 1;
+    l2cap_status.last_incoming_l2cap_psm = 0x0011;
+    l2cap_status.last_incoming_l2cap_local_cid = 0x0040;
+    let l2cap_contact = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&bluetooth_pico_state(protocol::BT_HID_STATUS_STARTED, 0)),
+            Some(&l2cap_status),
+            None,
+            "bt_hid: incoming_l2cap psm=0x0011 local_cid=0x0040\n",
+        ),
+    );
+    assert_eq!(
+        l2cap_contact.bt_receiver_contact,
+        "hid_l2cap_incoming_no_hid_open"
+    );
+
     let connected_no_reports = build_bluetooth_report(
         "02E22DA9",
         "picos/02E22DA9",
@@ -1021,6 +1112,8 @@ fn bluetooth_pico_state(bt_flags: u8, bt_report_send_count: u32) -> protocol::Pi
 
 fn bluetooth_cdc_status(flags: u8, report_send_count: u32) -> cdc::BtStatus {
     cdc::BtStatus {
+        status_version: cdc::BT_STATUS_VERSION,
+        decoded_status_version: cdc::BT_STATUS_VERSION,
         flags,
         target: 0,
         last_status: 0,
@@ -1083,6 +1176,26 @@ fn bluetooth_cdc_status(flags: u8, report_send_count: u32) -> cdc::BtStatus {
         last_encryption_enabled: 0,
         last_disconnection_reason: 0,
         last_hid_open_status: 0,
+        reconnect_state: 0,
+        reconnect_cycle_attempts: 0,
+        last_reconnect_status: 0,
+        last_reconnect_reason: 0,
+        reconnect_schedule_count: 0,
+        reconnect_attempt_count: 0,
+        reconnect_success_count: 0,
+        reconnect_failed_count: 0,
+        reconnect_blocked_count: 0,
+        last_reconnect_ms: 0,
+        connection_complete_count: 0,
+        last_connection_complete_status: 0,
+        last_connection_complete_link_type: 0,
+        last_connection_complete_ms: 0,
+        incoming_l2cap_connection_count: 0,
+        incoming_l2cap_hid_control_count: 0,
+        incoming_l2cap_hid_interrupt_count: 0,
+        last_incoming_l2cap_psm: 0,
+        last_incoming_l2cap_local_cid: 0,
+        last_incoming_l2cap_ms: 0,
         local_name: String::new(),
     }
 }

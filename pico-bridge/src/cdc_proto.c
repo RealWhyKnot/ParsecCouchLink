@@ -100,9 +100,31 @@ size_t cdc_build_bt_status_payload(const cdc_bt_status_view_t *status, uint8_t *
     out[149] = 0;
     out[150] = 0;
     out[151] = 0;
-    out[152] = (uint8_t)name_len;
+    out[152] = status->reconnect_state;
+    out[153] = status->reconnect_cycle_attempts;
+    out[154] = status->last_reconnect_status;
+    out[155] = status->last_reconnect_reason;
+    put_u32_le(&out[156], status->reconnect_schedule_count);
+    put_u32_le(&out[160], status->reconnect_attempt_count);
+    put_u32_le(&out[164], status->reconnect_success_count);
+    put_u32_le(&out[168], status->reconnect_failed_count);
+    put_u32_le(&out[172], status->reconnect_blocked_count);
+    put_u32_le(&out[176], status->last_reconnect_ms);
+    put_u32_le(&out[180], status->connection_complete_count);
+    out[184] = status->last_connection_complete_status;
+    out[185] = status->last_connection_complete_link_type;
+    out[186] = 0;
+    out[187] = 0;
+    put_u32_le(&out[188], status->last_connection_complete_ms);
+    put_u32_le(&out[192], status->incoming_l2cap_connection_count);
+    put_u32_le(&out[196], status->incoming_l2cap_hid_control_count);
+    put_u32_le(&out[200], status->incoming_l2cap_hid_interrupt_count);
+    put_u16_le(&out[204], status->last_incoming_l2cap_psm);
+    put_u16_le(&out[206], status->last_incoming_l2cap_local_cid);
+    put_u32_le(&out[208], status->last_incoming_l2cap_ms);
+    out[212] = (uint8_t)name_len;
     if (name_len)
-        memcpy(&out[153], status->local_name, name_len);
+        memcpy(&out[213], status->local_name, name_len);
     return CDC_BT_STATUS_FIXED_LEN + name_len;
 }
 

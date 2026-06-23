@@ -204,7 +204,7 @@ If streaming starts but the console does not react, run the guided menu again:
 
 On the **Basic** tab, choose the Pico, then use **Start streaming with Controller 1** or **Choose controller and stream**. Verify that the right Controller 1-4 source is mapped to the right Pico. While streaming, the terminal should show outbound packet counts increasing and recent Pico replies. If the source says `waiting for source`, Windows does not currently see that XInput slot.
 
-For Bluetooth mode, the Pico must stay plugged into the bridge PC over USB. The status line shows USB CDC output instead of Pico UDP replies. If the stream refuses to start, confirm Windows sees the CouchLink USB diagnostic device, then rerun `.\couchlink.exe bluetooth`.
+For Bluetooth mode, the Pico must stay plugged into the bridge PC over USB. The live command keeps running until you stop it, and the status line shows PC USB input plus Bluetooth receiver state instead of Pico UDP replies. If the stream refuses to start, confirm Windows sees the CouchLink USB diagnostic device, then rerun `.\couchlink.exe bluetooth`.
 
 ## USB Adapter Does Not See The Pico
 
@@ -242,7 +242,7 @@ Bluetooth mode does not use the Pico as a console-side USB controller. Leave the
 .\couchlink.exe bluetooth
 ```
 
-If it still fails, run a bundle and check `bluetooth-report.txt`. The important fields are `bt_started`, `bt_connected`, `bt_receiver_contact`, `bt_report_send_count`, and the PC USB input counters. `bt_receiver_contact=pairing_security_contact_no_hid_open` means the receiver reached Bluetooth pairing/security but did not open a Classic HID channel. For BlueRetro, clear the receiver-side pairing entry and try generic HID with `.\couchlink.exe bluetooth` or `.\couchlink.exe blueretro` before relying on `bluetooth-xbox` / `blueretro-xbox`. `bt_connected=true` with `bt_report_send_count=0` points at the PC source controller or stream command.
+If it still fails, run a bundle and check `bluetooth-report.txt`. The important fields are `bt_started`, `bt_connected`, `bt_receiver_contact`, `bt_report_send_count`, `bt_reconnect`, `bt_acl_l2cap`, and the PC USB input counters. `bt_receiver_contact=pairing_security_contact_no_hid_open` means the receiver reached Bluetooth pairing/security but did not open a Classic HID channel. `hid_reconnect_pending` means the Pico scheduled or started an active reconnect to the paired receiver. `hid_reconnect_attempted_no_hid_open` means the Pico tried active reconnect and the `bt_reconnect` / `bt_acl_l2cap` counters show whether paging failed, ACL connected, or a lower channel was reached. `hid_l2cap_incoming_no_hid_open` means an incoming HID L2CAP channel was observed, but BTstack did not report a completed HID open. For BlueRetro, clear the receiver-side pairing entry and try generic HID with `.\couchlink.exe bluetooth` or `.\couchlink.exe blueretro` before relying on `bluetooth-xbox` / `blueretro-xbox`. `bt_connected=true` with `bt_report_send_count=0` points at the PC source controller or stream command.
 
 ## Logs
 
