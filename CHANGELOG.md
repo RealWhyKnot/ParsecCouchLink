@@ -4,7 +4,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Added
+- **bluetooth:** Report pairing security contact (d178f4f)
 
 ---
 
