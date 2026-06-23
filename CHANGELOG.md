@@ -4,7 +4,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Fixed
+- **bluetooth:** Actively reconnect paired HID receivers (62e9dce)
 
 ---
 
