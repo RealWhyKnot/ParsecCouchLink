@@ -1,0 +1,413 @@
+//! Bluetooth-mode bundle reports.
+
+use std::fmt::Write as _;
+
+use anyhow::Result;
+use serde::Serialize;
+
+use crate::{cmd_run, protocol};
+
+use super::PicoBundleCapture;
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct BluetoothReport {
+    pub(super) artifact_schema_version: u8,
+    pub(super) uid: String,
+    pub(super) path: String,
+    pub(super) peer: Option<String>,
+    pub(super) live: bool,
+    pub(super) persona: String,
+    pub(super) target_label: String,
+    pub(super) advertised_name: &'static str,
+    pub(super) expected_connection: &'static str,
+    pub(super) usb_input_required: bool,
+    pub(super) usb_transport: &'static str,
+    pub(super) bluetooth_output: &'static str,
+    pub(super) pico_state_captured: bool,
+    pub(super) usb_diag_captured: bool,
+    pub(super) pico_diag_captured: bool,
+    pub(super) status: &'static str,
+    pub(super) warning: bool,
+    pub(super) bt_flags: u8,
+    pub(super) bt_started: bool,
+    pub(super) bt_connected: bool,
+    pub(super) bt_send_requested: bool,
+    pub(super) bt_target: u8,
+    pub(super) bt_last_status: u8,
+    pub(super) bt_report_len: u8,
+    pub(super) bt_cid: u16,
+    pub(super) bt_init_count: u32,
+    pub(super) bt_ready_count: u32,
+    pub(super) bt_open_count: u32,
+    pub(super) bt_close_count: u32,
+    pub(super) bt_can_send_count: u32,
+    pub(super) bt_report_build_count: u32,
+    pub(super) bt_report_send_count: u32,
+    pub(super) bt_send_request_count: u32,
+    pub(super) bt_last_event_ms: u32,
+    pub(super) bt_last_send_ms: u32,
+    pub(super) usb_mounted: Option<bool>,
+    pub(super) usb_suspended: Option<bool>,
+    pub(super) usb_mount_count: Option<u32>,
+    pub(super) usb_umount_count: Option<u32>,
+    pub(super) usb_device_desc_count: Option<u32>,
+    pub(super) usb_config_desc_count: Option<u32>,
+    pub(super) usb_input_queued_count: Option<u32>,
+    pub(super) usb_input_sent_count: Option<u32>,
+    pub(super) usb_host_out_count: Option<u32>,
+    pub(super) relevant_diag_lines: Vec<String>,
+    pub(super) next_steps: Vec<&'static str>,
+    pub(super) notes: Vec<&'static str>,
+}
+pub(super) fn build_bluetooth_report(
+    uid: &str,
+    path: &str,
+    target: &cmd_run::PicoTarget,
+    pico_state: Option<&protocol::PicoStateDiag>,
+    usb_diag: Option<&protocol::UsbDiag>,
+    pico_diag_text: &str,
+) -> BluetoothReport {
+    let bt_flags = pico_state.map(|state| state.bt_flags).unwrap_or(0);
+    let bt_started = bt_flags & protocol::BT_HID_STATUS_STARTED != 0;
+    let bt_connected = bt_flags & protocol::BT_HID_STATUS_CONNECTED != 0;
+    let bt_send_requested = bt_flags & protocol::BT_HID_STATUS_SEND_REQUESTED != 0;
+    let bt_report_send_count = pico_state
+        .map(|state| state.bt_report_send_count)
+        .unwrap_or(0);
+    let bt_target = pico_state
+        .map(|state| state.bt_target)
+        .unwrap_or_else(|| bluetooth_target_from_persona(target.persona));
+    let status =
+        bluetooth_report_status(pico_state, bt_started, bt_connected, bt_report_send_count);
+    BluetoothReport {
+        artifact_schema_version: 1,
+        uid: uid.to_string(),
+        path: path.to_string(),
+        peer: Some(target.peer.to_string()),
+        live: true,
+        persona: target.persona.label().to_string(),
+        target_label: protocol::bt_hid_target_label(bt_target).to_string(),
+        advertised_name: bluetooth_advertised_name(bt_target),
+        expected_connection: "pc_usb_input_bluetooth_output",
+        usb_input_required: true,
+        usb_transport: "cdc_framed_controller_state",
+        bluetooth_output: "classic_bluetooth_hid_gamepad",
+        pico_state_captured: pico_state.is_some(),
+        usb_diag_captured: usb_diag.is_some(),
+        pico_diag_captured: !pico_diag_text.trim().is_empty(),
+        status,
+        warning: status != "reports_sent",
+        bt_flags,
+        bt_started,
+        bt_connected,
+        bt_send_requested,
+        bt_target,
+        bt_last_status: pico_state.map(|state| state.bt_last_status).unwrap_or(0),
+        bt_report_len: pico_state.map(|state| state.bt_report_len).unwrap_or(0),
+        bt_cid: pico_state.map(|state| state.bt_cid).unwrap_or(0),
+        bt_init_count: pico_state.map(|state| state.bt_init_count).unwrap_or(0),
+        bt_ready_count: pico_state.map(|state| state.bt_ready_count).unwrap_or(0),
+        bt_open_count: pico_state.map(|state| state.bt_open_count).unwrap_or(0),
+        bt_close_count: pico_state.map(|state| state.bt_close_count).unwrap_or(0),
+        bt_can_send_count: pico_state
+            .map(|state| state.bt_can_send_count)
+            .unwrap_or(0),
+        bt_report_build_count: pico_state
+            .map(|state| state.bt_report_build_count)
+            .unwrap_or(0),
+        bt_report_send_count,
+        bt_send_request_count: pico_state
+            .map(|state| state.bt_send_request_count)
+            .unwrap_or(0),
+        bt_last_event_ms: pico_state.map(|state| state.bt_last_event_ms).unwrap_or(0),
+        bt_last_send_ms: pico_state.map(|state| state.bt_last_send_ms).unwrap_or(0),
+        usb_mounted: usb_diag.map(|diag| diag.mounted()),
+        usb_suspended: usb_diag.map(|diag| diag.suspended()),
+        usb_mount_count: usb_diag.map(|diag| diag.mount_count),
+        usb_umount_count: usb_diag.map(|diag| diag.umount_count),
+        usb_device_desc_count: usb_diag.map(|diag| diag.device_desc_count),
+        usb_config_desc_count: usb_diag.map(|diag| diag.config_desc_count),
+        usb_input_queued_count: usb_diag.map(|diag| diag.xinput_in_queued_count),
+        usb_input_sent_count: usb_diag.map(|diag| diag.xinput_in_sent_count),
+        usb_host_out_count: usb_diag.map(|diag| diag.xinput_out_count),
+        relevant_diag_lines: bluetooth_relevant_diag_lines(pico_diag_text),
+        next_steps: bluetooth_report_next_steps(status),
+        notes: vec![
+            "Bluetooth mode streams controller input from this PC to the Pico over USB CDC.",
+            "The Pico then emits a Classic Bluetooth HID gamepad report to the paired receiver.",
+            "The advertised_name field is the exact Bluetooth name the receiver should see.",
+            "Wi-Fi discovery may still appear in logs, but live Bluetooth controller packets are not sent over Wi-Fi.",
+            "USB adapter survey is skipped for Bluetooth mode because the Pico USB connector stays on the PC.",
+        ],
+    }
+}
+
+pub(super) fn bluetooth_target_from_persona(persona: protocol::Persona) -> u8 {
+    match persona {
+        protocol::Persona::BluetoothXbox => 1,
+        protocol::Persona::BluetoothPlaystation => 2,
+        _ => 0,
+    }
+}
+
+pub(super) fn bluetooth_advertised_name(target: u8) -> &'static str {
+    match target {
+        1 => "Xbox Wireless Controller",
+        2 => "Wireless Controller",
+        _ => "CouchLink BT HID",
+    }
+}
+
+pub(super) fn bluetooth_report_status(
+    pico_state: Option<&protocol::PicoStateDiag>,
+    bt_started: bool,
+    bt_connected: bool,
+    bt_report_send_count: u32,
+) -> &'static str {
+    if pico_state.is_none() {
+        "pico_state_missing"
+    } else if !bt_started {
+        "bluetooth_stack_not_started"
+    } else if !bt_connected {
+        "waiting_for_receiver"
+    } else if bt_report_send_count == 0 {
+        "connected_waiting_for_input"
+    } else {
+        "reports_sent"
+    }
+}
+
+pub(super) fn bluetooth_report_next_steps(status: &str) -> Vec<&'static str> {
+    match status {
+        "pico_state_missing" => vec![
+            "Keep the Pico plugged into this PC over USB and rerun couchlink bundle while Bluetooth mode is active.",
+            "If Wi-Fi discovery is unavailable, use the USB diagnostic device identity VID 0x2E8A PID 0xCAF0 to confirm the Pico is attached.",
+        ],
+        "bluetooth_stack_not_started" => vec![
+            "Check pico-diag.txt for cyw43 or Bluetooth initialization failures.",
+            "Reflash the Pico if the firmware log never reaches a bt_hid init line.",
+        ],
+        "waiting_for_receiver" => vec![
+            "Put the target Bluetooth receiver or adapter into pairing mode and pair with the CouchLink Bluetooth device.",
+            "If it was previously paired, remove the old pairing on the receiver side and pair again.",
+        ],
+        "connected_waiting_for_input" => vec![
+            "Start couchlink bluetooth with the Pico plugged into this PC over USB.",
+            "Move or press the source controller and rerun bundle if report_send_count stays at zero.",
+        ],
+        _ => vec![
+            "Bluetooth reports were sent. If the receiver still does not react, keep the full bundle and inspect receiver-side pairing or controller-mimic compatibility.",
+        ],
+    }
+}
+
+pub(super) fn bluetooth_relevant_diag_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|line| {
+            line.contains("bt_hid:")
+                || line.contains("Bluetooth")
+                || line.contains("CDC")
+                || line.contains("cdc:")
+                || line.contains("usb_init:")
+                || line.contains("run:")
+        })
+        .map(|line| line.to_string())
+        .collect()
+}
+
+pub(super) fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
+    let mut out = String::from("Bluetooth output report\n\n");
+    let _ = writeln!(out, "uid={}", report.uid);
+    let _ = writeln!(out, "path={}", report.path);
+    let _ = writeln!(out, "peer={}", report.peer.as_deref().unwrap_or("none"));
+    let _ = writeln!(out, "persona={}", report.persona);
+    let _ = writeln!(out, "target_label={}", report.target_label);
+    let _ = writeln!(out, "advertised_name={}", report.advertised_name);
+    let _ = writeln!(out, "expected_connection={}", report.expected_connection);
+    let _ = writeln!(out, "usb_input_required={}", report.usb_input_required);
+    let _ = writeln!(out, "usb_transport={}", report.usb_transport);
+    let _ = writeln!(out, "bluetooth_output={}", report.bluetooth_output);
+    let _ = writeln!(out, "status={}", report.status);
+    let _ = writeln!(out, "warning={}", report.warning);
+    let _ = writeln!(out, "pico_state_captured={}", report.pico_state_captured);
+    let _ = writeln!(out, "usb_diag_captured={}", report.usb_diag_captured);
+    let _ = writeln!(out, "pico_diag_captured={}", report.pico_diag_captured);
+    let _ = writeln!(out);
+
+    out.push_str("bluetooth_state=\n");
+    let _ = writeln!(out, "- bt_flags=0x{:02X}", report.bt_flags);
+    let _ = writeln!(out, "- bt_started={}", report.bt_started);
+    let _ = writeln!(out, "- bt_connected={}", report.bt_connected);
+    let _ = writeln!(out, "- bt_send_requested={}", report.bt_send_requested);
+    let _ = writeln!(out, "- bt_target={}", report.bt_target);
+    let _ = writeln!(out, "- bt_last_status=0x{:02X}", report.bt_last_status);
+    let _ = writeln!(out, "- bt_report_len={}", report.bt_report_len);
+    let _ = writeln!(out, "- bt_cid={}", report.bt_cid);
+    let _ = writeln!(out, "- bt_init_count={}", report.bt_init_count);
+    let _ = writeln!(out, "- bt_ready_count={}", report.bt_ready_count);
+    let _ = writeln!(out, "- bt_open_count={}", report.bt_open_count);
+    let _ = writeln!(out, "- bt_close_count={}", report.bt_close_count);
+    let _ = writeln!(out, "- bt_can_send_count={}", report.bt_can_send_count);
+    let _ = writeln!(
+        out,
+        "- bt_report_build_count={}",
+        report.bt_report_build_count
+    );
+    let _ = writeln!(
+        out,
+        "- bt_report_send_count={}",
+        report.bt_report_send_count
+    );
+    let _ = writeln!(
+        out,
+        "- bt_send_request_count={}",
+        report.bt_send_request_count
+    );
+    let _ = writeln!(out, "- bt_last_event_ms={}", report.bt_last_event_ms);
+    let _ = writeln!(out, "- bt_last_send_ms={}", report.bt_last_send_ms);
+    let _ = writeln!(out);
+
+    out.push_str("pc_usb_input=\n");
+    let _ = writeln!(out, "- mounted={}", format_option_bool(report.usb_mounted));
+    let _ = writeln!(
+        out,
+        "- suspended={}",
+        format_option_bool(report.usb_suspended)
+    );
+    let _ = writeln!(
+        out,
+        "- mount_count={}",
+        format_option_u32(report.usb_mount_count)
+    );
+    let _ = writeln!(
+        out,
+        "- umount_count={}",
+        format_option_u32(report.usb_umount_count)
+    );
+    let _ = writeln!(
+        out,
+        "- device_desc_count={}",
+        format_option_u32(report.usb_device_desc_count)
+    );
+    let _ = writeln!(
+        out,
+        "- config_desc_count={}",
+        format_option_u32(report.usb_config_desc_count)
+    );
+    let _ = writeln!(
+        out,
+        "- input_queued_count={}",
+        format_option_u32(report.usb_input_queued_count)
+    );
+    let _ = writeln!(
+        out,
+        "- input_sent_count={}",
+        format_option_u32(report.usb_input_sent_count)
+    );
+    let _ = writeln!(
+        out,
+        "- host_out_count={}",
+        format_option_u32(report.usb_host_out_count)
+    );
+    let _ = writeln!(out);
+
+    out.push_str("relevant_diag_lines=\n");
+    if report.relevant_diag_lines.is_empty() {
+        out.push_str("- none\n");
+    } else {
+        for line in &report.relevant_diag_lines {
+            let _ = writeln!(out, "- {line}");
+        }
+    }
+    let _ = writeln!(out);
+
+    out.push_str("next_steps=\n");
+    for step in &report.next_steps {
+        let _ = writeln!(out, "- {step}");
+    }
+    let _ = writeln!(out);
+
+    out.push_str("notes=\n");
+    for note in &report.notes {
+        let _ = writeln!(out, "- {note}");
+    }
+    out
+}
+
+pub(super) fn format_bluetooth_report_json(report: &BluetoothReport) -> String {
+    serde_json::to_string_pretty(report).unwrap_or_else(|e| {
+        format!(
+            "{{\"artifact_schema_version\":1,\"error\":\"bluetooth report serialization failed: {}\"}}\n",
+            e
+        )
+    })
+}
+
+pub(super) fn bluetooth_usb_packets_stub(uid: &str, target: &cmd_run::PicoTarget) -> String {
+    format!(
+        "# Bluetooth mode USB packet capture\n\nuid={uid}\npersona={}\n\nBluetooth mode keeps the Pico plugged into this PC and streams controller input over USB CDC frames. The Pico then outputs Classic Bluetooth HID to the paired receiver.\n\nNo console USB adapter packet capture or persona survey was attempted for this Pico because Bluetooth mode does not use the Pico USB connector as a console-side controller output.\n",
+        target.persona.label()
+    )
+}
+
+pub(super) fn format_option_bool(value: Option<bool>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "not_captured".to_string())
+}
+
+pub(super) fn format_option_u32(value: Option<u32>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "not_captured".to_string())
+}
+pub(super) fn aggregate_bluetooth_report_text(captures: &[PicoBundleCapture]) -> String {
+    let mut out = String::from("Aggregate Bluetooth output report\n\n");
+    let mut count = 0usize;
+    for capture in captures {
+        if capture.bluetooth_report_text.is_empty() {
+            continue;
+        }
+        count += 1;
+        let _ = writeln!(
+            out,
+            "## uid={} path={}/bluetooth-report.txt",
+            capture.manifest.uid, capture.manifest.path
+        );
+        out.push_str(&capture.bluetooth_report_text);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    if count == 0 {
+        out.push_str("No live Bluetooth-mode Pico report was captured.\n");
+    }
+    out
+}
+
+#[derive(Serialize)]
+pub(super) struct BluetoothBundleReport<'a> {
+    pub(super) artifact_schema_version: u8,
+    pub(super) report_count: usize,
+    pub(super) per_pico: Vec<&'a BluetoothReport>,
+    pub(super) notes: Vec<&'static str>,
+}
+
+pub(super) fn bluetooth_report_bundle_json(captures: &[PicoBundleCapture]) -> Result<String> {
+    let per_pico = captures
+        .iter()
+        .filter_map(|capture| capture.bluetooth_report.as_ref())
+        .collect::<Vec<_>>();
+    let report = BluetoothBundleReport {
+        artifact_schema_version: 1,
+        report_count: per_pico.len(),
+        per_pico,
+        notes: vec![
+            "Bluetooth reports are only present for live Pico boards in Bluetooth mode.",
+            "Bluetooth mode uses USB CDC for live controller input from the bridge PC.",
+            "Bluetooth mode skips the console USB adapter survey because the Pico USB connector stays plugged into the PC.",
+        ],
+    };
+    Ok(serde_json::to_string_pretty(&report)?)
+}
