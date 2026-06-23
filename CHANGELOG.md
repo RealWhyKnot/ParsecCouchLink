@@ -4,7 +4,18 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Changed
+- **run:** Extract bluetooth helpers (06dca40)
+- **tests:** Move cli tests into module (7cb53fb)
+- **run:** Extract debug harvest flow (40151c7)
+- **lab:** Extract pnp helpers (4b1b290)
+- **lab:** Extract report model (782db71)
+- **tests:** Move command tests into modules (5312445)
+- **protocol:** Move tests into module (32b5ea9)
+- **bundle:** Extract capture flow (81a57b0)
+- **bundle:** Extract zip writer (1956578)
+- **bundle:** Split usb packet summary (3bb124d)
+- **bundle:** Split bundle reports into modules (72422bd)
 
 ---
 
