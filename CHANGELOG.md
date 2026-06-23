@@ -4,6 +4,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+### Added
+- **bundle:** Capture Bluetooth receiver contact diagnostics (76de704)
+
 ### Changed
 - **run:** Extract bluetooth helpers (06dca40)
 - **tests:** Move cli tests into module (7cb53fb)
@@ -24,6 +27,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 - **protocol:** Extract log chunk codec (fb2fb65)
 - **protocol:** Extract wire helpers (1fac34f)
 - **bundle:** Move tests into module (1d43a65)
+
+### Fixed
+- **bluetooth:** Match Xbox wireless HID profile (906c5b4)
 
 ---
 
