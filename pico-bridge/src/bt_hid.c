@@ -56,9 +56,32 @@ static uint8_t bt_hid_last_out_report_type;
 static uint16_t bt_hid_last_get_report_len;
 static uint16_t bt_hid_last_set_report_len;
 static uint16_t bt_hid_last_out_report_len;
+static uint32_t bt_hid_pin_code_request_count;
+static uint32_t bt_hid_pin_code_response_count;
+static uint32_t bt_hid_user_confirmation_request_count;
+static uint32_t bt_hid_user_confirmation_response_count;
+static uint32_t bt_hid_simple_pairing_complete_count;
+static uint32_t bt_hid_authentication_complete_count;
+static uint32_t bt_hid_link_key_notification_count;
+static uint32_t bt_hid_encryption_change_count;
+static uint32_t bt_hid_disconnection_complete_count;
+static uint32_t bt_hid_hid_open_failed_count;
+static uint32_t bt_hid_last_security_event_ms;
+static uint8_t bt_hid_last_simple_pairing_status;
+static uint8_t bt_hid_last_authentication_status;
+static uint8_t bt_hid_last_encryption_status;
+static uint8_t bt_hid_last_encryption_enabled;
+static uint8_t bt_hid_last_disconnection_reason;
+static uint8_t bt_hid_last_hid_open_status;
 
 static uint32_t now_ms(void) {
     return to_ms_since_boot(get_absolute_time());
+}
+
+static void note_security_event(void) {
+    uint32_t now = now_ms();
+    bt_hid_last_event_ms = now;
+    bt_hid_last_security_event_ms = now;
 }
 
 static void copy_gamepad_state(gamepad_state_t *out) {
@@ -197,15 +220,55 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
         break;
     case HCI_EVENT_PIN_CODE_REQUEST:
         hci_event_pin_code_request_get_bd_addr(packet, event_addr);
-        bt_hid_last_event_ms = now_ms();
+        bt_hid_pin_code_request_count++;
+        note_security_event();
         diag_log_msg("bt_hid: pin_code_request");
         gap_pin_code_response(event_addr, "0000");
+        bt_hid_pin_code_response_count++;
         break;
     case HCI_EVENT_USER_CONFIRMATION_REQUEST:
         hci_event_user_confirmation_request_get_bd_addr(packet, event_addr);
-        bt_hid_last_event_ms = now_ms();
+        bt_hid_user_confirmation_request_count++;
+        note_security_event();
         diag_log_msg("bt_hid: user_confirmation_request");
         gap_ssp_confirmation_response(event_addr);
+        bt_hid_user_confirmation_response_count++;
+        break;
+    case HCI_EVENT_SIMPLE_PAIRING_COMPLETE:
+        bt_hid_simple_pairing_complete_count++;
+        bt_hid_last_simple_pairing_status = hci_event_simple_pairing_complete_get_status(packet);
+        note_security_event();
+        diag_log_printf("bt_hid: simple_pairing_complete status=0x%02X",
+                        (unsigned)bt_hid_last_simple_pairing_status);
+        break;
+    case HCI_EVENT_AUTHENTICATION_COMPLETE:
+        bt_hid_authentication_complete_count++;
+        bt_hid_last_authentication_status = hci_event_authentication_complete_get_status(packet);
+        note_security_event();
+        diag_log_printf("bt_hid: authentication_complete status=0x%02X",
+                        (unsigned)bt_hid_last_authentication_status);
+        break;
+    case HCI_EVENT_LINK_KEY_NOTIFICATION:
+        bt_hid_link_key_notification_count++;
+        note_security_event();
+        diag_log_msg("bt_hid: link_key_notification");
+        break;
+    case HCI_EVENT_ENCRYPTION_CHANGE:
+        bt_hid_encryption_change_count++;
+        bt_hid_last_encryption_status = hci_event_encryption_change_get_status(packet);
+        bt_hid_last_encryption_enabled = hci_event_encryption_change_get_encryption_enabled(packet);
+        note_security_event();
+        diag_log_printf("bt_hid: encryption_change status=0x%02X enabled=%u",
+                        (unsigned)bt_hid_last_encryption_status,
+                        (unsigned)bt_hid_last_encryption_enabled);
+        break;
+    case HCI_EVENT_DISCONNECTION_COMPLETE:
+        bt_hid_disconnection_complete_count++;
+        bt_hid_last_disconnection_reason = hci_event_disconnection_complete_get_reason(packet);
+        note_security_event();
+        diag_log_printf("bt_hid: disconnect_complete status=0x%02X reason=0x%02X",
+                        (unsigned)hci_event_disconnection_complete_get_status(packet),
+                        (unsigned)bt_hid_last_disconnection_reason);
         break;
     case HCI_EVENT_HID_META:
         switch (hci_event_hid_meta_get_subevent_code(packet)) {
@@ -214,6 +277,8 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
             bt_hid_last_status = status;
             bt_hid_last_event_ms = now_ms();
             if (status != ERROR_CODE_SUCCESS) {
+                bt_hid_hid_open_failed_count++;
+                bt_hid_last_hid_open_status = status;
                 diag_log_printf("bt_hid: connection failed status=0x%02X", (unsigned)status);
                 bt_hid_connected = false;
                 bt_hid_cid = 0;
@@ -285,6 +350,12 @@ bool bt_hid_init(bt_hid_target_t target) {
     gap_set_default_link_policy_settings(LM_LINK_POLICY_ENABLE_ROLE_SWITCH |
                                          LM_LINK_POLICY_ENABLE_SNIFF_MODE);
     gap_set_allow_role_switch(true);
+    gap_set_bondable_mode(1);
+    gap_ssp_set_enable(1);
+    gap_ssp_set_io_capability(SSP_IO_CAPABILITY_NO_INPUT_NO_OUTPUT);
+    gap_ssp_set_authentication_requirement(
+        SSP_IO_AUTHREQ_MITM_PROTECTION_NOT_REQUIRED_GENERAL_BONDING);
+    gap_ssp_set_auto_accept(1);
 
     l2cap_init();
     sdp_init();
@@ -382,6 +453,23 @@ void bt_hid_snapshot(bt_hid_snapshot_t *out) {
     out->last_get_report_len = bt_hid_last_get_report_len;
     out->last_set_report_len = bt_hid_last_set_report_len;
     out->last_out_report_len = bt_hid_last_out_report_len;
+    out->pin_code_request_count = bt_hid_pin_code_request_count;
+    out->pin_code_response_count = bt_hid_pin_code_response_count;
+    out->user_confirmation_request_count = bt_hid_user_confirmation_request_count;
+    out->user_confirmation_response_count = bt_hid_user_confirmation_response_count;
+    out->simple_pairing_complete_count = bt_hid_simple_pairing_complete_count;
+    out->authentication_complete_count = bt_hid_authentication_complete_count;
+    out->link_key_notification_count = bt_hid_link_key_notification_count;
+    out->encryption_change_count = bt_hid_encryption_change_count;
+    out->disconnection_complete_count = bt_hid_disconnection_complete_count;
+    out->hid_open_failed_count = bt_hid_hid_open_failed_count;
+    out->last_security_event_ms = bt_hid_last_security_event_ms;
+    out->last_simple_pairing_status = bt_hid_last_simple_pairing_status;
+    out->last_authentication_status = bt_hid_last_authentication_status;
+    out->last_encryption_status = bt_hid_last_encryption_status;
+    out->last_encryption_enabled = bt_hid_last_encryption_enabled;
+    out->last_disconnection_reason = bt_hid_last_disconnection_reason;
+    out->last_hid_open_status = bt_hid_last_hid_open_status;
 }
 
 void bt_hid_task(void) {

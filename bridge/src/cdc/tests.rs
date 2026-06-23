@@ -70,8 +70,25 @@ fn bt_status_payload_decodes_wire_shape() {
     payload[92..94].copy_from_slice(&36u16.to_le_bytes());
     payload[94..96].copy_from_slice(&77u16.to_le_bytes());
     payload[96..98].copy_from_slice(&8u16.to_le_bytes());
-    payload[98] = name.len() as u8;
-    payload[99..].copy_from_slice(name);
+    payload[98..102].copy_from_slice(&18u32.to_le_bytes());
+    payload[102..106].copy_from_slice(&19u32.to_le_bytes());
+    payload[106..110].copy_from_slice(&20u32.to_le_bytes());
+    payload[110..114].copy_from_slice(&21u32.to_le_bytes());
+    payload[114..118].copy_from_slice(&22u32.to_le_bytes());
+    payload[118..122].copy_from_slice(&23u32.to_le_bytes());
+    payload[122..126].copy_from_slice(&24u32.to_le_bytes());
+    payload[126..130].copy_from_slice(&25u32.to_le_bytes());
+    payload[130..134].copy_from_slice(&26u32.to_le_bytes());
+    payload[134..138].copy_from_slice(&27u32.to_le_bytes());
+    payload[138..142].copy_from_slice(&0x99AA_BBCCu32.to_le_bytes());
+    payload[142] = 0x31;
+    payload[143] = 0x32;
+    payload[144] = 0x33;
+    payload[145] = 1;
+    payload[146] = 0x13;
+    payload[147] = 0x44;
+    payload[152] = name.len() as u8;
+    payload[153..].copy_from_slice(name);
 
     let status = decode_bt_status_payload(&payload).unwrap();
 
@@ -110,7 +127,49 @@ fn bt_status_payload_decodes_wire_shape() {
     assert_eq!(status.last_get_report_len, 36);
     assert_eq!(status.last_set_report_len, 77);
     assert_eq!(status.last_out_report_len, 8);
+    assert_eq!(status.pin_code_request_count, 18);
+    assert_eq!(status.pin_code_response_count, 19);
+    assert_eq!(status.user_confirmation_request_count, 20);
+    assert_eq!(status.user_confirmation_response_count, 21);
+    assert_eq!(status.simple_pairing_complete_count, 22);
+    assert_eq!(status.authentication_complete_count, 23);
+    assert_eq!(status.link_key_notification_count, 24);
+    assert_eq!(status.encryption_change_count, 25);
+    assert_eq!(status.disconnection_complete_count, 26);
+    assert_eq!(status.hid_open_failed_count, 27);
+    assert_eq!(status.last_security_event_ms, 0x99AA_BBCC);
+    assert_eq!(status.last_simple_pairing_status, 0x31);
+    assert_eq!(status.last_authentication_status, 0x32);
+    assert_eq!(status.last_encryption_status, 0x33);
+    assert_eq!(status.last_encryption_enabled, 1);
+    assert_eq!(status.last_disconnection_reason, 0x13);
+    assert_eq!(status.last_hid_open_status, 0x44);
+    assert!(status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "CouchLink BT HID");
+}
+
+#[test]
+fn bt_status_payload_decodes_v2_wire_shape() {
+    let name = b"Previous BT";
+    let mut payload = vec![0u8; BT_STATUS_V2_FIXED_LEN + name.len()];
+    payload[0] = BT_STATUS_V2_VERSION;
+    payload[1] = BT_STATUS_FLAG_STARTED;
+    payload[2] = 1;
+    payload[48..52].copy_from_slice(&9u32.to_le_bytes());
+    payload[98] = name.len() as u8;
+    payload[99..].copy_from_slice(name);
+
+    let status = decode_bt_status_payload(&payload).unwrap();
+
+    assert!(status.started());
+    assert!(!status.connected());
+    assert_eq!(status.target, 1);
+    assert_eq!(status.get_report_count, 9);
+    assert_eq!(status.pin_code_request_count, 0);
+    assert_eq!(status.user_confirmation_request_count, 0);
+    assert_eq!(status.hid_open_failed_count, 0);
+    assert!(!status.pairing_security_contact_seen());
+    assert_eq!(status.local_name, "Previous BT");
 }
 
 #[test]
@@ -133,6 +192,10 @@ fn bt_status_payload_decodes_v1_wire_shape() {
     assert_eq!(status.get_report_count, 0);
     assert_eq!(status.set_report_count, 0);
     assert_eq!(status.out_report_count, 0);
+    assert_eq!(status.pin_code_request_count, 0);
+    assert_eq!(status.user_confirmation_request_count, 0);
+    assert_eq!(status.hid_open_failed_count, 0);
+    assert!(!status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "Legacy BT");
 }
 
@@ -144,6 +207,6 @@ fn bt_status_payload_rejects_bad_shape() {
     assert!(decode_bt_status_payload(&bad_version).is_err());
     let mut bad_name = vec![0u8; BT_STATUS_FIXED_LEN];
     bad_name[0] = BT_STATUS_VERSION;
-    bad_name[98] = 1;
+    bad_name[152] = 1;
     assert!(decode_bt_status_payload(&bad_name).is_err());
 }

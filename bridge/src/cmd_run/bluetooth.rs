@@ -110,6 +110,11 @@ pub fn print_bluetooth_pairing_help(persona: Persona) {
     println!("  The Pico will advertise as {expected_name}.");
     println!("  Put the receiver or console adapter into Bluetooth pairing/search mode.");
     println!("  Pair the receiver with {expected_name}. Use PIN 0000 if it asks for one.");
+    if persona == Persona::BluetoothXbox {
+        println!(
+            "  For BlueRetro, try generic HID with couchlink bluetooth or blueretro before relying on the Xbox-named Classic HID mimic."
+        );
+    }
     println!("  Persona switching still uses Wi-Fi; live controller input then uses PC USB.");
 }
 
@@ -152,6 +157,43 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
     }
     if !status.connected() {
         let name = bluetooth_display_name(status);
+        if status.pairing_security_contact_seen() || status.hid_open_failed_count > 0 {
+            let mut msg = format!(
+                "pairing/security seen for \"{name}\" but no Classic HID channel opened; clear receiver pairing and pair again"
+            );
+            msg.push_str("; BlueRetro: try generic HID with couchlink bluetooth or blueretro");
+            if status.user_confirmation_request_count > 0 {
+                msg.push_str(&format!(
+                    "; confirmations {}/{}",
+                    status.user_confirmation_response_count, status.user_confirmation_request_count
+                ));
+            }
+            if status.pin_code_request_count > 0 {
+                msg.push_str(&format!(
+                    "; PIN replies {}/{}",
+                    status.pin_code_response_count, status.pin_code_request_count
+                ));
+            }
+            if status.hid_open_failed_count > 0 {
+                msg.push_str(&format!(
+                    "; HID open failures {} last 0x{:02X}",
+                    status.hid_open_failed_count, status.last_hid_open_status
+                ));
+            }
+            if status.last_authentication_status != 0 {
+                msg.push_str(&format!(
+                    "; auth status 0x{:02X}",
+                    status.last_authentication_status
+                ));
+            }
+            if status.last_disconnection_reason != 0 {
+                msg.push_str(&format!(
+                    "; disconnect reason 0x{:02X}",
+                    status.last_disconnection_reason
+                ));
+            }
+            return msg;
+        }
         let mut msg = format!("discoverable as \"{name}\"; pair receiver/search mode, PIN 0000");
         if status.last_status != 0 {
             msg.push_str(&format!("; last status 0x{:02X}", status.last_status));

@@ -249,6 +249,16 @@ fn bluetooth_status_formatter_explains_pairing_and_connection() {
     assert!(waiting.contains("PIN 0000"));
     assert!(should_print_bluetooth_pairing_hint(Some(&status)));
 
+    status.user_confirmation_request_count = 2;
+    status.user_confirmation_response_count = 2;
+    status.local_name = "Xbox Wireless Controller".to_string();
+    let pairing_contact = format_bluetooth_peer_state(Some(&status), None, false, None);
+    assert!(pairing_contact.contains("pairing/security seen"));
+    assert!(pairing_contact.contains("no Classic HID channel opened"));
+    assert!(pairing_contact.contains("couchlink bluetooth or blueretro"));
+    status.user_confirmation_request_count = 0;
+    status.user_confirmation_response_count = 0;
+
     status.flags = cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED;
     status.report_send_count = 12;
     status.get_report_count = 2;
@@ -347,6 +357,23 @@ fn bt_status(flags: u8, report_send_count: u32, close_count: u32) -> cdc::BtStat
         last_get_report_len: 0,
         last_set_report_len: 0,
         last_out_report_len: 0,
+        pin_code_request_count: 0,
+        pin_code_response_count: 0,
+        user_confirmation_request_count: 0,
+        user_confirmation_response_count: 0,
+        simple_pairing_complete_count: 0,
+        authentication_complete_count: 0,
+        link_key_notification_count: 0,
+        encryption_change_count: 0,
+        disconnection_complete_count: 0,
+        hid_open_failed_count: 0,
+        last_security_event_ms: 0,
+        last_simple_pairing_status: 0,
+        last_authentication_status: 0,
+        last_encryption_status: 0,
+        last_encryption_enabled: 0,
+        last_disconnection_reason: 0,
+        last_hid_open_status: 0,
         local_name: String::new(),
     }
 }

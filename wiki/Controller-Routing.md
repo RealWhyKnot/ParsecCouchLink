@@ -190,9 +190,11 @@ Controller-specific Bluetooth mimics are also available:
 .\couchlink.exe bluetooth-playstation
 ```
 
+For BlueRetro adapters, start with generic HID (`.\couchlink.exe bluetooth` or `.\couchlink.exe blueretro`) before relying on `bluetooth-xbox` / `blueretro-xbox`. The Xbox-named mode is a Classic Bluetooth HID mimic that advertises as `Xbox Wireless Controller`; it is not Xbox BLE/HOGP mode and is not proven Xbox One / Series compatibility.
+
 The stream will not start unless the selected Bluetooth-mode Pico is also visible as the CouchLink USB diagnostic device on the PC. This avoids the extra Wi-Fi hop for live controller input.
 
-During streaming, the status lines separate the local USB input link from the Bluetooth receiver link. `USB input` counters show controller frames reaching the Pico. `Bluetooth discoverable` means the Pico is waiting for the receiver. `Bluetooth receiver connected` plus increasing report counts means the Pico is sending Bluetooth HID reports to the paired receiver.
+During streaming, the status lines separate the local USB input link from the Bluetooth receiver link. `USB input` counters show controller frames reaching the Pico. `Bluetooth discoverable` means the Pico is waiting for the receiver. `pairing/security seen` means the receiver reached Bluetooth security but did not open a Classic HID channel. `Bluetooth receiver connected` plus increasing report counts means the Pico is sending Bluetooth HID reports to the paired receiver.
 
 ### If the player's typing isn't reaching the game
 

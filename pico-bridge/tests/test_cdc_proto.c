@@ -162,6 +162,23 @@ static void test_bt_status_payload_shape(void) {
         .last_get_report_len = 36,
         .last_set_report_len = 77,
         .last_out_report_len = 8,
+        .pin_code_request_count = 18,
+        .pin_code_response_count = 19,
+        .user_confirmation_request_count = 20,
+        .user_confirmation_response_count = 21,
+        .simple_pairing_complete_count = 22,
+        .authentication_complete_count = 23,
+        .link_key_notification_count = 24,
+        .encryption_change_count = 25,
+        .disconnection_complete_count = 26,
+        .hid_open_failed_count = 27,
+        .last_security_event_ms = 0x99AABBCC,
+        .last_simple_pairing_status = 0x31,
+        .last_authentication_status = 0x32,
+        .last_encryption_status = 0x33,
+        .last_encryption_enabled = 1,
+        .last_disconnection_reason = 0x13,
+        .last_hid_open_status = 0x44,
         .local_name = "CouchLink BT HID",
     };
     uint8_t payload[CDC_BT_STATUS_FIXED_LEN + CDC_BT_STATUS_MAX_NAME];
@@ -203,8 +220,37 @@ static void test_bt_status_payload_shape(void) {
     CHECK(get_u16_le(&payload[92]) == status.last_get_report_len);
     CHECK(get_u16_le(&payload[94]) == status.last_set_report_len);
     CHECK(get_u16_le(&payload[96]) == status.last_out_report_len);
-    CHECK(payload[98] == strlen(status.local_name));
-    CHECK(memcmp(&payload[99], status.local_name, strlen(status.local_name)) == 0);
+    CHECK(get_u32_le(&payload[98]) == status.pin_code_request_count);
+    CHECK(get_u32_le(&payload[102]) == status.pin_code_response_count);
+    CHECK(get_u32_le(&payload[106]) == status.user_confirmation_request_count);
+    CHECK(get_u32_le(&payload[110]) == status.user_confirmation_response_count);
+    CHECK(get_u32_le(&payload[114]) == status.simple_pairing_complete_count);
+    CHECK(get_u32_le(&payload[118]) == status.authentication_complete_count);
+    CHECK(get_u32_le(&payload[122]) == status.link_key_notification_count);
+    CHECK(get_u32_le(&payload[126]) == status.encryption_change_count);
+    CHECK(get_u32_le(&payload[130]) == status.disconnection_complete_count);
+    CHECK(get_u32_le(&payload[134]) == status.hid_open_failed_count);
+    CHECK(get_u32_le(&payload[138]) == status.last_security_event_ms);
+    CHECK(payload[142] == status.last_simple_pairing_status);
+    CHECK(payload[143] == status.last_authentication_status);
+    CHECK(payload[144] == status.last_encryption_status);
+    CHECK(payload[145] == status.last_encryption_enabled);
+    CHECK(payload[146] == status.last_disconnection_reason);
+    CHECK(payload[147] == status.last_hid_open_status);
+    CHECK(payload[148] == 0);
+    CHECK(payload[149] == 0);
+    CHECK(payload[150] == 0);
+    CHECK(payload[151] == 0);
+    CHECK(payload[152] == strlen(status.local_name));
+    CHECK(memcmp(&payload[153], status.local_name, strlen(status.local_name)) == 0);
+}
+
+static void test_bt_status_version_lengths(void) {
+    CHECK(CDC_BT_STATUS_VERSION == 3);
+    CHECK(CDC_BT_STATUS_V1_FIXED_LEN == 49);
+    CHECK(CDC_BT_STATUS_V2_VERSION == 2);
+    CHECK(CDC_BT_STATUS_V2_FIXED_LEN == 99);
+    CHECK(CDC_BT_STATUS_FIXED_LEN == 153);
 }
 
 int main(void) {
@@ -217,6 +263,7 @@ int main(void) {
     test_bad_crc();
     test_encode_rejects_oversize();
     test_bt_status_payload_shape();
+    test_bt_status_version_lengths();
 
     if (failures == 0) {
         printf("OK: all cdc_proto tests passed\n");

@@ -242,7 +242,7 @@ Bluetooth mode does not use the Pico as a console-side USB controller. Leave the
 .\couchlink.exe bluetooth
 ```
 
-If it still fails, run a bundle and check `bluetooth-report.txt`. The important fields are `bt_started`, `bt_connected`, `bt_report_send_count`, and the PC USB input counters. `bt_connected=false` points at pairing or receiver state; `bt_connected=true` with `bt_report_send_count=0` points at the PC source controller or stream command.
+If it still fails, run a bundle and check `bluetooth-report.txt`. The important fields are `bt_started`, `bt_connected`, `bt_receiver_contact`, `bt_report_send_count`, and the PC USB input counters. `bt_receiver_contact=pairing_security_contact_no_hid_open` means the receiver reached Bluetooth pairing/security but did not open a Classic HID channel. For BlueRetro, clear the receiver-side pairing entry and try generic HID with `.\couchlink.exe bluetooth` or `.\couchlink.exe blueretro` before relying on `bluetooth-xbox` / `blueretro-xbox`. `bt_connected=true` with `bt_report_send_count=0` points at the PC source controller or stream command.
 
 ## Logs
 

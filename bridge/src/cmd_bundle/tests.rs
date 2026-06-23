@@ -448,6 +448,10 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     status.last_out_report_id = 0x03;
     status.last_out_report_type = 2;
     status.last_out_report_len = 3;
+    status.user_confirmation_request_count = 2;
+    status.user_confirmation_response_count = 2;
+    status.authentication_complete_count = 1;
+    status.last_security_event_ms = 700;
 
     let report = build_bluetooth_report(
         "02E22DA9",
@@ -473,6 +477,8 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     assert_eq!(report.bt_get_report_count, Some(2));
     assert_eq!(report.bt_set_report_count, Some(1));
     assert_eq!(report.bt_out_report_count, Some(1));
+    assert_eq!(report.bt_security_event_source, "cdc_status");
+    assert_eq!(report.bt_user_confirmation_request_count, Some(2));
 
     let text = format_bluetooth_report_text(&report);
     assert!(text.contains("bt_status_cdc_captured=true"));
@@ -484,6 +490,9 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     assert!(text.contains("- last_get_report_id=0x01"));
     assert!(text.contains("- last_get_report_type=input"));
     assert!(text.contains("- last_set_report_type=output"));
+    assert!(text.contains("bt_security="));
+    assert!(text.contains("- security_event_source=cdc_status"));
+    assert!(text.contains("- user_confirmation_request_count=2"));
 }
 
 #[test]
@@ -528,6 +537,39 @@ fn bluetooth_report_statuses_are_actionable() {
     assert_eq!(waiting.status, "waiting_for_receiver");
     assert_eq!(waiting.bt_receiver_contact, "discoverable_no_hid_contact");
     assert!(waiting.next_steps.iter().any(|step| step.contains("pair")));
+
+    let pairing_contact = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&bluetooth_pico_state(protocol::BT_HID_STATUS_STARTED, 0)),
+            None,
+            None,
+            "bt_hid: init target=bluetooth-xbox\nbt_hid: user_confirmation_request\n",
+        ),
+    );
+    assert_eq!(pairing_contact.status, "waiting_for_receiver");
+    assert_eq!(
+        pairing_contact.bt_receiver_contact,
+        "pairing_security_contact_no_hid_open"
+    );
+    assert_eq!(pairing_contact.bt_security_event_source, "diag_log");
+    assert!(pairing_contact
+        .next_steps
+        .iter()
+        .any(|step| step.contains("BlueRetro")));
+    let text = format_bluetooth_report_text(&pairing_contact);
+    assert!(text.contains("bt_security="));
+    assert!(text.contains("- security_event_source=diag_log"));
+    assert!(text.contains("pairing/security"));
+    let value: serde_json::Value =
+        serde_json::from_str(&format_bluetooth_report_json(&pairing_contact)).unwrap();
+    assert_eq!(
+        value["bt_receiver_contact"],
+        "pairing_security_contact_no_hid_open"
+    );
+    assert_eq!(value["bt_security_event_source"], "diag_log");
 
     let connected_no_reports = build_bluetooth_report(
         "02E22DA9",
@@ -1024,6 +1066,23 @@ fn bluetooth_cdc_status(flags: u8, report_send_count: u32) -> cdc::BtStatus {
         last_get_report_len: 0,
         last_set_report_len: 0,
         last_out_report_len: 0,
+        pin_code_request_count: 0,
+        pin_code_response_count: 0,
+        user_confirmation_request_count: 0,
+        user_confirmation_response_count: 0,
+        simple_pairing_complete_count: 0,
+        authentication_complete_count: 0,
+        link_key_notification_count: 0,
+        encryption_change_count: 0,
+        disconnection_complete_count: 0,
+        hid_open_failed_count: 0,
+        last_security_event_ms: 0,
+        last_simple_pairing_status: 0,
+        last_authentication_status: 0,
+        last_encryption_status: 0,
+        last_encryption_enabled: 0,
+        last_disconnection_reason: 0,
+        last_hid_open_status: 0,
         local_name: String::new(),
     }
 }

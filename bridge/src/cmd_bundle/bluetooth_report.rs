@@ -68,6 +68,24 @@ pub(super) struct BluetoothReport {
     pub(super) bt_last_get_report_len: Option<u16>,
     pub(super) bt_last_set_report_len: Option<u16>,
     pub(super) bt_last_out_report_len: Option<u16>,
+    pub(super) bt_security_event_source: &'static str,
+    pub(super) bt_pin_code_request_count: Option<u32>,
+    pub(super) bt_pin_code_response_count: Option<u32>,
+    pub(super) bt_user_confirmation_request_count: Option<u32>,
+    pub(super) bt_user_confirmation_response_count: Option<u32>,
+    pub(super) bt_simple_pairing_complete_count: Option<u32>,
+    pub(super) bt_authentication_complete_count: Option<u32>,
+    pub(super) bt_link_key_notification_count: Option<u32>,
+    pub(super) bt_encryption_change_count: Option<u32>,
+    pub(super) bt_disconnection_complete_count: Option<u32>,
+    pub(super) bt_hid_open_failed_count: Option<u32>,
+    pub(super) bt_last_security_event_ms: Option<u32>,
+    pub(super) bt_last_simple_pairing_status: Option<u8>,
+    pub(super) bt_last_authentication_status: Option<u8>,
+    pub(super) bt_last_encryption_status: Option<u8>,
+    pub(super) bt_last_encryption_enabled: Option<u8>,
+    pub(super) bt_last_disconnection_reason: Option<u8>,
+    pub(super) bt_last_hid_open_status: Option<u8>,
     pub(super) usb_mounted: Option<bool>,
     pub(super) usb_suspended: Option<bool>,
     pub(super) usb_mount_count: Option<u32>,
@@ -136,12 +154,27 @@ pub(super) fn build_bluetooth_report(
     let bt_get_report_count = bt_status.map(|status| status.get_report_count);
     let bt_set_report_count = bt_status.map(|status| status.set_report_count);
     let bt_out_report_count = bt_status.map(|status| status.out_report_count);
+    let bt_security_contact_from_cdc = bt_status
+        .map(|status| status.pairing_security_contact_seen())
+        .unwrap_or(false);
+    let bt_security_contact_from_diag = bluetooth_diag_security_contact_seen(input.pico_diag_text);
+    let bt_security_event_source = if bt_security_contact_from_cdc {
+        "cdc_status"
+    } else if bt_security_contact_from_diag {
+        "diag_log"
+    } else {
+        "none"
+    };
     let bt_receiver_contact = bluetooth_receiver_contact(BluetoothContactState {
         bt_started,
         bt_connected,
         bt_last_status,
         bt_open_count,
         bt_close_count,
+        bt_hid_open_failed_count: bt_status
+            .map(|status| status.hid_open_failed_count)
+            .unwrap_or(0),
+        bt_security_contact_seen: bt_security_contact_from_cdc || bt_security_contact_from_diag,
         bt_get_report_count: bt_get_report_count.unwrap_or(0),
         bt_set_report_count: bt_set_report_count.unwrap_or(0),
         bt_out_report_count: bt_out_report_count.unwrap_or(0),
@@ -151,7 +184,7 @@ pub(super) fn build_bluetooth_report(
             .unwrap_or(0),
     });
     BluetoothReport {
-        artifact_schema_version: 2,
+        artifact_schema_version: 3,
         uid: uid.to_string(),
         path: path.to_string(),
         peer: Some(target.peer.to_string()),
@@ -241,6 +274,30 @@ pub(super) fn build_bluetooth_report(
         bt_last_get_report_len: bt_status.map(|status| status.last_get_report_len),
         bt_last_set_report_len: bt_status.map(|status| status.last_set_report_len),
         bt_last_out_report_len: bt_status.map(|status| status.last_out_report_len),
+        bt_security_event_source,
+        bt_pin_code_request_count: bt_status.map(|status| status.pin_code_request_count),
+        bt_pin_code_response_count: bt_status.map(|status| status.pin_code_response_count),
+        bt_user_confirmation_request_count: bt_status
+            .map(|status| status.user_confirmation_request_count),
+        bt_user_confirmation_response_count: bt_status
+            .map(|status| status.user_confirmation_response_count),
+        bt_simple_pairing_complete_count: bt_status
+            .map(|status| status.simple_pairing_complete_count),
+        bt_authentication_complete_count: bt_status
+            .map(|status| status.authentication_complete_count),
+        bt_link_key_notification_count: bt_status.map(|status| status.link_key_notification_count),
+        bt_encryption_change_count: bt_status.map(|status| status.encryption_change_count),
+        bt_disconnection_complete_count: bt_status
+            .map(|status| status.disconnection_complete_count),
+        bt_hid_open_failed_count: bt_status.map(|status| status.hid_open_failed_count),
+        bt_last_security_event_ms: bt_status.map(|status| status.last_security_event_ms),
+        bt_last_simple_pairing_status: bt_status
+            .map(|status| status.last_simple_pairing_status),
+        bt_last_authentication_status: bt_status.map(|status| status.last_authentication_status),
+        bt_last_encryption_status: bt_status.map(|status| status.last_encryption_status),
+        bt_last_encryption_enabled: bt_status.map(|status| status.last_encryption_enabled),
+        bt_last_disconnection_reason: bt_status.map(|status| status.last_disconnection_reason),
+        bt_last_hid_open_status: bt_status.map(|status| status.last_hid_open_status),
         usb_mounted: usb_diag.map(|diag| diag.mounted()),
         usb_suspended: usb_diag.map(|diag| diag.suspended()),
         usb_mount_count: usb_diag.map(|diag| diag.mount_count),
@@ -251,12 +308,13 @@ pub(super) fn build_bluetooth_report(
         usb_input_sent_count: usb_diag.map(|diag| diag.xinput_in_sent_count),
         usb_host_out_count: usb_diag.map(|diag| diag.xinput_out_count),
         relevant_diag_lines: bluetooth_relevant_diag_lines(input.pico_diag_text),
-        next_steps: bluetooth_report_next_steps(status),
+        next_steps: bluetooth_report_next_steps(status, bt_receiver_contact),
         notes: vec![
             "Bluetooth mode streams controller input from this PC to the Pico over USB CDC.",
             "The Pico then emits a Classic Bluetooth HID gamepad report to the paired receiver.",
             "The advertised_name field is the exact Bluetooth name the receiver should see.",
-            "bt_receiver_contact separates no-HID-contact pairing failures from connected receiver and input-stream failures.",
+            "bt_receiver_contact separates pairing/security contact, HID channel contact, and input-stream failures.",
+            "BlueRetro users should try generic HID with couchlink bluetooth or blueretro before relying on the Xbox-named Classic HID mimic.",
             "Wi-Fi discovery may still appear in logs, but live Bluetooth controller packets are not sent over Wi-Fi.",
             "USB adapter survey is skipped for Bluetooth mode because the Pico USB connector stays on the PC.",
         ],
@@ -285,6 +343,8 @@ struct BluetoothContactState {
     bt_last_status: u8,
     bt_open_count: u32,
     bt_close_count: u32,
+    bt_hid_open_failed_count: u32,
+    bt_security_contact_seen: bool,
     bt_get_report_count: u32,
     bt_set_report_count: u32,
     bt_out_report_count: u32,
@@ -302,13 +362,28 @@ fn bluetooth_receiver_contact(state: BluetoothContactState) -> &'static str {
         || state.bt_out_report_count > 0
     {
         "hid_receiver_contact_seen"
-    } else if state.bt_last_status != 0 {
+    } else if state.bt_hid_open_failed_count > 0 || state.bt_last_status != 0 {
         "hid_open_failed"
+    } else if state.bt_security_contact_seen {
+        "pairing_security_contact_no_hid_open"
     } else if state.bt_ready_count > 0 {
         "discoverable_no_hid_contact"
     } else {
         "stack_started_no_ready_event"
     }
+}
+
+fn bluetooth_diag_security_contact_seen(text: &str) -> bool {
+    text.lines().any(|line| {
+        line.contains("bt_hid: pin_code_request")
+            || line.contains("bt_hid: user_confirmation_request")
+            || line.contains("bt_hid: simple_pairing_complete")
+            || line.contains("bt_hid: authentication_complete")
+            || line.contains("bt_hid: link_key_notification")
+            || line.contains("bt_hid: encryption_change")
+            || line.contains("bt_hid: disconnect_complete")
+            || line.contains("bt_hid: connection failed")
+    })
 }
 
 pub(super) fn bluetooth_report_status(
@@ -330,7 +405,10 @@ pub(super) fn bluetooth_report_status(
     }
 }
 
-pub(super) fn bluetooth_report_next_steps(status: &str) -> Vec<&'static str> {
+pub(super) fn bluetooth_report_next_steps(
+    status: &str,
+    bt_receiver_contact: &str,
+) -> Vec<&'static str> {
     match status {
         "pico_state_missing" => vec![
             "Keep the Pico plugged into this PC over USB and rerun couchlink bundle while Bluetooth mode is active.",
@@ -340,11 +418,20 @@ pub(super) fn bluetooth_report_next_steps(status: &str) -> Vec<&'static str> {
             "Check pico-diag.txt for cyw43 or Bluetooth initialization failures.",
             "Reflash the Pico if the firmware log never reaches a bt_hid init line.",
         ],
-        "waiting_for_receiver" => vec![
-            "Put the target Bluetooth receiver or adapter into pairing mode and pair with the CouchLink Bluetooth device.",
-            "If it was previously paired, remove the old pairing on the receiver side and pair again.",
-            "If bt_receiver_contact stays discoverable_no_hid_contact during pairing, the receiver is not opening a HID channel to the Pico.",
-        ],
+        "waiting_for_receiver" if bt_receiver_contact == "pairing_security_contact_no_hid_open" => {
+            vec![
+                "The receiver reached Bluetooth pairing/security but did not open a Classic HID control or interrupt channel.",
+                "Clear the receiver-side pairing entry, put the adapter back into pairing mode, and pair again.",
+                "For BlueRetro, try generic HID with couchlink bluetooth or blueretro before relying on bluetooth-xbox or blueretro-xbox.",
+            ]
+        }
+        "waiting_for_receiver" => {
+            vec![
+                "Put the target Bluetooth receiver or adapter into pairing mode and pair with the CouchLink Bluetooth device.",
+                "If it was previously paired, remove the old pairing on the receiver side and pair again.",
+                "If bt_receiver_contact stays discoverable_no_hid_contact during pairing, the receiver has not reached pairing/security or opened a HID channel to the Pico.",
+            ]
+        }
         "connected_waiting_for_input" => vec![
             "Start couchlink bluetooth with the Pico plugged into this PC over USB.",
             "Move or press the source controller and rerun bundle if report_send_count stays at zero.",
@@ -531,6 +618,99 @@ pub(super) fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
     );
     let _ = writeln!(out);
 
+    out.push_str("bt_security=\n");
+    let _ = writeln!(
+        out,
+        "- security_event_source={}",
+        report.bt_security_event_source
+    );
+    let _ = writeln!(
+        out,
+        "- pin_code_request_count={}",
+        format_option_u32(report.bt_pin_code_request_count)
+    );
+    let _ = writeln!(
+        out,
+        "- pin_code_response_count={}",
+        format_option_u32(report.bt_pin_code_response_count)
+    );
+    let _ = writeln!(
+        out,
+        "- user_confirmation_request_count={}",
+        format_option_u32(report.bt_user_confirmation_request_count)
+    );
+    let _ = writeln!(
+        out,
+        "- user_confirmation_response_count={}",
+        format_option_u32(report.bt_user_confirmation_response_count)
+    );
+    let _ = writeln!(
+        out,
+        "- simple_pairing_complete_count={}",
+        format_option_u32(report.bt_simple_pairing_complete_count)
+    );
+    let _ = writeln!(
+        out,
+        "- authentication_complete_count={}",
+        format_option_u32(report.bt_authentication_complete_count)
+    );
+    let _ = writeln!(
+        out,
+        "- link_key_notification_count={}",
+        format_option_u32(report.bt_link_key_notification_count)
+    );
+    let _ = writeln!(
+        out,
+        "- encryption_change_count={}",
+        format_option_u32(report.bt_encryption_change_count)
+    );
+    let _ = writeln!(
+        out,
+        "- disconnection_complete_count={}",
+        format_option_u32(report.bt_disconnection_complete_count)
+    );
+    let _ = writeln!(
+        out,
+        "- hid_open_failed_count={}",
+        format_option_u32(report.bt_hid_open_failed_count)
+    );
+    let _ = writeln!(
+        out,
+        "- last_security_event_ms={}",
+        format_option_u32(report.bt_last_security_event_ms)
+    );
+    let _ = writeln!(
+        out,
+        "- last_simple_pairing_status={}",
+        format_option_hex_u8(report.bt_last_simple_pairing_status)
+    );
+    let _ = writeln!(
+        out,
+        "- last_authentication_status={}",
+        format_option_hex_u8(report.bt_last_authentication_status)
+    );
+    let _ = writeln!(
+        out,
+        "- last_encryption_status={}",
+        format_option_hex_u8(report.bt_last_encryption_status)
+    );
+    let _ = writeln!(
+        out,
+        "- last_encryption_enabled={}",
+        format_option_u8(report.bt_last_encryption_enabled)
+    );
+    let _ = writeln!(
+        out,
+        "- last_disconnection_reason={}",
+        format_option_hex_u8(report.bt_last_disconnection_reason)
+    );
+    let _ = writeln!(
+        out,
+        "- last_hid_open_status={}",
+        format_option_hex_u8(report.bt_last_hid_open_status)
+    );
+    let _ = writeln!(out);
+
     out.push_str("pc_usb_input=\n");
     let _ = writeln!(out, "- mounted={}", format_option_bool(report.usb_mounted));
     let _ = writeln!(
@@ -627,6 +807,12 @@ pub(super) fn format_option_u32(value: Option<u32>) -> String {
 }
 
 pub(super) fn format_option_u16(value: Option<u16>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "not_captured".to_string())
+}
+
+pub(super) fn format_option_u8(value: Option<u8>) -> String {
     value
         .map(|v| v.to_string())
         .unwrap_or_else(|| "not_captured".to_string())

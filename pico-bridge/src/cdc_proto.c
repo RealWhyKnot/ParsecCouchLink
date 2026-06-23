@@ -79,9 +79,30 @@ size_t cdc_build_bt_status_payload(const cdc_bt_status_view_t *status, uint8_t *
     put_u16_le(&out[92], status->last_get_report_len);
     put_u16_le(&out[94], status->last_set_report_len);
     put_u16_le(&out[96], status->last_out_report_len);
-    out[98] = (uint8_t)name_len;
+    put_u32_le(&out[98], status->pin_code_request_count);
+    put_u32_le(&out[102], status->pin_code_response_count);
+    put_u32_le(&out[106], status->user_confirmation_request_count);
+    put_u32_le(&out[110], status->user_confirmation_response_count);
+    put_u32_le(&out[114], status->simple_pairing_complete_count);
+    put_u32_le(&out[118], status->authentication_complete_count);
+    put_u32_le(&out[122], status->link_key_notification_count);
+    put_u32_le(&out[126], status->encryption_change_count);
+    put_u32_le(&out[130], status->disconnection_complete_count);
+    put_u32_le(&out[134], status->hid_open_failed_count);
+    put_u32_le(&out[138], status->last_security_event_ms);
+    out[142] = status->last_simple_pairing_status;
+    out[143] = status->last_authentication_status;
+    out[144] = status->last_encryption_status;
+    out[145] = status->last_encryption_enabled;
+    out[146] = status->last_disconnection_reason;
+    out[147] = status->last_hid_open_status;
+    out[148] = 0;
+    out[149] = 0;
+    out[150] = 0;
+    out[151] = 0;
+    out[152] = (uint8_t)name_len;
     if (name_len)
-        memcpy(&out[99], status->local_name, name_len);
+        memcpy(&out[153], status->local_name, name_len);
     return CDC_BT_STATUS_FIXED_LEN + name_len;
 }
 
