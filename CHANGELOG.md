@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.23.2-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.23.2-beta) -- 2026-06-23
+
 ### Fixed
 - **bluetooth:** Actively reconnect paired HID receivers (62e9dce)
 
