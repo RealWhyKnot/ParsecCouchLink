@@ -11,6 +11,11 @@
 
 use crate::firmware_version::FirmwareVersion;
 
+mod wire;
+
+pub use wire::crc8;
+use wire::{put_u16_le, put_u32_le, read_u16_le, read_u32_le};
+
 pub const PORT: u16 = 4242;
 pub const PACKET_SIZE: usize = 17;
 pub const MAGIC: u8 = 0xA5;
@@ -513,22 +518,6 @@ fn read_key(body: &[u8; 12]) -> KeyboardReport {
         modifiers: body[0],
         keys,
     }
-}
-
-/// CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no final XOR.
-pub fn crc8(data: &[u8]) -> u8 {
-    let mut crc: u8 = 0;
-    for &b in data {
-        crc ^= b;
-        for _ in 0..8 {
-            crc = if crc & 0x80 != 0 {
-                (crc << 1) ^ 0x07
-            } else {
-                crc << 1
-            };
-        }
-    }
-    crc
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1467,22 +1456,6 @@ pub fn bt_hid_target_label(target: u8) -> &'static str {
         2 => "bluetooth-playstation",
         _ => "bluetooth",
     }
-}
-
-fn put_u32_le(buf: &mut [u8], offset: usize, value: u32) {
-    buf[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
-}
-
-fn put_u16_le(buf: &mut [u8], offset: usize, value: u16) {
-    buf[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
-}
-
-fn read_u32_le(buf: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap())
-}
-
-fn read_u16_le(buf: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(buf[offset..offset + 2].try_into().unwrap())
 }
 
 pub fn usb_in_blocked_reason_label(reason: u8) -> &'static str {
