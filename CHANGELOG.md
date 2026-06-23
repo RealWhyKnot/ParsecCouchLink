@@ -16,6 +16,14 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 - **bundle:** Extract zip writer (1956578)
 - **bundle:** Split usb packet summary (3bb124d)
 - **bundle:** Split bundle reports into modules (72422bd)
+- **run:** Extract routing helpers (26cbbee)
+- **cdc:** Extract bluetooth status decoder (1c08782)
+- **cdc:** Extract wire frame codec (d594f34)
+- **protocol:** Extract pico state codec (0b3b241)
+- **protocol:** Extract usb diag codec (4696d99)
+- **protocol:** Extract log chunk codec (fb2fb65)
+- **protocol:** Extract wire helpers (1fac34f)
+- **bundle:** Move tests into module (1d43a65)
 
 ---
 
