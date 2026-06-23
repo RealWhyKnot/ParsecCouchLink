@@ -12,7 +12,7 @@ use super::adapter_survey::{
 };
 use super::bluetooth_report::{
     bluetooth_usb_packets_stub, build_bluetooth_report, format_bluetooth_report_json,
-    format_bluetooth_report_text, BluetoothReport,
+    format_bluetooth_report_text, BluetoothReport, BluetoothReportInput,
 };
 use super::manifest::ManifestPicoCapture;
 use super::pico_diag;
@@ -22,8 +22,8 @@ use super::usb_packets::{
     usb_packets_text_from_diag,
 };
 use crate::{
-    cmd_auto, cmd_persona, cmd_run, cmd_usb_diag, config, debug_packets, pico_cache, pico_mode,
-    pico_state, protocol,
+    cdc, cmd_auto, cmd_persona, cmd_run, cmd_usb_diag, config, debug_packets, pico_cache,
+    pico_mode, pico_state, protocol,
 };
 const BUNDLE_DEBUG_PACKET_HARVEST_TIMEOUT: Duration = Duration::from_secs(2);
 const BUNDLE_PERSONA_WAIT: Duration = Duration::from_secs(60);
@@ -412,8 +412,11 @@ async fn capture_one_pico(
         let mut snapshot = pico_cache::PicoStateSnapshot::from_target("bundle", target);
         let target_pico_state_status;
         let target_usb_diag_status;
+        let target_bt_status_status;
         let mut target_pico_state_data: Option<protocol::PicoStateDiag> = None;
         let mut target_usb_diag_data: Option<protocol::UsbDiag> = None;
+        let mut target_bt_status_data: Option<cdc::BtStatus> = None;
+        let mut target_bt_status_error: Option<String> = None;
 
         let started = Instant::now();
         match pico_state::query_pico_state(target, Duration::from_millis(900)).await {
@@ -487,8 +490,40 @@ async fn capture_one_pico(
                 }
             };
 
+        let started = Instant::now();
+        if target.persona.is_bluetooth() {
+            match query_bluetooth_cdc_status(target).await {
+                Ok(status) => {
+                    target_bt_status_status = "captured".to_string();
+                    let bytes = cdc::BT_STATUS_FIXED_LEN.saturating_add(status.local_name.len());
+                    target_bt_status_data = Some(status);
+                    capture_log.record(
+                        format!("per_pico.{}.bt_status_cdc", seed.uid),
+                        started,
+                        "captured",
+                        bytes,
+                        "",
+                    );
+                }
+                Err(e) => {
+                    let short = short_bundle_error(&e);
+                    target_bt_status_status = "not_captured".to_string();
+                    target_bt_status_error = Some(short.clone());
+                    capture_log.record(
+                        format!("per_pico.{}.bt_status_cdc", seed.uid),
+                        started,
+                        "not_captured",
+                        0,
+                        short,
+                    );
+                }
+            }
+        } else {
+            target_bt_status_status = "not_applicable".to_string();
+        }
+
         snapshot = snapshot.with_outcome(format!(
-            "bundle: pico_state={target_pico_state_status}; pico_diag={target_pico_diag_status}; usb_diag={target_usb_diag_status}"
+            "bundle: pico_state={target_pico_state_status}; pico_diag={target_pico_diag_status}; usb_diag={target_usb_diag_status}; bt_status_cdc={target_bt_status_status}"
         ));
         pico_cache::record(snapshot.clone());
         pico_state_status = target_pico_state_status;
@@ -500,9 +535,13 @@ async fn capture_one_pico(
                 &seed.uid,
                 &path,
                 target,
-                target_pico_state_data.as_ref(),
-                target_usb_diag_data.as_ref(),
-                &pico_diag_text,
+                BluetoothReportInput {
+                    pico_state: target_pico_state_data.as_ref(),
+                    bt_status: target_bt_status_data.as_ref(),
+                    bt_status_error: target_bt_status_error,
+                    usb_diag: target_usb_diag_data.as_ref(),
+                    pico_diag_text: &pico_diag_text,
+                },
             );
             let text = format_bluetooth_report_text(&report);
             let json = format_bluetooth_report_json(&report);
@@ -1275,6 +1314,58 @@ fn format_observed_personas(targets: &[cmd_run::PicoTarget]) -> String {
         .map(|target| format!("{}:{}", target.uid_hex(), target.persona.label()))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+async fn query_bluetooth_cdc_status(target: &cmd_run::PicoTarget) -> Result<cdc::BtStatus> {
+    if !target.persona.is_bluetooth() {
+        anyhow::bail!("target is not in Bluetooth mode");
+    }
+    let uid = target.info.unique_id_short;
+    tokio::task::spawn_blocking(move || query_bluetooth_cdc_status_blocking(uid))
+        .await
+        .context("joining Bluetooth CDC status query")?
+}
+
+fn query_bluetooth_cdc_status_blocking(uid: u32) -> Result<cdc::BtStatus> {
+    let ports = cdc::find_setup_ports().context(
+        "Bluetooth mode status requires the Pico USB diagnostic port; could not enumerate local CouchLink USB diagnostic ports",
+    )?;
+    let mut probe_errors = Vec::new();
+    for port in ports {
+        match cdc::PicoSetup::open_named(&port).and_then(|mut pico| {
+            let found_uid = pico.unique_id_short()?;
+            if found_uid == uid {
+                let status = pico.bt_status()?;
+                Ok(Some(status))
+            } else {
+                Ok(None)
+            }
+        }) {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(e) => probe_errors.push(format!("{port}: {e:#}")),
+        }
+    }
+
+    let mut msg = format!(
+        "no matching CouchLink USB diagnostic port answered for Pico {uid:08X}; expected USB identity VID 0x2E8A PID 0xCAF0"
+    );
+    if !probe_errors.is_empty() {
+        msg.push_str("; probe errors: ");
+        msg.push_str(&probe_errors.join(" | "));
+    }
+    anyhow::bail!("{msg}")
+}
+
+fn short_bundle_error(error: &anyhow::Error) -> String {
+    let text = error.to_string();
+    const MAX_LEN: usize = 180;
+    if text.len() <= MAX_LEN {
+        text
+    } else {
+        let prefix: String = text.chars().take(MAX_LEN).collect();
+        format!("{prefix}...")
+    }
 }
 
 fn saved_picos_from_config(cfg: &config::Config) -> Vec<config::PicoIdentity> {

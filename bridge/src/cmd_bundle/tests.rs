@@ -1,3 +1,4 @@
+use super::bluetooth_report::BluetoothReportInput;
 use super::usb_packets::aggregate_usb_packets;
 use super::{
     adapter_connection_json, adapter_connection_report, adapter_connection_text,
@@ -12,7 +13,7 @@ use super::{
     AdapterSurveyRawCapture, PicoBundleCapture, RetainedDebugPacketLog,
 };
 use super::{summarize_sources, ManifestPicoCapture, UsbPacketSummarySource};
-use crate::protocol;
+use crate::{cdc, protocol};
 
 #[test]
 fn pico_bundle_path_component_is_sanitized() {
@@ -380,9 +381,12 @@ fn bluetooth_report_captures_usb_input_and_bt_send_state() {
         "02E22DA9",
         "picos/02E22DA9",
         &target,
-        Some(&pico_state),
-        Some(&usb_diag),
-        "run: Bluetooth persona = bluetooth\nbt_hid: connected\ncdc: dispatching cmd=0x0C seq=9 payload=13 bytes\n",
+        bt_report_input(
+            Some(&pico_state),
+            None,
+            Some(&usb_diag),
+            "run: Bluetooth persona = bluetooth\nbt_hid: connected\ncdc: dispatching cmd=0x0C seq=9 payload=13 bytes\n",
+        ),
     );
 
     assert_eq!(report.status, "reports_sent");
@@ -392,6 +396,8 @@ fn bluetooth_report_captures_usb_input_and_bt_send_state() {
     assert!(report.bt_started);
     assert!(report.bt_connected);
     assert_eq!(report.bt_report_send_count, 3);
+    assert_eq!(report.bt_receiver_contact, "hid_receiver_contact_seen");
+    assert!(!report.bt_status_cdc_captured);
     assert_eq!(report.usb_mounted, Some(true));
     assert_eq!(report.usb_device_desc_count, Some(2));
     assert_eq!(report.relevant_diag_lines.len(), 3);
@@ -399,6 +405,9 @@ fn bluetooth_report_captures_usb_input_and_bt_send_state() {
     let text = format_bluetooth_report_text(&report);
     assert!(text.contains("expected_connection=pc_usb_input_bluetooth_output"));
     assert!(text.contains("usb_transport=cdc_framed_controller_state"));
+    assert!(text.contains("bt_receiver_contact=hid_receiver_contact_seen"));
+    assert!(text.contains("bt_control_plane="));
+    assert!(text.contains("- get_report_count=not_captured"));
     assert!(text.contains("- bt_report_send_count=3"));
     assert!(text.contains("- device_desc_count=2"));
 
@@ -407,13 +416,85 @@ fn bluetooth_report_captures_usb_input_and_bt_send_state() {
     assert_eq!(value["status"], "reports_sent");
     assert_eq!(value["usb_input_required"], true);
     assert_eq!(value["bt_connected"], true);
+    assert_eq!(value["bt_status_cdc_captured"], false);
+    assert_eq!(value["bt_receiver_contact"], "hid_receiver_contact_seen");
     assert_eq!(value["usb_transport"], "cdc_framed_controller_state");
+}
+
+#[test]
+fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
+    let target = bluetooth_target(protocol::Persona::BluetoothXbox);
+    let mut pico_state = bluetooth_pico_state(protocol::BT_HID_STATUS_STARTED, 0);
+    pico_state.bt_target = 1;
+    let mut status = bluetooth_cdc_status(
+        cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED,
+        5,
+    );
+    status.target = 1;
+    status.local_name = "Xbox Wireless Controller".to_string();
+    status.get_report_count = 2;
+    status.get_report_success_count = 1;
+    status.get_report_unsupported_count = 1;
+    status.set_report_count = 1;
+    status.set_report_accepted_count = 1;
+    status.out_report_count = 1;
+    status.out_report_accepted_count = 1;
+    status.last_get_report_id = 0x01;
+    status.last_get_report_type = 1;
+    status.last_get_report_len = 16;
+    status.last_set_report_id = 0x05;
+    status.last_set_report_type = 2;
+    status.last_set_report_len = 4;
+    status.last_out_report_id = 0x03;
+    status.last_out_report_type = 2;
+    status.last_out_report_len = 3;
+
+    let report = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&pico_state),
+            Some(&status),
+            Some(&bluetooth_usb_diag()),
+            "bt_hid: connected\n",
+        ),
+    );
+
+    assert_eq!(report.status, "reports_sent");
+    assert!(report.bt_status_cdc_captured);
+    assert_eq!(report.bt_receiver_contact, "hid_receiver_contact_seen");
+    assert!(report.bt_connected);
+    assert_eq!(report.bt_report_send_count, 5);
+    assert_eq!(
+        report.bt_reported_local_name.as_deref(),
+        Some("Xbox Wireless Controller")
+    );
+    assert_eq!(report.bt_get_report_count, Some(2));
+    assert_eq!(report.bt_set_report_count, Some(1));
+    assert_eq!(report.bt_out_report_count, Some(1));
+
+    let text = format_bluetooth_report_text(&report);
+    assert!(text.contains("bt_status_cdc_captured=true"));
+    assert!(text.contains("- reported_local_name=Xbox Wireless Controller"));
+    assert!(text.contains("- get_report_count=2"));
+    assert!(text.contains("- get_report_unsupported_count=1"));
+    assert!(text.contains("- set_report_accepted_count=1"));
+    assert!(text.contains("- out_report_accepted_count=1"));
+    assert!(text.contains("- last_get_report_id=0x01"));
+    assert!(text.contains("- last_get_report_type=input"));
+    assert!(text.contains("- last_set_report_type=output"));
 }
 
 #[test]
 fn bluetooth_report_statuses_are_actionable() {
     let target = bluetooth_target(protocol::Persona::BluetoothXbox);
-    let missing = build_bluetooth_report("02E22DA9", "picos/02E22DA9", &target, None, None, "");
+    let missing = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(None, None, None, ""),
+    );
     assert_eq!(missing.status, "pico_state_missing");
     assert!(missing.warning);
 
@@ -423,9 +504,12 @@ fn bluetooth_report_statuses_are_actionable() {
         "02E22DA9",
         "picos/02E22DA9",
         &target,
-        Some(&xbox_state),
-        None,
-        "run: Bluetooth persona = bluetooth-xbox\n",
+        bt_report_input(
+            Some(&xbox_state),
+            None,
+            None,
+            "run: Bluetooth persona = bluetooth-xbox\n",
+        ),
     );
     assert_eq!(not_started.status, "bluetooth_stack_not_started");
     assert_eq!(not_started.target_label, "bluetooth-xbox");
@@ -434,23 +518,30 @@ fn bluetooth_report_statuses_are_actionable() {
         "02E22DA9",
         "picos/02E22DA9",
         &target,
-        Some(&bluetooth_pico_state(protocol::BT_HID_STATUS_STARTED, 0)),
-        None,
-        "bt_hid: init target=bluetooth-xbox\n",
+        bt_report_input(
+            Some(&bluetooth_pico_state(protocol::BT_HID_STATUS_STARTED, 0)),
+            None,
+            None,
+            "bt_hid: init target=bluetooth-xbox\n",
+        ),
     );
     assert_eq!(waiting.status, "waiting_for_receiver");
+    assert_eq!(waiting.bt_receiver_contact, "discoverable_no_hid_contact");
     assert!(waiting.next_steps.iter().any(|step| step.contains("pair")));
 
     let connected_no_reports = build_bluetooth_report(
         "02E22DA9",
         "picos/02E22DA9",
         &target,
-        Some(&bluetooth_pico_state(
-            protocol::BT_HID_STATUS_STARTED | protocol::BT_HID_STATUS_CONNECTED,
-            0,
-        )),
-        None,
-        "bt_hid: connected\n",
+        bt_report_input(
+            Some(&bluetooth_pico_state(
+                protocol::BT_HID_STATUS_STARTED | protocol::BT_HID_STATUS_CONNECTED,
+                0,
+            )),
+            None,
+            None,
+            "bt_hid: connected\n",
+        ),
     );
     assert_eq!(connected_no_reports.status, "connected_waiting_for_input");
     assert!(connected_no_reports
@@ -471,9 +562,12 @@ fn aggregate_bluetooth_report_only_includes_bluetooth_captures() {
         "02E22DA9",
         "picos/02E22DA9",
         &target,
-        Some(&ps_state),
-        Some(&bluetooth_usb_diag()),
-        "bt_hid: connected\n",
+        bt_report_input(
+            Some(&ps_state),
+            None,
+            Some(&bluetooth_usb_diag()),
+            "bt_hid: connected\n",
+        ),
     );
     let mut capture = pico_capture(
         "02E22DA9",
@@ -796,6 +890,21 @@ fn bluetooth_target(persona: protocol::Persona) -> crate::cmd_run::PicoTarget {
     }
 }
 
+fn bt_report_input<'a>(
+    pico_state: Option<&'a protocol::PicoStateDiag>,
+    bt_status: Option<&'a cdc::BtStatus>,
+    usb_diag: Option<&'a protocol::UsbDiag>,
+    pico_diag_text: &'a str,
+) -> BluetoothReportInput<'a> {
+    BluetoothReportInput {
+        pico_state,
+        bt_status,
+        bt_status_error: None,
+        usb_diag,
+        pico_diag_text,
+    }
+}
+
 fn bluetooth_pico_state(bt_flags: u8, bt_report_send_count: u32) -> protocol::PicoStateDiag {
     protocol::PicoStateDiag {
         seq: 1,
@@ -865,6 +974,57 @@ fn bluetooth_pico_state(bt_flags: u8, bt_report_send_count: u32) -> protocol::Pi
         bt_send_request_count: bt_report_send_count,
         bt_last_event_ms: 800,
         bt_last_send_ms: if bt_report_send_count > 0 { 900 } else { 0 },
+    }
+}
+
+fn bluetooth_cdc_status(flags: u8, report_send_count: u32) -> cdc::BtStatus {
+    cdc::BtStatus {
+        flags,
+        target: 0,
+        last_status: 0,
+        report_len: 16,
+        cid: 7,
+        init_count: if flags & cdc::BT_STATUS_FLAG_STARTED != 0 {
+            1
+        } else {
+            0
+        },
+        ready_count: if flags & cdc::BT_STATUS_FLAG_STARTED != 0 {
+            1
+        } else {
+            0
+        },
+        open_count: if flags & cdc::BT_STATUS_FLAG_CONNECTED != 0 {
+            1
+        } else {
+            0
+        },
+        close_count: 0,
+        can_send_count: report_send_count,
+        report_build_count: report_send_count,
+        report_send_count,
+        send_request_count: report_send_count,
+        last_event_ms: 800,
+        last_send_ms: if report_send_count > 0 { 900 } else { 0 },
+        get_report_count: 0,
+        get_report_success_count: 0,
+        get_report_unsupported_count: 0,
+        set_report_count: 0,
+        set_report_accepted_count: 0,
+        set_report_unsupported_count: 0,
+        out_report_count: 0,
+        out_report_accepted_count: 0,
+        out_report_unsupported_count: 0,
+        last_get_report_id: 0,
+        last_get_report_type: 0,
+        last_set_report_id: 0,
+        last_set_report_type: 0,
+        last_out_report_id: 0,
+        last_out_report_type: 0,
+        last_get_report_len: 0,
+        last_set_report_len: 0,
+        last_out_report_len: 0,
+        local_name: String::new(),
     }
 }
 

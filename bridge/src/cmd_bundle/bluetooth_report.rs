@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::{cmd_run, protocol};
+use crate::{cdc, cmd_run, protocol};
 
 use super::PicoBundleCapture;
 
@@ -25,9 +25,12 @@ pub(super) struct BluetoothReport {
     pub(super) bluetooth_output: &'static str,
     pub(super) pico_state_captured: bool,
     pub(super) usb_diag_captured: bool,
+    pub(super) bt_status_cdc_captured: bool,
+    pub(super) bt_status_cdc_error: Option<String>,
     pub(super) pico_diag_captured: bool,
     pub(super) status: &'static str,
     pub(super) warning: bool,
+    pub(super) bt_receiver_contact: &'static str,
     pub(super) bt_flags: u8,
     pub(super) bt_started: bool,
     pub(super) bt_connected: bool,
@@ -46,6 +49,25 @@ pub(super) struct BluetoothReport {
     pub(super) bt_send_request_count: u32,
     pub(super) bt_last_event_ms: u32,
     pub(super) bt_last_send_ms: u32,
+    pub(super) bt_reported_local_name: Option<String>,
+    pub(super) bt_get_report_count: Option<u32>,
+    pub(super) bt_get_report_success_count: Option<u32>,
+    pub(super) bt_get_report_unsupported_count: Option<u32>,
+    pub(super) bt_set_report_count: Option<u32>,
+    pub(super) bt_set_report_accepted_count: Option<u32>,
+    pub(super) bt_set_report_unsupported_count: Option<u32>,
+    pub(super) bt_out_report_count: Option<u32>,
+    pub(super) bt_out_report_accepted_count: Option<u32>,
+    pub(super) bt_out_report_unsupported_count: Option<u32>,
+    pub(super) bt_last_get_report_id: Option<u8>,
+    pub(super) bt_last_get_report_type: Option<u8>,
+    pub(super) bt_last_set_report_id: Option<u8>,
+    pub(super) bt_last_set_report_type: Option<u8>,
+    pub(super) bt_last_out_report_id: Option<u8>,
+    pub(super) bt_last_out_report_type: Option<u8>,
+    pub(super) bt_last_get_report_len: Option<u16>,
+    pub(super) bt_last_set_report_len: Option<u16>,
+    pub(super) bt_last_out_report_len: Option<u16>,
     pub(super) usb_mounted: Option<bool>,
     pub(super) usb_suspended: Option<bool>,
     pub(super) usb_mount_count: Option<u32>,
@@ -59,28 +81,77 @@ pub(super) struct BluetoothReport {
     pub(super) next_steps: Vec<&'static str>,
     pub(super) notes: Vec<&'static str>,
 }
+
+pub(super) struct BluetoothReportInput<'a> {
+    pub(super) pico_state: Option<&'a protocol::PicoStateDiag>,
+    pub(super) bt_status: Option<&'a cdc::BtStatus>,
+    pub(super) bt_status_error: Option<String>,
+    pub(super) usb_diag: Option<&'a protocol::UsbDiag>,
+    pub(super) pico_diag_text: &'a str,
+}
+
 pub(super) fn build_bluetooth_report(
     uid: &str,
     path: &str,
     target: &cmd_run::PicoTarget,
-    pico_state: Option<&protocol::PicoStateDiag>,
-    usb_diag: Option<&protocol::UsbDiag>,
-    pico_diag_text: &str,
+    input: BluetoothReportInput<'_>,
 ) -> BluetoothReport {
-    let bt_flags = pico_state.map(|state| state.bt_flags).unwrap_or(0);
+    let pico_state = input.pico_state;
+    let bt_status = input.bt_status;
+    let usb_diag = input.usb_diag;
+    let bt_flags = bt_status
+        .map(|status| status.flags)
+        .or_else(|| pico_state.map(|state| state.bt_flags))
+        .unwrap_or(0);
     let bt_started = bt_flags & protocol::BT_HID_STATUS_STARTED != 0;
     let bt_connected = bt_flags & protocol::BT_HID_STATUS_CONNECTED != 0;
     let bt_send_requested = bt_flags & protocol::BT_HID_STATUS_SEND_REQUESTED != 0;
-    let bt_report_send_count = pico_state
-        .map(|state| state.bt_report_send_count)
+    let bt_report_send_count = bt_status
+        .map(|status| status.report_send_count)
+        .or_else(|| pico_state.map(|state| state.bt_report_send_count))
         .unwrap_or(0);
-    let bt_target = pico_state
-        .map(|state| state.bt_target)
+    let bt_target = bt_status
+        .map(|status| status.target)
+        .or_else(|| pico_state.map(|state| state.bt_target))
         .unwrap_or_else(|| bluetooth_target_from_persona(target.persona));
-    let status =
-        bluetooth_report_status(pico_state, bt_started, bt_connected, bt_report_send_count);
+    let bt_status_cdc_captured = bt_status.is_some();
+    let status = bluetooth_report_status(
+        pico_state.is_some() || bt_status_cdc_captured,
+        bt_started,
+        bt_connected,
+        bt_report_send_count,
+    );
+    let bt_last_status = bt_status
+        .map(|status| status.last_status)
+        .or_else(|| pico_state.map(|state| state.bt_last_status))
+        .unwrap_or(0);
+    let bt_open_count = bt_status
+        .map(|status| status.open_count)
+        .or_else(|| pico_state.map(|state| state.bt_open_count))
+        .unwrap_or(0);
+    let bt_close_count = bt_status
+        .map(|status| status.close_count)
+        .or_else(|| pico_state.map(|state| state.bt_close_count))
+        .unwrap_or(0);
+    let bt_get_report_count = bt_status.map(|status| status.get_report_count);
+    let bt_set_report_count = bt_status.map(|status| status.set_report_count);
+    let bt_out_report_count = bt_status.map(|status| status.out_report_count);
+    let bt_receiver_contact = bluetooth_receiver_contact(BluetoothContactState {
+        bt_started,
+        bt_connected,
+        bt_last_status,
+        bt_open_count,
+        bt_close_count,
+        bt_get_report_count: bt_get_report_count.unwrap_or(0),
+        bt_set_report_count: bt_set_report_count.unwrap_or(0),
+        bt_out_report_count: bt_out_report_count.unwrap_or(0),
+        bt_ready_count: bt_status
+            .map(|status| status.ready_count)
+            .or_else(|| pico_state.map(|state| state.bt_ready_count))
+            .unwrap_or(0),
+    });
     BluetoothReport {
-        artifact_schema_version: 1,
+        artifact_schema_version: 2,
         uid: uid.to_string(),
         path: path.to_string(),
         peer: Some(target.peer.to_string()),
@@ -94,33 +165,82 @@ pub(super) fn build_bluetooth_report(
         bluetooth_output: "classic_bluetooth_hid_gamepad",
         pico_state_captured: pico_state.is_some(),
         usb_diag_captured: usb_diag.is_some(),
-        pico_diag_captured: !pico_diag_text.trim().is_empty(),
+        bt_status_cdc_captured,
+        bt_status_cdc_error: input.bt_status_error,
+        pico_diag_captured: !input.pico_diag_text.trim().is_empty(),
         status,
         warning: status != "reports_sent",
+        bt_receiver_contact,
         bt_flags,
         bt_started,
         bt_connected,
         bt_send_requested,
         bt_target,
-        bt_last_status: pico_state.map(|state| state.bt_last_status).unwrap_or(0),
-        bt_report_len: pico_state.map(|state| state.bt_report_len).unwrap_or(0),
-        bt_cid: pico_state.map(|state| state.bt_cid).unwrap_or(0),
-        bt_init_count: pico_state.map(|state| state.bt_init_count).unwrap_or(0),
-        bt_ready_count: pico_state.map(|state| state.bt_ready_count).unwrap_or(0),
-        bt_open_count: pico_state.map(|state| state.bt_open_count).unwrap_or(0),
-        bt_close_count: pico_state.map(|state| state.bt_close_count).unwrap_or(0),
-        bt_can_send_count: pico_state
-            .map(|state| state.bt_can_send_count)
+        bt_last_status,
+        bt_report_len: bt_status
+            .map(|status| status.report_len)
+            .or_else(|| pico_state.map(|state| state.bt_report_len))
             .unwrap_or(0),
-        bt_report_build_count: pico_state
-            .map(|state| state.bt_report_build_count)
+        bt_cid: bt_status
+            .map(|status| status.cid)
+            .or_else(|| pico_state.map(|state| state.bt_cid))
+            .unwrap_or(0),
+        bt_init_count: bt_status
+            .map(|status| status.init_count)
+            .or_else(|| pico_state.map(|state| state.bt_init_count))
+            .unwrap_or(0),
+        bt_ready_count: bt_status
+            .map(|status| status.ready_count)
+            .or_else(|| pico_state.map(|state| state.bt_ready_count))
+            .unwrap_or(0),
+        bt_open_count,
+        bt_close_count,
+        bt_can_send_count: bt_status
+            .map(|status| status.can_send_count)
+            .or_else(|| pico_state.map(|state| state.bt_can_send_count))
+            .unwrap_or(0),
+        bt_report_build_count: bt_status
+            .map(|status| status.report_build_count)
+            .or_else(|| pico_state.map(|state| state.bt_report_build_count))
             .unwrap_or(0),
         bt_report_send_count,
-        bt_send_request_count: pico_state
-            .map(|state| state.bt_send_request_count)
+        bt_send_request_count: bt_status
+            .map(|status| status.send_request_count)
+            .or_else(|| pico_state.map(|state| state.bt_send_request_count))
             .unwrap_or(0),
-        bt_last_event_ms: pico_state.map(|state| state.bt_last_event_ms).unwrap_or(0),
-        bt_last_send_ms: pico_state.map(|state| state.bt_last_send_ms).unwrap_or(0),
+        bt_last_event_ms: bt_status
+            .map(|status| status.last_event_ms)
+            .or_else(|| pico_state.map(|state| state.bt_last_event_ms))
+            .unwrap_or(0),
+        bt_last_send_ms: bt_status
+            .map(|status| status.last_send_ms)
+            .or_else(|| pico_state.map(|state| state.bt_last_send_ms))
+            .unwrap_or(0),
+        bt_reported_local_name: bt_status
+            .map(|status| status.local_name.trim())
+            .filter(|name| !name.is_empty())
+            .map(|name| name.to_string()),
+        bt_get_report_count,
+        bt_get_report_success_count: bt_status.map(|status| status.get_report_success_count),
+        bt_get_report_unsupported_count: bt_status
+            .map(|status| status.get_report_unsupported_count),
+        bt_set_report_count,
+        bt_set_report_accepted_count: bt_status.map(|status| status.set_report_accepted_count),
+        bt_set_report_unsupported_count: bt_status
+            .map(|status| status.set_report_unsupported_count),
+        bt_out_report_count,
+        bt_out_report_accepted_count: bt_status.map(|status| status.out_report_accepted_count),
+        bt_out_report_unsupported_count: bt_status
+            .map(|status| status.out_report_unsupported_count),
+        bt_last_get_report_id: bt_status.map(|status| status.last_get_report_id),
+        bt_last_get_report_type: bt_status.map(|status| status.last_get_report_type),
+        bt_last_set_report_id: bt_status.map(|status| status.last_set_report_id),
+        bt_last_set_report_type: bt_status.map(|status| status.last_set_report_type),
+        bt_last_out_report_id: bt_status.map(|status| status.last_out_report_id),
+        bt_last_out_report_type: bt_status.map(|status| status.last_out_report_type),
+        bt_last_get_report_len: bt_status.map(|status| status.last_get_report_len),
+        bt_last_set_report_len: bt_status.map(|status| status.last_set_report_len),
+        bt_last_out_report_len: bt_status.map(|status| status.last_out_report_len),
         usb_mounted: usb_diag.map(|diag| diag.mounted()),
         usb_suspended: usb_diag.map(|diag| diag.suspended()),
         usb_mount_count: usb_diag.map(|diag| diag.mount_count),
@@ -130,12 +250,13 @@ pub(super) fn build_bluetooth_report(
         usb_input_queued_count: usb_diag.map(|diag| diag.xinput_in_queued_count),
         usb_input_sent_count: usb_diag.map(|diag| diag.xinput_in_sent_count),
         usb_host_out_count: usb_diag.map(|diag| diag.xinput_out_count),
-        relevant_diag_lines: bluetooth_relevant_diag_lines(pico_diag_text),
+        relevant_diag_lines: bluetooth_relevant_diag_lines(input.pico_diag_text),
         next_steps: bluetooth_report_next_steps(status),
         notes: vec![
             "Bluetooth mode streams controller input from this PC to the Pico over USB CDC.",
             "The Pico then emits a Classic Bluetooth HID gamepad report to the paired receiver.",
             "The advertised_name field is the exact Bluetooth name the receiver should see.",
+            "bt_receiver_contact separates no-HID-contact pairing failures from connected receiver and input-stream failures.",
             "Wi-Fi discovery may still appear in logs, but live Bluetooth controller packets are not sent over Wi-Fi.",
             "USB adapter survey is skipped for Bluetooth mode because the Pico USB connector stays on the PC.",
         ],
@@ -158,13 +279,45 @@ pub(super) fn bluetooth_advertised_name(target: u8) -> &'static str {
     }
 }
 
+struct BluetoothContactState {
+    bt_started: bool,
+    bt_connected: bool,
+    bt_last_status: u8,
+    bt_open_count: u32,
+    bt_close_count: u32,
+    bt_get_report_count: u32,
+    bt_set_report_count: u32,
+    bt_out_report_count: u32,
+    bt_ready_count: u32,
+}
+
+fn bluetooth_receiver_contact(state: BluetoothContactState) -> &'static str {
+    if !state.bt_started {
+        "radio_not_started"
+    } else if state.bt_connected
+        || state.bt_open_count > 0
+        || state.bt_close_count > 0
+        || state.bt_get_report_count > 0
+        || state.bt_set_report_count > 0
+        || state.bt_out_report_count > 0
+    {
+        "hid_receiver_contact_seen"
+    } else if state.bt_last_status != 0 {
+        "hid_open_failed"
+    } else if state.bt_ready_count > 0 {
+        "discoverable_no_hid_contact"
+    } else {
+        "stack_started_no_ready_event"
+    }
+}
+
 pub(super) fn bluetooth_report_status(
-    pico_state: Option<&protocol::PicoStateDiag>,
+    state_captured: bool,
     bt_started: bool,
     bt_connected: bool,
     bt_report_send_count: u32,
 ) -> &'static str {
-    if pico_state.is_none() {
+    if !state_captured {
         "pico_state_missing"
     } else if !bt_started {
         "bluetooth_stack_not_started"
@@ -190,6 +343,7 @@ pub(super) fn bluetooth_report_next_steps(status: &str) -> Vec<&'static str> {
         "waiting_for_receiver" => vec![
             "Put the target Bluetooth receiver or adapter into pairing mode and pair with the CouchLink Bluetooth device.",
             "If it was previously paired, remove the old pairing on the receiver side and pair again.",
+            "If bt_receiver_contact stays discoverable_no_hid_contact during pairing, the receiver is not opening a HID channel to the Pico.",
         ],
         "connected_waiting_for_input" => vec![
             "Start couchlink bluetooth with the Pico plugged into this PC over USB.",
@@ -231,7 +385,16 @@ pub(super) fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
     let _ = writeln!(out, "warning={}", report.warning);
     let _ = writeln!(out, "pico_state_captured={}", report.pico_state_captured);
     let _ = writeln!(out, "usb_diag_captured={}", report.usb_diag_captured);
+    let _ = writeln!(
+        out,
+        "bt_status_cdc_captured={}",
+        report.bt_status_cdc_captured
+    );
+    if let Some(error) = &report.bt_status_cdc_error {
+        let _ = writeln!(out, "bt_status_cdc_error={error}");
+    }
     let _ = writeln!(out, "pico_diag_captured={}", report.pico_diag_captured);
+    let _ = writeln!(out, "bt_receiver_contact={}", report.bt_receiver_contact);
     let _ = writeln!(out);
 
     out.push_str("bluetooth_state=\n");
@@ -265,6 +428,107 @@ pub(super) fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
     );
     let _ = writeln!(out, "- bt_last_event_ms={}", report.bt_last_event_ms);
     let _ = writeln!(out, "- bt_last_send_ms={}", report.bt_last_send_ms);
+    let _ = writeln!(out);
+
+    out.push_str("bt_control_plane=\n");
+    let _ = writeln!(
+        out,
+        "- reported_local_name={}",
+        report
+            .bt_reported_local_name
+            .as_deref()
+            .unwrap_or("not_captured")
+    );
+    let _ = writeln!(
+        out,
+        "- get_report_count={}",
+        format_option_u32(report.bt_get_report_count)
+    );
+    let _ = writeln!(
+        out,
+        "- get_report_success_count={}",
+        format_option_u32(report.bt_get_report_success_count)
+    );
+    let _ = writeln!(
+        out,
+        "- get_report_unsupported_count={}",
+        format_option_u32(report.bt_get_report_unsupported_count)
+    );
+    let _ = writeln!(
+        out,
+        "- set_report_count={}",
+        format_option_u32(report.bt_set_report_count)
+    );
+    let _ = writeln!(
+        out,
+        "- set_report_accepted_count={}",
+        format_option_u32(report.bt_set_report_accepted_count)
+    );
+    let _ = writeln!(
+        out,
+        "- set_report_unsupported_count={}",
+        format_option_u32(report.bt_set_report_unsupported_count)
+    );
+    let _ = writeln!(
+        out,
+        "- out_report_count={}",
+        format_option_u32(report.bt_out_report_count)
+    );
+    let _ = writeln!(
+        out,
+        "- out_report_accepted_count={}",
+        format_option_u32(report.bt_out_report_accepted_count)
+    );
+    let _ = writeln!(
+        out,
+        "- out_report_unsupported_count={}",
+        format_option_u32(report.bt_out_report_unsupported_count)
+    );
+    let _ = writeln!(
+        out,
+        "- last_get_report_id={}",
+        format_option_hex_u8(report.bt_last_get_report_id)
+    );
+    let _ = writeln!(
+        out,
+        "- last_get_report_type={}",
+        format_option_hid_report_type(report.bt_last_get_report_type)
+    );
+    let _ = writeln!(
+        out,
+        "- last_get_report_len={}",
+        format_option_u16(report.bt_last_get_report_len)
+    );
+    let _ = writeln!(
+        out,
+        "- last_set_report_id={}",
+        format_option_hex_u8(report.bt_last_set_report_id)
+    );
+    let _ = writeln!(
+        out,
+        "- last_set_report_type={}",
+        format_option_hid_report_type(report.bt_last_set_report_type)
+    );
+    let _ = writeln!(
+        out,
+        "- last_set_report_len={}",
+        format_option_u16(report.bt_last_set_report_len)
+    );
+    let _ = writeln!(
+        out,
+        "- last_out_report_id={}",
+        format_option_hex_u8(report.bt_last_out_report_id)
+    );
+    let _ = writeln!(
+        out,
+        "- last_out_report_type={}",
+        format_option_hid_report_type(report.bt_last_out_report_type)
+    );
+    let _ = writeln!(
+        out,
+        "- last_out_report_len={}",
+        format_option_u16(report.bt_last_out_report_len)
+    );
     let _ = writeln!(out);
 
     out.push_str("pc_usb_input=\n");
@@ -360,6 +624,34 @@ pub(super) fn format_option_u32(value: Option<u32>) -> String {
     value
         .map(|v| v.to_string())
         .unwrap_or_else(|| "not_captured".to_string())
+}
+
+pub(super) fn format_option_u16(value: Option<u16>) -> String {
+    value
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "not_captured".to_string())
+}
+
+pub(super) fn format_option_hex_u8(value: Option<u8>) -> String {
+    value
+        .map(|v| format!("0x{v:02X}"))
+        .unwrap_or_else(|| "not_captured".to_string())
+}
+
+pub(super) fn format_option_hid_report_type(value: Option<u8>) -> String {
+    value
+        .map(hid_report_type_name)
+        .unwrap_or("not_captured")
+        .to_string()
+}
+
+fn hid_report_type_name(report_type: u8) -> &'static str {
+    match report_type {
+        1 => "input",
+        2 => "output",
+        3 => "feature",
+        _ => "unknown",
+    }
 }
 pub(super) fn aggregate_bluetooth_report_text(captures: &[PicoBundleCapture]) -> String {
     let mut out = String::from("Aggregate Bluetooth output report\n\n");

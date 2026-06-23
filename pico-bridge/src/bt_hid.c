@@ -197,10 +197,14 @@ static void packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packe
         break;
     case HCI_EVENT_PIN_CODE_REQUEST:
         hci_event_pin_code_request_get_bd_addr(packet, event_addr);
+        bt_hid_last_event_ms = now_ms();
+        diag_log_msg("bt_hid: pin_code_request");
         gap_pin_code_response(event_addr, "0000");
         break;
     case HCI_EVENT_USER_CONFIRMATION_REQUEST:
         hci_event_user_confirmation_request_get_bd_addr(packet, event_addr);
+        bt_hid_last_event_ms = now_ms();
+        diag_log_msg("bt_hid: user_confirmation_request");
         gap_ssp_confirmation_response(event_addr);
         break;
     case HCI_EVENT_HID_META:
@@ -323,6 +327,8 @@ bool bt_hid_init(bt_hid_target_t target) {
     bt_hid_init_count++;
     bt_hid_last_event_ms = now_ms();
     diag_log_printf("bt_hid: init target=%s", bt_hid_target_label(target));
+    diag_log_printf("bt_hid: discoverable name=%s class=0x%04X", bt_hid_local_name(target),
+                    (unsigned)BT_HID_CLASS_OF_DEVICE);
     hci_power_control(HCI_POWER_ON);
     return true;
 }
