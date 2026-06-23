@@ -1,3 +1,4 @@
+use super::pnp::*;
 use super::*;
 
 #[test]
