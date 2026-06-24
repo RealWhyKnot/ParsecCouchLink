@@ -7,6 +7,7 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 ### Fixed
 - **bluetooth:** Classify inactive CDC streams (58a3f97)
 - **bluetooth:** Classify source input captures (8d8f230)
+- **bluetooth:** Prefer ds4 for blueretro n64 (08ee705)
 
 ---
 
