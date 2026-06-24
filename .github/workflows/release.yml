@@ -74,7 +74,37 @@ jobs:
       - name: Install Pico toolchain
         shell: pwsh
         run: |
-          choco install ninja gcc-arm-embedded -y --no-progress
+          choco install ninja -y --no-progress
+
+          $version = "13.2.rel1"
+          $archiveName = "arm-gnu-toolchain-$version-mingw-w64-i686-arm-none-eabi.zip"
+          $url = "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/$version/binrel/$archiveName"
+          $installRoot = Join-Path $env:RUNNER_TEMP "arm-gnu-toolchain"
+          $archive = Join-Path $env:RUNNER_TEMP $archiveName
+
+          New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+          for ($attempt = 1; $attempt -le 5; $attempt++) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+              break
+            } catch {
+              if ($attempt -eq 5) { throw }
+              Start-Sleep -Seconds (5 * $attempt)
+            }
+          }
+
+          Expand-Archive -LiteralPath $archive -DestinationPath $installRoot -Force
+          $gcc = Get-ChildItem -LiteralPath $installRoot -Filter arm-none-eabi-gcc.exe -Recurse |
+            Select-Object -First 1
+          if (-not $gcc) { throw "arm-none-eabi-gcc.exe was not found after extracting $archiveName" }
+
+          $binDir = $gcc.Directory.FullName
+          $env:PATH = "$binDir;$env:PATH"
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $binDir -Encoding UTF8
+
+          cmake --version
+          ninja --version
+          arm-none-eabi-gcc --version
 
       - name: Rust format
         run: cargo fmt --manifest-path bridge/Cargo.toml -- --check
