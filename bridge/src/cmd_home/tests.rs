@@ -209,3 +209,43 @@ fn input_mode_choice_identifies_bluetooth_personas() {
     );
     assert_eq!(InputModeChoice::Auto.bluetooth_persona(), None);
 }
+
+#[test]
+fn source_slot_default_prefers_single_live_slot_over_waiting_saved_slot() {
+    assert_eq!(
+        preferred_source_slot(Some(1), &[xinput_slot(0)]),
+        0,
+        "single live source should override a saved waiting slot"
+    );
+    assert_eq!(
+        preferred_source_slot(Some(1), &[xinput_slot(1)]),
+        1,
+        "saved source stays selected when it is live"
+    );
+    assert_eq!(
+        preferred_source_slot(Some(1), &[xinput_slot(0), xinput_slot(2)]),
+        1,
+        "ambiguous live sources keep the saved slot"
+    );
+    assert_eq!(
+        preferred_source_slot(None, &[xinput_slot(2)]),
+        2,
+        "a first-time route should default to the only live source"
+    );
+}
+
+fn xinput_slot(slot: u32) -> xinput::SlotSnapshot {
+    xinput::SlotSnapshot {
+        slot,
+        state: protocol::GamepadState {
+            buttons: slot as u16,
+            left_trigger: slot as u8,
+            right_trigger: 0,
+            left_x: 0,
+            left_y: 0,
+            right_x: 0,
+            right_y: 0,
+        },
+        packet_number: 100 + slot,
+    }
+}

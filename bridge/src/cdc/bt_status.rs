@@ -155,8 +155,13 @@ impl BtStatus {
             || self.last_incoming_l2cap_psm != 0
     }
 
+    pub fn bt_cdc_counters_captured(&self) -> bool {
+        self.decoded_status_version >= BT_STATUS_VERSION
+    }
+
     pub fn bt_cdc_input_seen(&self) -> bool {
-        self.bt_cdc_state_count > 0 || self.bt_cdc_heartbeat_count > 0
+        self.bt_cdc_counters_captured()
+            && (self.bt_cdc_state_count > 0 || self.bt_cdc_heartbeat_count > 0)
     }
 }
 

@@ -111,6 +111,7 @@ pub(super) struct BluetoothReport {
     pub(super) bt_last_incoming_l2cap_psm: Option<u16>,
     pub(super) bt_last_incoming_l2cap_local_cid: Option<u16>,
     pub(super) bt_last_incoming_l2cap_ms: Option<u32>,
+    pub(super) bt_cdc_input_status: &'static str,
     pub(super) bt_cdc_state_count: Option<u32>,
     pub(super) bt_cdc_heartbeat_count: Option<u32>,
     pub(super) bt_cdc_bad_length_count: Option<u32>,
@@ -163,8 +164,7 @@ pub(super) fn build_bluetooth_report(
         .map(|status| status.report_send_count)
         .or_else(|| pico_state.map(|state| state.bt_report_send_count))
         .unwrap_or(0);
-    let pc_input_evidence = bluetooth_pc_input_evidence(pico_state, bt_status, usb_diag);
-    let pc_input_observed = pc_input_evidence != "none";
+    let pc_input = bluetooth_pc_input_evidence(pico_state, bt_status, usb_diag);
     let bt_target = bt_status
         .map(|status| status.target)
         .or_else(|| pico_state.map(|state| state.bt_target))
@@ -175,7 +175,8 @@ pub(super) fn build_bluetooth_report(
         bt_started,
         bt_connected,
         bt_report_send_count,
-        pc_input_observed,
+        pc_input.observed,
+        pc_input.bt_cdc_input_status,
     );
     let bt_last_status = bt_status
         .map(|status| status.last_status)
@@ -239,7 +240,7 @@ pub(super) fn build_bluetooth_report(
             .unwrap_or(0),
     });
     BluetoothReport {
-        artifact_schema_version: 5,
+        artifact_schema_version: 6,
         uid: uid.to_string(),
         path: path.to_string(),
         peer: Some(target.peer.to_string()),
@@ -309,8 +310,8 @@ pub(super) fn build_bluetooth_report(
             .map(|status| status.last_send_ms)
             .or_else(|| pico_state.map(|state| state.bt_last_send_ms))
             .unwrap_or(0),
-        pc_input_observed,
-        pc_input_evidence,
+        pc_input_observed: pc_input.observed,
+        pc_input_evidence: pc_input.evidence,
         bt_reported_local_name: bt_status
             .map(|status| status.local_name.trim())
             .filter(|name| !name.is_empty())
@@ -385,16 +386,19 @@ pub(super) fn build_bluetooth_report(
         bt_last_incoming_l2cap_local_cid: bt_status
             .map(|status| status.last_incoming_l2cap_local_cid),
         bt_last_incoming_l2cap_ms: bt_status.map(|status| status.last_incoming_l2cap_ms),
-        bt_cdc_state_count: bt_status.map(|status| status.bt_cdc_state_count),
-        bt_cdc_heartbeat_count: bt_status.map(|status| status.bt_cdc_heartbeat_count),
-        bt_cdc_bad_length_count: bt_status.map(|status| status.bt_cdc_bad_length_count),
-        bt_cdc_rejected_count: bt_status.map(|status| status.bt_cdc_rejected_count),
-        bt_cdc_last_frame_ms: bt_status.map(|status| status.bt_cdc_last_frame_ms),
-        bt_cdc_last_state_ms: bt_status.map(|status| status.bt_cdc_last_state_ms),
-        bt_cdc_last_heartbeat_ms: bt_status.map(|status| status.bt_cdc_last_heartbeat_ms),
-        bt_cdc_last_seq: bt_status.map(|status| status.bt_cdc_last_seq),
-        bt_cdc_last_command: bt_status.map(|status| status.bt_cdc_last_command),
-        bt_cdc_last_flags: bt_status.map(|status| status.bt_cdc_last_flags),
+        bt_cdc_input_status: pc_input.bt_cdc_input_status,
+        bt_cdc_state_count: bt_cdc_u32(bt_status, |status| status.bt_cdc_state_count),
+        bt_cdc_heartbeat_count: bt_cdc_u32(bt_status, |status| status.bt_cdc_heartbeat_count),
+        bt_cdc_bad_length_count: bt_cdc_u32(bt_status, |status| status.bt_cdc_bad_length_count),
+        bt_cdc_rejected_count: bt_cdc_u32(bt_status, |status| status.bt_cdc_rejected_count),
+        bt_cdc_last_frame_ms: bt_cdc_u32(bt_status, |status| status.bt_cdc_last_frame_ms),
+        bt_cdc_last_state_ms: bt_cdc_u32(bt_status, |status| status.bt_cdc_last_state_ms),
+        bt_cdc_last_heartbeat_ms: bt_cdc_u32(bt_status, |status| {
+            status.bt_cdc_last_heartbeat_ms
+        }),
+        bt_cdc_last_seq: bt_cdc_u8(bt_status, |status| status.bt_cdc_last_seq),
+        bt_cdc_last_command: bt_cdc_u8(bt_status, |status| status.bt_cdc_last_command),
+        bt_cdc_last_flags: bt_cdc_u8(bt_status, |status| status.bt_cdc_last_flags),
         usb_mounted: usb_diag.map(|diag| diag.mounted()),
         usb_suspended: usb_diag.map(|diag| diag.suspended()),
         usb_mount_count: usb_diag.map(|diag| diag.mount_count),
@@ -405,7 +409,11 @@ pub(super) fn build_bluetooth_report(
         usb_input_sent_count: usb_diag.map(|diag| diag.xinput_in_sent_count),
         usb_host_out_count: usb_diag.map(|diag| diag.xinput_out_count),
         relevant_diag_lines: bluetooth_relevant_diag_lines(input.pico_diag_text),
-        next_steps: bluetooth_report_next_steps(status, bt_receiver_contact),
+        next_steps: bluetooth_report_next_steps(
+            status,
+            bt_receiver_contact,
+            pc_input.bt_cdc_input_status,
+        ),
         notes: vec![
             "Bluetooth mode streams controller input from this PC to the Pico over USB CDC.",
             "The Pico then emits a Classic Bluetooth HID gamepad report to the paired receiver.",
@@ -506,6 +514,7 @@ pub(super) fn bluetooth_report_status(
     bt_connected: bool,
     bt_report_send_count: u32,
     pc_input_observed: bool,
+    bt_cdc_input_status: &str,
 ) -> &'static str {
     if !state_captured {
         "pico_state_missing"
@@ -516,22 +525,62 @@ pub(super) fn bluetooth_report_status(
     } else if bt_report_send_count == 0 {
         "connected_waiting_for_input"
     } else if !pc_input_observed {
-        "receiver_reports_sent_no_pc_input"
+        match bt_cdc_input_status {
+            "source_never_connected" => "receiver_reports_sent_source_never_connected",
+            "source_idle" => "receiver_reports_sent_source_idle",
+            _ => "receiver_reports_sent_no_pc_input",
+        }
     } else {
         "reports_sent"
     }
+}
+
+struct BluetoothPcInputEvidence {
+    observed: bool,
+    evidence: &'static str,
+    bt_cdc_input_status: &'static str,
 }
 
 fn bluetooth_pc_input_evidence(
     pico_state: Option<&protocol::PicoStateDiag>,
     bt_status: Option<&cdc::BtStatus>,
     usb_diag: Option<&protocol::UsbDiag>,
-) -> &'static str {
-    if bt_status
-        .map(|status| status.bt_cdc_input_seen())
-        .unwrap_or(false)
-    {
-        return "bt_status_cdc_input";
+) -> BluetoothPcInputEvidence {
+    let mut bt_cdc_input_status = "not_captured";
+    if let Some(status) = bt_status {
+        if status.bt_cdc_counters_captured() {
+            bt_cdc_input_status = if status.bt_cdc_state_count > 0 {
+                "state_frames"
+            } else if status.bt_cdc_heartbeat_count > 0
+                && status.bt_cdc_last_flags & protocol::FLAG_PARSEC_CONNECTED != 0
+            {
+                "source_idle"
+            } else if status.bt_cdc_heartbeat_count > 0 {
+                "source_never_connected"
+            } else {
+                "no_cdc_frames"
+            };
+            if status.bt_cdc_state_count > 0 {
+                return BluetoothPcInputEvidence {
+                    observed: true,
+                    evidence: "bt_status_cdc_state",
+                    bt_cdc_input_status,
+                };
+            }
+            if status.bt_cdc_heartbeat_count > 0 {
+                return BluetoothPcInputEvidence {
+                    observed: false,
+                    evidence: if status.bt_cdc_last_flags & protocol::FLAG_PARSEC_CONNECTED != 0 {
+                        "bt_status_cdc_heartbeat"
+                    } else {
+                        "bt_status_cdc_heartbeat_source_disconnected"
+                    },
+                    bt_cdc_input_status,
+                };
+            }
+        } else {
+            bt_cdc_input_status = "not_captured_pre_v5";
+        }
     }
     if pico_state
         .map(|state| {
@@ -541,7 +590,11 @@ fn bluetooth_pc_input_evidence(
         })
         .unwrap_or(false)
     {
-        return "pico_state_input";
+        return BluetoothPcInputEvidence {
+            observed: true,
+            evidence: "pico_state_input",
+            bt_cdc_input_status,
+        };
     }
     if usb_diag
         .map(|diag| {
@@ -551,14 +604,41 @@ fn bluetooth_pc_input_evidence(
         })
         .unwrap_or(false)
     {
-        return "usb_diag_input";
+        return BluetoothPcInputEvidence {
+            observed: true,
+            evidence: "usb_diag_input",
+            bt_cdc_input_status,
+        };
     }
-    "none"
+    BluetoothPcInputEvidence {
+        observed: false,
+        evidence: "none",
+        bt_cdc_input_status,
+    }
+}
+
+fn bt_cdc_u32(
+    bt_status: Option<&cdc::BtStatus>,
+    read: impl FnOnce(&cdc::BtStatus) -> u32,
+) -> Option<u32> {
+    bt_status
+        .filter(|status| status.bt_cdc_counters_captured())
+        .map(read)
+}
+
+fn bt_cdc_u8(
+    bt_status: Option<&cdc::BtStatus>,
+    read: impl FnOnce(&cdc::BtStatus) -> u8,
+) -> Option<u8> {
+    bt_status
+        .filter(|status| status.bt_cdc_counters_captured())
+        .map(read)
 }
 
 pub(super) fn bluetooth_report_next_steps(
     status: &str,
     bt_receiver_contact: &str,
+    bt_cdc_input_status: &str,
 ) -> Vec<&'static str> {
     match status {
         "pico_state_missing" => vec![
@@ -610,8 +690,23 @@ pub(super) fn bluetooth_report_next_steps(
             "Start couchlink bluetooth with the Pico plugged into this PC over USB.",
             "Move or press the source controller and rerun bundle if report_send_count stays at zero.",
         ],
+        "receiver_reports_sent_source_never_connected" => vec![
+            "The host Bluetooth stream reached the Pico, but the selected Windows source controller was not connected.",
+            "Choose the live Windows controller slot in guided mode or run couchlink bluetooth again after connecting the Parsec or local controller.",
+            "Keep host/xinput-sources.txt and the stream-status lines; they show which Windows controller slots were live.",
+        ],
+        "receiver_reports_sent_source_idle" => vec![
+            "The host Bluetooth stream reached the Pico and the source controller was connected, but no changed controller state was captured.",
+            "Press or move the source controller during the stream, then capture a new bundle before changing modes or unplugging the Pico.",
+            "If the receiver still ignores changed input, keep this bundle and inspect receiver-side controller-mimic compatibility next.",
+        ],
         "receiver_reports_sent_no_pc_input" => vec![
             "The receiver opened Classic HID and the Pico sent reports, but this bundle saw no PC controller input frames reach the Pico.",
+            if bt_cdc_input_status == "not_captured_pre_v5" {
+                "This bundle predates BT_STATUS v5 CDC counters; update the host and firmware, then recapture while Bluetooth streaming is active."
+            } else {
+                "BT_STATUS v5 saw no Bluetooth CDC state or heartbeat frames from the host during this capture."
+            },
             "Start Bluetooth streaming with a live Windows source controller; if the saved route points at a waiting slot, choose the live source or rerun guided mode.",
             "Keep host/xinput-sources.txt plus the stream-status lines from this bundle; they show which Windows controller slots were live.",
         ],
@@ -714,6 +809,7 @@ pub(super) fn format_bluetooth_report_text(report: &BluetoothReport) -> String {
     let _ = writeln!(out);
 
     out.push_str("bt_cdc_input=\n");
+    let _ = writeln!(out, "- status={}", report.bt_cdc_input_status);
     let _ = writeln!(
         out,
         "- state_count={}",

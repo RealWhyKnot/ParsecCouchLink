@@ -832,13 +832,34 @@ async fn route_one(picos: Vec<cmd_run::PicoTarget>) -> Result<()> {
 }
 
 async fn choose_source_slot(prompt: &str, default_slot: Option<u32>) -> Result<u32> {
-    let items = vec![slot_item(0), slot_item(1), slot_item(2), slot_item(3)];
-    let default = default_slot.unwrap_or(0).min(3) as usize;
+    let connected = xinput::connected_slots();
+    let items = vec![
+        slot_item(0, &connected),
+        slot_item(1, &connected),
+        slot_item(2, &connected),
+        slot_item(3, &connected),
+    ];
+    let default = preferred_source_slot(default_slot, &connected) as usize;
     Ok(select(prompt, &items, default).await? as u32)
 }
 
-fn slot_item(slot: u32) -> String {
-    if xinput::read_slot(slot).is_some() {
+fn preferred_source_slot(default_slot: Option<u32>, connected: &[xinput::SlotSnapshot]) -> u32 {
+    let live_slots: Vec<u32> = connected
+        .iter()
+        .map(|snapshot| snapshot.slot)
+        .filter(|slot| *slot < 4)
+        .collect();
+    if let Some(slot) = default_slot.filter(|slot| live_slots.contains(slot)) {
+        return slot;
+    }
+    if live_slots.len() == 1 {
+        return live_slots[0];
+    }
+    default_slot.unwrap_or(0).min(3)
+}
+
+fn slot_item(slot: u32, connected: &[xinput::SlotSnapshot]) -> String {
+    if connected.iter().any(|snapshot| snapshot.slot == slot) {
         format!("{} (live)", xinput::user_slot_label(slot))
     } else {
         format!("{} (waiting)", xinput::user_slot_label(slot))

@@ -486,7 +486,8 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     assert!(report.bt_connected);
     assert_eq!(report.bt_report_send_count, 5);
     assert!(report.pc_input_observed);
-    assert_eq!(report.pc_input_evidence, "bt_status_cdc_input");
+    assert_eq!(report.pc_input_evidence, "bt_status_cdc_state");
+    assert_eq!(report.bt_cdc_input_status, "state_frames");
     assert_eq!(
         report.bt_reported_local_name.as_deref(),
         Some("Xbox Wireless Controller")
@@ -513,6 +514,7 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     assert!(text.contains("- security_event_source=cdc_status"));
     assert!(text.contains("- user_confirmation_request_count=2"));
     assert!(text.contains("bt_cdc_input="));
+    assert!(text.contains("- status=state_frames"));
     assert!(text.contains("- state_count=4"));
     assert!(text.contains("- heartbeat_count=12"));
     assert!(text.contains("- last_command=0x0D"));
@@ -740,6 +742,7 @@ fn bluetooth_report_statuses_are_actionable() {
     assert!(no_pc_input.warning);
     assert!(!no_pc_input.pc_input_observed);
     assert_eq!(no_pc_input.pc_input_evidence, "none");
+    assert_eq!(no_pc_input.bt_cdc_input_status, "no_cdc_frames");
     assert!(no_pc_input
         .next_steps
         .iter()
@@ -747,7 +750,98 @@ fn bluetooth_report_statuses_are_actionable() {
     let text = format_bluetooth_report_text(&no_pc_input);
     assert!(text.contains("status=receiver_reports_sent_no_pc_input"));
     assert!(text.contains("- pc_input_observed=false"));
+    assert!(text.contains("- status=no_cdc_frames"));
     assert!(text.contains("- state_count=0"));
+
+    let mut legacy_status = bluetooth_cdc_status(
+        cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED,
+        42,
+    );
+    legacy_status.status_version = cdc::BT_STATUS_V4_VERSION;
+    legacy_status.decoded_status_version = cdc::BT_STATUS_V4_VERSION;
+    let legacy_no_pc_input = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&no_pc_input_state),
+            Some(&legacy_status),
+            Some(&no_pc_input_usb),
+            "bt_hid: connected\n",
+        ),
+    );
+    assert_eq!(
+        legacy_no_pc_input.status,
+        "receiver_reports_sent_no_pc_input"
+    );
+    assert_eq!(
+        legacy_no_pc_input.bt_cdc_input_status,
+        "not_captured_pre_v5"
+    );
+    assert_eq!(legacy_no_pc_input.bt_cdc_state_count, None);
+    assert!(legacy_no_pc_input
+        .next_steps
+        .iter()
+        .any(|step| step.contains("predates BT_STATUS v5")));
+    let text = format_bluetooth_report_text(&legacy_no_pc_input);
+    assert!(text.contains("- status=not_captured_pre_v5"));
+    assert!(text.contains("- state_count=not_captured"));
+
+    let mut source_missing_status = bluetooth_cdc_status(
+        cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED,
+        42,
+    );
+    source_missing_status.bt_cdc_heartbeat_count = 8;
+    source_missing_status.bt_cdc_last_flags = 0;
+    let source_missing = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&no_pc_input_state),
+            Some(&source_missing_status),
+            Some(&no_pc_input_usb),
+            "bt_hid: connected\n",
+        ),
+    );
+    assert_eq!(
+        source_missing.status,
+        "receiver_reports_sent_source_never_connected"
+    );
+    assert_eq!(source_missing.bt_cdc_input_status, "source_never_connected");
+    assert_eq!(
+        source_missing.pc_input_evidence,
+        "bt_status_cdc_heartbeat_source_disconnected"
+    );
+    assert!(source_missing
+        .next_steps
+        .iter()
+        .any(|step| step.contains("source controller was not connected")));
+
+    let mut source_idle_status = bluetooth_cdc_status(
+        cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED,
+        42,
+    );
+    source_idle_status.bt_cdc_heartbeat_count = 8;
+    source_idle_status.bt_cdc_last_flags = protocol::FLAG_PARSEC_CONNECTED;
+    let source_idle = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&no_pc_input_state),
+            Some(&source_idle_status),
+            Some(&no_pc_input_usb),
+            "bt_hid: connected\n",
+        ),
+    );
+    assert_eq!(source_idle.status, "receiver_reports_sent_source_idle");
+    assert_eq!(source_idle.bt_cdc_input_status, "source_idle");
+    assert_eq!(source_idle.pc_input_evidence, "bt_status_cdc_heartbeat");
+    assert!(source_idle
+        .next_steps
+        .iter()
+        .any(|step| step.contains("no changed controller state")));
 }
 
 #[test]
