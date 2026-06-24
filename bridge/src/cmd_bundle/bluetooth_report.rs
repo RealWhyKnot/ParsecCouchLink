@@ -526,6 +526,8 @@ pub(super) fn bluetooth_report_status(
         "connected_waiting_for_input"
     } else if !pc_input_observed {
         match bt_cdc_input_status {
+            "host_stream_not_active" => "receiver_reports_sent_stream_not_active",
+            "cdc_input_errors" => "receiver_reports_sent_cdc_input_errors",
             "source_never_connected" => "receiver_reports_sent_source_never_connected",
             "source_idle" => "receiver_reports_sent_source_idle",
             _ => "receiver_reports_sent_no_pc_input",
@@ -551,6 +553,8 @@ fn bluetooth_pc_input_evidence(
         if status.bt_cdc_counters_captured() {
             bt_cdc_input_status = if status.bt_cdc_state_count > 0 {
                 "state_frames"
+            } else if status.bt_cdc_bad_length_count > 0 || status.bt_cdc_rejected_count > 0 {
+                "cdc_input_errors"
             } else if status.bt_cdc_heartbeat_count > 0
                 && status.bt_cdc_last_flags & protocol::FLAG_PARSEC_CONNECTED != 0
             {
@@ -564,6 +568,13 @@ fn bluetooth_pc_input_evidence(
                 return BluetoothPcInputEvidence {
                     observed: true,
                     evidence: "bt_status_cdc_state",
+                    bt_cdc_input_status,
+                };
+            }
+            if status.bt_cdc_bad_length_count > 0 || status.bt_cdc_rejected_count > 0 {
+                return BluetoothPcInputEvidence {
+                    observed: false,
+                    evidence: "bt_status_cdc_input_errors",
                     bt_cdc_input_status,
                 };
             }
@@ -610,11 +621,53 @@ fn bluetooth_pc_input_evidence(
             bt_cdc_input_status,
         };
     }
+    if matches!(bt_cdc_input_status, "not_captured" | "not_captured_pre_v5") {
+        if let Some(status) = legacy_stream_status(pico_state, usb_diag) {
+            return BluetoothPcInputEvidence {
+                observed: false,
+                evidence: match status {
+                    "host_stream_not_active" => "legacy_stream_not_active",
+                    "source_never_connected" => "legacy_stream_source_disconnected",
+                    _ => "legacy_stream_source_idle",
+                },
+                bt_cdc_input_status: status,
+            };
+        }
+    }
     BluetoothPcInputEvidence {
         observed: false,
         evidence: "none",
         bt_cdc_input_status,
     }
+}
+
+fn legacy_stream_status(
+    pico_state: Option<&protocol::PicoStateDiag>,
+    usb_diag: Option<&protocol::UsbDiag>,
+) -> Option<&'static str> {
+    if pico_state.is_none() && usb_diag.is_none() {
+        return None;
+    }
+    let bridge_peer = pico_state
+        .map(|state| state.activity_flags & protocol::USB_DIAG_ACTIVITY_PEER != 0)
+        .unwrap_or(false)
+        || usb_diag
+            .map(|diag| diag.bridge_peer_latched())
+            .unwrap_or(false);
+    if !bridge_peer {
+        return Some("host_stream_not_active");
+    }
+    let source_connected = pico_state
+        .map(|state| state.activity_flags & protocol::USB_DIAG_ACTIVITY_PARSEC != 0)
+        .unwrap_or(false)
+        || usb_diag
+            .map(|diag| diag.parsec_connected())
+            .unwrap_or(false);
+    Some(if source_connected {
+        "source_idle"
+    } else {
+        "source_never_connected"
+    })
 }
 
 fn bt_cdc_u32(
@@ -689,6 +742,16 @@ pub(super) fn bluetooth_report_next_steps(
         "connected_waiting_for_input" => vec![
             "Start couchlink bluetooth with the Pico plugged into this PC over USB.",
             "Move or press the source controller and rerun bundle if report_send_count stays at zero.",
+        ],
+        "receiver_reports_sent_stream_not_active" => vec![
+            "The receiver opened Classic HID and the Pico sent Bluetooth reports, but this bundle did not see the host Bluetooth stream feed USB CDC input frames.",
+            "Start couchlink bluetooth with the Pico plugged into this PC over USB, keep it running, then move or press the source controller before capturing a bundle.",
+            "Keep host/xinput-sources.txt and the stream-status lines; they show whether the selected Windows controller slot was live.",
+        ],
+        "receiver_reports_sent_cdc_input_errors" => vec![
+            "The host Bluetooth stream reached the Pico, but BT_STATUS v5 recorded malformed or rejected USB CDC input frames.",
+            "Update both host and firmware from the same build, restart couchlink bluetooth, and capture a fresh bundle if the rejected counters keep rising.",
+            "Keep the bt_cdc_input counters with the host logs; they show whether frames were too short, had a bad command, or failed validation before becoming controller state.",
         ],
         "receiver_reports_sent_source_never_connected" => vec![
             "The host Bluetooth stream reached the Pico, but the selected Windows source controller was not connected.",

@@ -772,20 +772,47 @@ fn bluetooth_report_statuses_are_actionable() {
     );
     assert_eq!(
         legacy_no_pc_input.status,
-        "receiver_reports_sent_no_pc_input"
+        "receiver_reports_sent_stream_not_active"
     );
     assert_eq!(
         legacy_no_pc_input.bt_cdc_input_status,
-        "not_captured_pre_v5"
+        "host_stream_not_active"
+    );
+    assert_eq!(
+        legacy_no_pc_input.pc_input_evidence,
+        "legacy_stream_not_active"
     );
     assert_eq!(legacy_no_pc_input.bt_cdc_state_count, None);
     assert!(legacy_no_pc_input
         .next_steps
         .iter()
-        .any(|step| step.contains("predates BT_STATUS v5")));
+        .any(|step| step.contains("keep it running")));
     let text = format_bluetooth_report_text(&legacy_no_pc_input);
-    assert!(text.contains("- status=not_captured_pre_v5"));
+    assert!(text.contains("status=receiver_reports_sent_stream_not_active"));
+    assert!(text.contains("- status=host_stream_not_active"));
     assert!(text.contains("- state_count=not_captured"));
+
+    let mut legacy_with_peer_usb = no_pc_input_usb.clone();
+    legacy_with_peer_usb.activity_flags = protocol::USB_DIAG_ACTIVITY_PEER;
+    let legacy_source_missing = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&no_pc_input_state),
+            Some(&legacy_status),
+            Some(&legacy_with_peer_usb),
+            "bt_hid: connected\n",
+        ),
+    );
+    assert_eq!(
+        legacy_source_missing.status,
+        "receiver_reports_sent_source_never_connected"
+    );
+    assert_eq!(
+        legacy_source_missing.pc_input_evidence,
+        "legacy_stream_source_disconnected"
+    );
 
     let mut source_missing_status = bluetooth_cdc_status(
         cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED,
@@ -842,6 +869,33 @@ fn bluetooth_report_statuses_are_actionable() {
         .next_steps
         .iter()
         .any(|step| step.contains("no changed controller state")));
+
+    let mut cdc_error_status = bluetooth_cdc_status(
+        cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED,
+        42,
+    );
+    cdc_error_status.bt_cdc_bad_length_count = 2;
+    cdc_error_status.bt_cdc_rejected_count = 1;
+    let cdc_errors = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&no_pc_input_state),
+            Some(&cdc_error_status),
+            Some(&no_pc_input_usb),
+            "bt_hid: connected\n",
+        ),
+    );
+    assert_eq!(cdc_errors.status, "receiver_reports_sent_cdc_input_errors");
+    assert_eq!(cdc_errors.bt_cdc_input_status, "cdc_input_errors");
+    assert_eq!(cdc_errors.pc_input_evidence, "bt_status_cdc_input_errors");
+    assert_eq!(cdc_errors.bt_cdc_bad_length_count, Some(2));
+    assert_eq!(cdc_errors.bt_cdc_rejected_count, Some(1));
+    assert!(cdc_errors
+        .next_steps
+        .iter()
+        .any(|step| step.contains("malformed or rejected")));
 }
 
 #[test]
