@@ -134,6 +134,15 @@ enum InputModeChoice {
     Family(&'static [protocol::Persona]),
 }
 
+impl InputModeChoice {
+    fn bluetooth_persona(self) -> Option<protocol::Persona> {
+        match self {
+            Self::Persona(persona) if persona.is_bluetooth() => Some(persona),
+            _ => None,
+        }
+    }
+}
+
 async fn scan_pico_inventory() -> Result<PicoInventory> {
     let mut inventory = PicoInventory::default();
     match cmd_run::discover_picos(Duration::from_secs(HOME_SCAN_SECONDS)).await {
@@ -473,7 +482,7 @@ fn missing_saved_card(pico: config::PicoIdentity) -> PicoCard {
 impl PicoAction {
     fn label(&self) -> String {
         match self {
-            Self::StartStreaming { .. } => "Start streaming with Controller 1".to_string(),
+            Self::StartStreaming { .. } => "Start streaming".to_string(),
             Self::ChooseRouting { .. } => "Choose controller and stream".to_string(),
             Self::CheckUsbAdapter { .. } => "Check console USB adapter".to_string(),
             Self::SwitchToUsbDebug { .. } => "Switch to USB debug mode".to_string(),
@@ -804,13 +813,22 @@ fn print_xinput_sources() {
 async fn route_one(picos: Vec<cmd_run::PicoTarget>) -> Result<()> {
     let pico_items: Vec<String> = picos.iter().map(|p| p.detail_label()).collect();
     let pico_index = select("Which Pico should receive the controller?", &pico_items, 0).await?;
+    let pico = picos[pico_index].clone();
+    let mode = choose_input_mode().await?;
+    if mode.bluetooth_persona().is_some() {
+        let routes = vec![cmd_run::StreamRoute {
+            source_slot: 0,
+            pico,
+        }];
+        let routes = prepare_routes_for_input_mode(routes, mode).await?;
+        let routes = choose_bluetooth_source_slots(routes).await?;
+        return start_stream(routes, true).await;
+    }
+
     let source_slot =
         choose_source_slot("Which Windows controller should feed that Pico?", None).await?;
-    let routes = vec![cmd_run::StreamRoute {
-        source_slot,
-        pico: picos[pico_index].clone(),
-    }];
-    stream(routes, true).await
+    let routes = vec![cmd_run::StreamRoute { source_slot, pico }];
+    stream_with_mode(routes, mode, true).await
 }
 
 async fn choose_source_slot(prompt: &str, default_slot: Option<u32>) -> Result<u32> {
@@ -829,7 +847,24 @@ fn slot_item(slot: u32) -> String {
 
 async fn stream(routes: Vec<cmd_run::StreamRoute>, save: bool) -> Result<()> {
     let mode = choose_input_mode().await?;
+    stream_with_mode(routes, mode, save).await
+}
+
+async fn stream_with_mode(
+    routes: Vec<cmd_run::StreamRoute>,
+    mode: InputModeChoice,
+    save: bool,
+) -> Result<()> {
     let routes = prepare_routes_for_input_mode(routes, mode).await?;
+    let routes = if mode.bluetooth_persona().is_some() {
+        choose_bluetooth_source_slots(routes).await?
+    } else {
+        routes
+    };
+    start_stream(routes, save).await
+}
+
+async fn start_stream(routes: Vec<cmd_run::StreamRoute>, save: bool) -> Result<()> {
     println!();
     println!("Ready to stream:");
     for route in &routes {
@@ -847,6 +882,35 @@ async fn stream(routes: Vec<cmd_run::StreamRoute>, save: bool) -> Result<()> {
         },
     )
     .await
+}
+
+async fn choose_bluetooth_source_slots(
+    mut routes: Vec<cmd_run::StreamRoute>,
+) -> Result<Vec<cmd_run::StreamRoute>> {
+    let targets: Vec<_> = routes.iter().map(|route| route.pico.clone()).collect();
+    cmd_persona::wait_for_bluetooth_xinput_release(&targets, false).await?;
+
+    print_xinput_sources();
+    if routes.len() == 1 {
+        routes[0].source_slot = choose_source_slot(
+            "Which Windows controller should feed that Bluetooth Pico?",
+            Some(routes[0].source_slot),
+        )
+        .await?;
+        return Ok(routes);
+    }
+
+    for route in &mut routes {
+        route.source_slot = choose_source_slot(
+            &format!(
+                "Which Windows controller should feed {}?",
+                route.pico.short_label()
+            ),
+            Some(route.source_slot),
+        )
+        .await?;
+    }
+    Ok(routes)
 }
 
 async fn choose_input_mode() -> Result<InputModeChoice> {

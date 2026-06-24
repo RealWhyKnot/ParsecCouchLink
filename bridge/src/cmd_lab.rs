@@ -129,6 +129,11 @@ pub async fn run(options: LabOptions) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn connected_xinput_instance_ids_for_uids(uids: &BTreeSet<u32>) -> Result<Vec<String>> {
+    let instances = pnp_instances_for_uids(uids, &[PnpPersona::Xinput])?;
+    Ok(pnp_instance_ids(&instances))
+}
+
 struct LabHarness {
     options: LabOptions,
     cfg: config::Config,

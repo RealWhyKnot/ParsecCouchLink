@@ -192,3 +192,20 @@ fn seed_saved_picos_migrates_legacy_last_pico_once() {
     assert!(!seed_saved_picos_from_legacy_last(&mut cfg));
     assert_eq!(cfg.picos.len(), 1);
 }
+
+#[test]
+fn input_mode_choice_identifies_bluetooth_personas() {
+    assert_eq!(
+        InputModeChoice::Persona(protocol::Persona::BluetoothHid).bluetooth_persona(),
+        Some(protocol::Persona::BluetoothHid)
+    );
+    assert_eq!(
+        InputModeChoice::Persona(protocol::Persona::BluetoothXbox).bluetooth_persona(),
+        Some(protocol::Persona::BluetoothXbox)
+    );
+    assert_eq!(
+        InputModeChoice::Persona(protocol::Persona::Xinput).bluetooth_persona(),
+        None
+    );
+    assert_eq!(InputModeChoice::Auto.bluetooth_persona(), None);
+}

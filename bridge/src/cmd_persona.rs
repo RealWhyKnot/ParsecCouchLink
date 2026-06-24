@@ -8,16 +8,18 @@
 //! the same Wi-Fi persona switch before the streaming loop opens the local
 //! USB diagnostic port.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 
 use crate::protocol::Persona;
-use crate::{cmd_run, pico_cache, pico_mode, support};
+use crate::{cmd_lab, cmd_run, pico_cache, pico_mode, support};
 
 pub(crate) const DISCOVER: Duration = Duration::from_secs(5);
 pub(crate) const REBOOT_WAIT: Duration = Duration::from_secs(60);
+const XINPUT_RELEASE_WAIT: Duration = Duration::from_secs(8);
+const XINPUT_RELEASE_POLL: Duration = Duration::from_millis(500);
 
 pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bool) -> Result<()> {
     tracing::info!(
@@ -128,8 +130,78 @@ pub async fn run(desired: Persona, selectors: Vec<String>, all: bool, stream: bo
             desired.label()
         );
     }
-    let routes = cmd_run::auto_routes(ready, Some((0..4).collect()))?;
+    if desired.is_bluetooth() {
+        wait_for_bluetooth_xinput_release(&ready, false).await?;
+    }
+    let routes = cmd_run::auto_routes(ready, preferred_source_slots_for_persona(desired))?;
     cmd_run::stream_routes(routes, cmd_run::StreamOptions::default()).await
+}
+
+fn preferred_source_slots_for_persona(desired: Persona) -> Option<Vec<u32>> {
+    if desired.is_bluetooth() {
+        None
+    } else {
+        Some((0..4).collect())
+    }
+}
+
+pub(crate) async fn wait_for_bluetooth_xinput_release(
+    targets: &[cmd_run::PicoTarget],
+    quiet: bool,
+) -> Result<()> {
+    let uids: BTreeSet<u32> = targets
+        .iter()
+        .map(|target| target.info.unique_id_short)
+        .collect();
+    if uids.is_empty() {
+        return Ok(());
+    }
+
+    let deadline = Instant::now() + XINPUT_RELEASE_WAIT;
+    let mut announced = false;
+    loop {
+        let instance_ids = match cmd_lab::connected_xinput_instance_ids_for_uids(&uids) {
+            Ok(instance_ids) if instance_ids.is_empty() => {
+                if announced && !quiet {
+                    println!("Selected Pico XInput endpoint is gone.");
+                }
+                return Ok(());
+            }
+            Ok(instance_ids) => instance_ids,
+            Err(e) => {
+                if !quiet {
+                    println!(
+                        "Note: could not verify whether the selected Pico is still exposed as a Windows XInput source: {e:#}"
+                    );
+                    println!(
+                        "Choose the Parsec or local controller source, not the selected Pico."
+                    );
+                }
+                return Ok(());
+            }
+        };
+
+        if Instant::now() >= deadline {
+            bail!("{}", selected_pico_xinput_release_error(&instance_ids));
+        }
+
+        if !announced && !quiet {
+            println!("Waiting for Windows to remove the selected Pico's old XInput source...");
+            announced = true;
+        }
+        tokio::time::sleep(XINPUT_RELEASE_POLL).await;
+    }
+}
+
+fn selected_pico_xinput_release_error(instance_ids: &[String]) -> String {
+    let details = if instance_ids.is_empty() {
+        "no instance ID captured".to_string()
+    } else {
+        instance_ids.join(", ")
+    };
+    format!(
+        "the selected Pico is still exposed as a local XInput device after switching to Bluetooth ({details}). Unplug/replug the Pico or wait for Windows to remove the old controller, then run the Bluetooth command again."
+    )
 }
 
 pub(crate) fn select_targets(
@@ -203,3 +275,6 @@ fn merge_targets(
     out.extend(reappeared);
     out
 }
+
+#[cfg(test)]
+mod tests;
