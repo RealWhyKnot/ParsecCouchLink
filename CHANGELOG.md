@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.24.1-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.24.1-beta) -- 2026-06-24
+
 ### Fixed
 - **bluetooth:** Classify inactive CDC streams (58a3f97)
 - **bluetooth:** Classify source input captures (8d8f230)
