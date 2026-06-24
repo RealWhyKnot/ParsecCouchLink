@@ -420,7 +420,7 @@ pub(super) fn build_bluetooth_report(
             "The advertised_name field is the exact Bluetooth name the receiver should see.",
             "bt_receiver_contact separates pairing/security contact, HID channel contact, and input-stream failures.",
             "host/xinput-sources.txt lists the Windows controller slots visible when the bundle was captured.",
-            "BlueRetro users should try generic HID with couchlink bluetooth or blueretro before relying on the Xbox-named Classic HID mimic.",
+            "For BITFUNX/BlueRetro N64, try couchlink blueretro-playstation first, then couchlink blueretro; use blueretro-xbox only as a diagnostic.",
             "Wi-Fi discovery may still appear in logs, but live Bluetooth controller packets are not sent over Wi-Fi.",
             "USB adapter survey is skipped for Bluetooth mode because the Pico USB connector stays on the PC.",
             "The live Bluetooth run command is a continuous streaming loop; stop it manually after pairing or after capturing enough status.",
@@ -706,14 +706,14 @@ pub(super) fn bluetooth_report_next_steps(
             vec![
                 "The receiver reached Bluetooth pairing/security but did not open a Classic HID control or interrupt channel.",
                 "Clear the receiver-side pairing entry, put the adapter back into pairing mode, and pair again.",
-                "For BlueRetro, try generic HID with couchlink bluetooth or blueretro before relying on bluetooth-xbox or blueretro-xbox.",
+                "For BITFUNX/BlueRetro N64, try couchlink blueretro-playstation first, then couchlink blueretro; use blueretro-xbox only as a diagnostic.",
             ]
         }
         "waiting_for_receiver" if bt_receiver_contact == "hid_reconnect_pending" => {
             vec![
                 "Pairing/security completed and the Pico scheduled an active Classic HID reconnect to the paired receiver.",
                 "Keep the receiver powered and in range, wait a few seconds, then rerun couchlink bundle if HID does not open.",
-                "If this repeats on BlueRetro, clear the adapter pairing and try generic HID with couchlink bluetooth or blueretro.",
+                "If this repeats on BITFUNX/BlueRetro N64, clear adapter pairing and try couchlink blueretro-playstation first, then couchlink blueretro.",
             ]
         }
         "waiting_for_receiver"
@@ -722,14 +722,14 @@ pub(super) fn bluetooth_report_next_steps(
             vec![
                 "The Pico actively tried to reconnect the paired receiver, but no Classic HID control or interrupt channel opened.",
                 "Keep this bundle with bt_reconnect and bt_acl_l2cap counters; they show whether paging failed, ACL connected, or a HID channel was attempted.",
-                "For BlueRetro, clear receiver pairing and test generic HID with couchlink bluetooth or blueretro before the Xbox-named Classic HID mimic.",
+                "For BITFUNX/BlueRetro N64, clear receiver pairing and try couchlink blueretro-playstation first, then couchlink blueretro.",
             ]
         }
         "waiting_for_receiver" if bt_receiver_contact == "hid_l2cap_incoming_no_hid_open" => {
             vec![
                 "The receiver reached a Classic HID L2CAP channel, but BTstack did not report a completed HID open.",
                 "Keep this bundle and inspect the bt_acl_l2cap counters with receiver-side or HCI logs if available.",
-                "Clear receiver pairing and retry generic HID if the Xbox-named Classic HID mimic still does not open.",
+                "Clear receiver pairing and retry couchlink blueretro-playstation, then couchlink blueretro if the Xbox-named Classic HID mimic still does not open.",
             ]
         }
         "waiting_for_receiver" => {

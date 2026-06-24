@@ -190,7 +190,7 @@ Controller-specific Bluetooth mimics are also available:
 .\couchlink.exe bluetooth-playstation
 ```
 
-For BlueRetro adapters, start with generic HID (`.\couchlink.exe bluetooth` or `.\couchlink.exe blueretro`) before relying on `bluetooth-xbox` / `blueretro-xbox`. The Xbox-named mode is a Classic Bluetooth HID mimic that advertises as `Xbox Wireless Controller`; it is not Xbox BLE/HOGP mode and is not proven Xbox One / Series compatibility.
+For BITFUNX/BlueRetro N64 adapters, leave the Pico on the bridge PC over USB and plug the adapter into the N64 controller port. CouchLink does not use the adapter Mini USB/config port as the controller input path. Start with DualShock 4 mode (`.\couchlink.exe blueretro-playstation`), then try generic HID (`.\couchlink.exe blueretro`) if HID does not open. Use `bluetooth-xbox` / `blueretro-xbox` only as a diagnostic; the Xbox-named mode is a Classic Bluetooth HID mimic, not Xbox BLE/HOGP mode. Do not flash official upstream firmware onto BITFUNX units unless the vendor says that firmware matches the unit.
 
 The stream will not start unless the selected Bluetooth-mode Pico is also visible as the CouchLink USB diagnostic device on the PC. This avoids the extra Wi-Fi hop for live controller input. In Bluetooth mode, the plugged-in Pico is the bridge input/diagnostic path, not the console-side controller output; pick the Parsec virtual controller or local test controller as the source slot, and use the Bluetooth receiver/adapter as the output.
 

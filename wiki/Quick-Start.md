@@ -78,7 +78,7 @@ The guided menu can:
 - Set up Wi-Fi, update firmware, read USB logs, or check the console USB adapter for one selected Pico.
 - Open **Advanced** for one-off tools, status, Wi-Fi finder, controller check, Pico debug/recovery, USB adapter checks, logs, support bundles, and command reference.
 
-When streaming starts, the terminal prints live counters. USB-output modes show PC-to-Pico Wi-Fi packets and Pico replies; use **Check console USB adapter** or `couchlink.exe test usb` if the console still sees no input. Bluetooth mode shows the PC USB input link plus the Pico's Bluetooth receiver state, including whether it is still discoverable, reached pairing/security without opening Classic HID, is actively trying a HID reconnect, or connected and sending reports. For BlueRetro, try generic Bluetooth before the Xbox-named Classic HID mimic.
+When streaming starts, the terminal prints live counters. USB-output modes show PC-to-Pico Wi-Fi packets and Pico replies; use **Check console USB adapter** or `couchlink.exe test usb` if the console still sees no input. Bluetooth mode shows the PC USB input link plus the Pico's Bluetooth receiver state, including whether it is still discoverable, reached pairing/security without opening Classic HID, is actively trying a HID reconnect, or connected and sending reports. For BITFUNX/BlueRetro N64, try `couchlink.exe blueretro-playstation` first, then `couchlink.exe blueretro`.
 
 If the Startup shortcut was added, Windows starts the direct streaming command at logon:
 

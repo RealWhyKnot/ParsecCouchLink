@@ -353,7 +353,7 @@ fn bluetooth_status_formatter_explains_pairing_and_connection() {
     let pairing_contact = format_bluetooth_peer_state(Some(&status), None, false, None);
     assert!(pairing_contact.contains("pairing/security seen"));
     assert!(pairing_contact.contains("no Classic HID channel opened"));
-    assert!(pairing_contact.contains("couchlink bluetooth or blueretro"));
+    assert!(pairing_contact.contains("blueretro-playstation first"));
     status.user_confirmation_request_count = 0;
     status.user_confirmation_response_count = 0;
 

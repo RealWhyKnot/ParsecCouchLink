@@ -260,8 +260,12 @@ fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
         "generic-hid",
         "bluetooth",
         "bluetooth-hid",
+        "blueretro",
+        "n64-bluetooth",
         "bluetooth-xbox",
+        "blueretro-xbox",
         "bluetooth-playstation",
+        "blueretro-playstation",
     ] {
         let cli = Cli::try_parse_from(["couchlink", command, "--pico", "07D37EB6", "--no-stream"])
             .unwrap();
@@ -315,7 +319,7 @@ fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
                 }),
             )
             | (
-                "bluetooth" | "bluetooth-hid",
+                "bluetooth" | "bluetooth-hid" | "blueretro" | "n64-bluetooth",
                 Some(Command::BluetoothHid {
                     picos,
                     all,
@@ -323,7 +327,7 @@ fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
                 }),
             )
             | (
-                "bluetooth-xbox",
+                "bluetooth-xbox" | "blueretro-xbox",
                 Some(Command::BluetoothXbox {
                     picos,
                     all,
@@ -331,7 +335,7 @@ fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
                 }),
             )
             | (
-                "bluetooth-playstation",
+                "bluetooth-playstation" | "blueretro-playstation",
                 Some(Command::BluetoothPlaystation {
                     picos,
                     all,

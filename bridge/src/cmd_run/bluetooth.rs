@@ -111,10 +111,23 @@ pub fn print_bluetooth_pairing_help(persona: Persona) {
     println!("  Put the receiver or console adapter into Bluetooth pairing/search mode.");
     println!("  Pair the receiver with {expected_name}. Use PIN 0000 if it asks for one.");
     println!("  This command keeps streaming status and controller input until you stop it.");
-    if persona == Persona::BluetoothXbox {
-        println!(
-            "  For BlueRetro, try generic HID with couchlink bluetooth or blueretro before relying on the Xbox-named Classic HID mimic."
-        );
+    match persona {
+        Persona::BluetoothPlaystation => {
+            println!(
+                "  For BITFUNX/BlueRetro N64, try this DualShock 4 mode first; use couchlink blueretro as the fallback."
+            );
+        }
+        Persona::BluetoothHid => {
+            println!(
+                "  For BITFUNX/BlueRetro N64, couchlink blueretro-playstation is the first choice; this generic HID mode is the fallback."
+            );
+        }
+        Persona::BluetoothXbox => {
+            println!(
+                "  For BITFUNX/BlueRetro N64, try couchlink blueretro-playstation first, then couchlink blueretro; this Xbox-named Classic HID mimic is only a diagnostic."
+            );
+        }
+        _ => {}
     }
     println!("  Persona switching still uses Wi-Fi; live controller input then uses PC USB.");
 }
@@ -225,14 +238,14 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
                     status.last_reconnect_status
                 ));
             }
-            msg.push_str("; BlueRetro: try generic HID with couchlink bluetooth or blueretro");
+            msg.push_str("; BITFUNX/BlueRetro N64: try couchlink blueretro-playstation first, then couchlink blueretro");
             return msg;
         }
         if status.pairing_security_contact_seen() || status.hid_open_failed_count > 0 {
             let mut msg = format!(
                 "{version_note}pairing/security seen for \"{name}\" but no Classic HID channel opened; clear receiver pairing and pair again"
             );
-            msg.push_str("; BlueRetro: try generic HID with couchlink bluetooth or blueretro");
+            msg.push_str("; BITFUNX/BlueRetro N64: try couchlink blueretro-playstation first, then couchlink blueretro");
             if status.user_confirmation_request_count > 0 {
                 msg.push_str(&format!(
                     "; confirmations {}/{}",
