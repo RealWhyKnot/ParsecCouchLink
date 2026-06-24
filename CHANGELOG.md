@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.6.24.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.24.0-beta) -- 2026-06-24
+
 ### Fixed
 - **bluetooth:** Require live source input (9b6f72c)
 - **bluetooth:** Recover source slot during stream (c184ea7)
