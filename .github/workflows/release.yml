@@ -164,7 +164,9 @@ jobs:
 
       - name: Build release zip
         shell: pwsh
-        run: ./build.ps1 -Version '${{ steps.version.outputs.version }}' -Package
+        run: |
+          Remove-Item -LiteralPath pico-bridge/build-pico2w,pico-bridge/build-picow -Recurse -Force -ErrorAction SilentlyContinue
+          ./build.ps1 -Version '${{ steps.version.outputs.version }}' -Package
 
       - name: Locate artifacts
         id: artifact
