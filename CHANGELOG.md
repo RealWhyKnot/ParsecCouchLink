@@ -6,6 +6,7 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ### Fixed
 - **bluetooth:** Require live source input (9b6f72c)
+- **bluetooth:** Recover source slot during stream (c184ea7)
 
 ---
 
