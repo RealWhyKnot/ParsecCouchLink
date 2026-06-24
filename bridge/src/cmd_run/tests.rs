@@ -189,6 +189,28 @@ fn bluetooth_source_slot_decision_refuses_ambiguous_or_absent_source() {
 }
 
 #[test]
+fn bluetooth_source_auto_switch_only_allows_single_bluetooth_route() {
+    let mut bluetooth = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    bluetooth.persona = Persona::BluetoothHid;
+    let xinput = pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040);
+
+    assert!(should_auto_switch_bluetooth_source(&[StreamRoute {
+        source_slot: 1,
+        pico: bluetooth.clone(),
+    }]));
+    assert!(!should_auto_switch_bluetooth_source(&[
+        StreamRoute {
+            source_slot: 1,
+            pico: bluetooth,
+        },
+        StreamRoute {
+            source_slot: 0,
+            pico: xinput,
+        },
+    ]));
+}
+
+#[test]
 fn bluetooth_source_preflight_error_lists_live_slots() {
     let message = bluetooth_source_preflight_error(&[MissingBluetoothSource {
         pico_uid: "28249370".to_string(),
@@ -213,6 +235,7 @@ fn debug_packet_harvest_targets_only_include_enabled_debug_routes() {
                 pico: debug,
             },
             None,
+            false,
         ),
         RouteRuntime::new(
             StreamRoute {
@@ -220,6 +243,7 @@ fn debug_packet_harvest_targets_only_include_enabled_debug_routes() {
                 pico: xinput,
             },
             None,
+            false,
         ),
     ];
 
@@ -289,6 +313,7 @@ fn bluetooth_routes_do_not_schedule_udp_recovery() {
             pico: bt,
         },
         None,
+        true,
     )];
     routes[0].last_inbound = Instant::now() - (PEER_STALE_AFTER + Duration::from_secs(1));
 

@@ -33,6 +33,9 @@ static uint32_t bt_cdc_last_heartbeat_ms;
 static uint8_t bt_cdc_last_seq;
 static uint8_t bt_cdc_last_command;
 static uint8_t bt_cdc_last_flags;
+static bool bt_cdc_logged_first_frame;
+static bool bt_cdc_logged_parsec_connected;
+static bool bt_cdc_logged_non_neutral;
 
 static void write_cdc_frame(const uint8_t *frame, size_t n) {
     if (!frame || n == 0)
@@ -168,7 +171,18 @@ static size_t handle_reboot_to_bootsel(uint8_t seq, uint8_t *reply, size_t cap) 
     return cdc_encode(CDC_RSP_REBOOT_TO_BOOTSEL, seq, NULL, 0, reply, cap);
 }
 
-static void apply_bt_state_body(const uint8_t *payload) {
+static bool bt_state_body_non_neutral(const uint8_t *payload) {
+    const uint8_t *body = &payload[1];
+    for (size_t i = 0; i < 12; i++) {
+        if (body[i] != 0)
+            return true;
+    }
+    return false;
+}
+
+static bool apply_bt_state_body(const uint8_t *payload) {
+    gamepad_state_t previous = g_gamepad_state;
+    int previous_parsec_connected = g_parsec_connected;
     const uint8_t flags = payload[0];
     const uint8_t *body = &payload[1];
     g_gamepad_state.buttons = (uint16_t)body[0] | ((uint16_t)body[1] << 8);
@@ -180,6 +194,13 @@ static void apply_bt_state_body(const uint8_t *payload) {
     g_gamepad_state.right_y = (int16_t)((uint16_t)body[10] | ((uint16_t)body[11] << 8));
     g_parsec_connected = (flags & 0x01u) ? 1 : 0;
     g_last_packet_ms = to_ms_since_boot(get_absolute_time());
+    return previous.buttons != g_gamepad_state.buttons ||
+           previous.left_trigger != g_gamepad_state.left_trigger ||
+           previous.right_trigger != g_gamepad_state.right_trigger ||
+           previous.left_x != g_gamepad_state.left_x || previous.left_y != g_gamepad_state.left_y ||
+           previous.right_x != g_gamepad_state.right_x ||
+           previous.right_y != g_gamepad_state.right_y ||
+           previous_parsec_connected != g_parsec_connected;
 }
 
 static void note_bt_cdc_frame(const cdc_frame_view_t *req) {
@@ -188,6 +209,27 @@ static void note_bt_cdc_frame(const cdc_frame_view_t *req) {
     bt_cdc_last_seq = req->seq;
     bt_cdc_last_command = req->command;
     bt_cdc_last_flags = req->payload_len > 0 ? req->payload[0] : 0;
+}
+
+static void log_bt_cdc_frame_milestones(const cdc_frame_view_t *req, bool changed) {
+    if (!bt_cdc_logged_first_frame) {
+        diag_log_printf("cdc: first Bluetooth input cmd=0x%02X seq=%u flags=0x%02X",
+                        (unsigned)req->command, (unsigned)req->seq, (unsigned)bt_cdc_last_flags);
+        bt_cdc_logged_first_frame = true;
+    }
+    if (!bt_cdc_logged_parsec_connected && (bt_cdc_last_flags & 0x01u)) {
+        diag_log_printf("cdc: Bluetooth input source connected seq=%u", (unsigned)req->seq);
+        bt_cdc_logged_parsec_connected = true;
+    }
+    if (!bt_cdc_logged_non_neutral && bt_state_body_non_neutral(req->payload)) {
+        const uint8_t *body = &req->payload[1];
+        uint16_t buttons = (uint16_t)body[0] | ((uint16_t)body[1] << 8);
+        diag_log_printf(
+            "cdc: Bluetooth input non-neutral seq=%u changed=%u buttons=0x%04X lt=%u rt=%u",
+            (unsigned)req->seq, changed ? 1u : 0u, (unsigned)buttons, (unsigned)body[2],
+            (unsigned)body[3]);
+        bt_cdc_logged_non_neutral = true;
+    }
 }
 
 static size_t handle_bt_state(const cdc_frame_view_t *req, uint8_t *reply, size_t cap) {
@@ -210,7 +252,10 @@ static size_t handle_bt_state(const cdc_frame_view_t *req, uint8_t *reply, size_
         bt_cdc_heartbeat_count++;
         bt_cdc_last_heartbeat_ms = bt_cdc_last_frame_ms;
     }
-    apply_bt_state_body(req->payload);
+    bool changed = apply_bt_state_body(req->payload);
+    log_bt_cdc_frame_milestones(req, changed);
+    if (changed)
+        bt_hid_request_send_now(true);
     return 0;
 }
 
@@ -443,6 +488,9 @@ void cdc_handlers_init(void) {
     bt_cdc_last_seq = 0;
     bt_cdc_last_command = 0;
     bt_cdc_last_flags = 0;
+    bt_cdc_logged_first_frame = false;
+    bt_cdc_logged_parsec_connected = false;
+    bt_cdc_logged_non_neutral = false;
 }
 
 bool cdc_handlers_reboot_pending(void) {

@@ -86,5 +86,6 @@ typedef struct {
 bool bt_hid_target_from_persona(run_persona_t persona, bt_hid_target_t *out);
 bool bt_hid_init(bt_hid_target_t target);
 void bt_hid_reset_stack_state(void);
+void bt_hid_request_send_now(bool force);
 void bt_hid_snapshot(bt_hid_snapshot_t *out);
 void bt_hid_task(void);

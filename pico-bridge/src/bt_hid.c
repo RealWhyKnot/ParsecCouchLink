@@ -262,6 +262,10 @@ static void request_send_now(bool force) {
     hid_device_request_can_send_now_event(bt_hid_cid);
 }
 
+void bt_hid_request_send_now(bool force) {
+    request_send_now(force);
+}
+
 static void send_pending_report(void) {
     uint8_t interrupt_report[BT_HID_INTERRUPT_REPORT_LEN];
     if (bt_hid_pending_report.len > BT_HID_MAX_WIRE_REPORT_LEN)

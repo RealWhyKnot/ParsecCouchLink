@@ -593,15 +593,11 @@ fn selected_pico_xinput_source_error(instance_ids: &[String]) -> String {
 }
 
 async fn wait_for_bluetooth_source_slots(routes: &mut [StreamRoute], quiet: bool) -> Result<()> {
-    let bluetooth_route_count = routes
-        .iter()
-        .filter(|route| route.pico.persona.is_bluetooth())
-        .count();
-    if bluetooth_route_count == 0 {
+    if !routes.iter().any(|route| route.pico.persona.is_bluetooth()) {
         return Ok(());
     }
 
-    let allow_auto_switch = bluetooth_route_count == 1;
+    let allow_auto_switch = should_auto_switch_bluetooth_source(routes);
     let deadline = Instant::now() + BLUETOOTH_SOURCE_WAIT;
     let mut announced_wait = false;
     loop {
@@ -723,6 +719,10 @@ fn bluetooth_source_slot_decision(
     BluetoothSourceSlotDecision::Missing
 }
 
+fn should_auto_switch_bluetooth_source(routes: &[StreamRoute]) -> bool {
+    routes.len() == 1 && routes[0].pico.persona.is_bluetooth()
+}
+
 #[derive(Clone, Debug)]
 struct MissingBluetoothSource {
     pico_uid: String,
@@ -822,11 +822,12 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
         print_stream_intro(&routes, socket.local_addr()?);
     }
 
+    let allow_bluetooth_source_auto_switch = should_auto_switch_bluetooth_source(&routes);
     let mut runtime: Vec<RouteRuntime> = routes
         .into_iter()
         .map(|route| {
             let bluetooth_usb = bluetooth_usb_links.remove(&route.pico.info.unique_id_short);
-            RouteRuntime::new(route, bluetooth_usb)
+            RouteRuntime::new(route, bluetooth_usb, allow_bluetooth_source_auto_switch)
         })
         .collect();
     // Bring the injected-input keyboard hook up before the first tick so a
@@ -972,6 +973,9 @@ struct RouteRuntime {
     last_key: protocol::KeyboardReport,
     last_packet_number: Option<u32>,
     source_connected: bool,
+    allow_source_auto_switch: bool,
+    source_auto_switch_count: u32,
+    last_source_auto_switch: Option<String>,
     last_send_type: &'static str,
     last_recovery_attempt: Option<Instant>,
     recovery_hint_printed: bool,
@@ -979,7 +983,11 @@ struct RouteRuntime {
 }
 
 impl RouteRuntime {
-    fn new(route: StreamRoute, bluetooth_usb: Option<cdc::PicoSetup>) -> Self {
+    fn new(
+        route: StreamRoute,
+        bluetooth_usb: Option<cdc::PicoSetup>,
+        allow_source_auto_switch: bool,
+    ) -> Self {
         Self {
             route,
             bluetooth_usb,
@@ -996,6 +1004,9 @@ impl RouteRuntime {
             last_key: protocol::KeyboardReport::default(),
             last_packet_number: None,
             source_connected: false,
+            allow_source_auto_switch,
+            source_auto_switch_count: 0,
+            last_source_auto_switch: None,
             last_send_type: "heartbeat",
             last_recovery_attempt: None,
             recovery_hint_printed: false,
@@ -1069,7 +1080,8 @@ impl RouteRuntime {
     }
 
     fn next_controller_packet(&mut self) -> Packet {
-        let source = xinput::read_slot(self.route.source_slot);
+        let source = xinput::read_slot(self.route.source_slot)
+            .or_else(|| self.try_auto_switch_bluetooth_source());
         let (state, packet_number, connected) = match source {
             Some(snapshot) => (snapshot.state, Some(snapshot.packet_number), true),
             None => (GamepadState::default(), None, false),
@@ -1089,6 +1101,40 @@ impl RouteRuntime {
         self.last_packet_number = packet_number;
         self.source_connected = connected;
         packet
+    }
+
+    fn try_auto_switch_bluetooth_source(&mut self) -> Option<xinput::SlotSnapshot> {
+        if !self.allow_source_auto_switch || !self.route.pico.persona.is_bluetooth() {
+            return None;
+        }
+        let connected = xinput::connected_slots();
+        let BluetoothSourceSlotDecision::AutoSwitch { from, to } =
+            bluetooth_source_slot_decision(self.route.source_slot, &connected, true)
+        else {
+            return None;
+        };
+        let snapshot = connected
+            .iter()
+            .find(|snapshot| snapshot.slot == to)
+            .copied()?;
+        self.route.source_slot = to;
+        self.source_auto_switch_count = self.source_auto_switch_count.saturating_add(1);
+        self.last_source_auto_switch = Some(format!(
+            "{} -> {}",
+            xinput::user_slot_label(from),
+            xinput::user_slot_label(to)
+        ));
+        self.last_packet_number = None;
+        self.source_connected = false;
+        tracing::warn!(
+            "stream: Bluetooth source auto-switched during stream pico={} from {} to {} packet={} {}",
+            self.route.pico.uid_hex(),
+            xinput::user_slot_label(from),
+            xinput::user_slot_label(to),
+            snapshot.packet_number,
+            format_xinput_snapshot(&snapshot)
+        );
+        Some(snapshot)
     }
 
     fn next_keyboard_packet(&mut self) -> Packet {
@@ -1269,16 +1315,27 @@ fn print_status(routes: &mut [RouteRuntime]) {
                     sent_delta: Some(sent_delta),
                     last_inbound_ms_ago,
                     source_connected: Some(route.source_connected),
+                    source_auto_switch_count: Some(route.source_auto_switch_count),
+                    last_source_auto_switch: route.last_source_auto_switch.clone(),
                     last_send_type: Some(route.last_send_type.to_string()),
                 }),
         );
+        let source_switch_note = match (
+            route.source_auto_switch_count,
+            route.last_source_auto_switch.as_deref(),
+        ) {
+            (0, _) => String::new(),
+            (count, Some(last)) => format!(" | source auto-switches {count} last {last}"),
+            (count, None) => format!(" | source auto-switches {count}"),
+        };
         if bluetooth_route {
             println!(
-                "  {} -> {} ({}) | {} | PC USB input +{} total {} | Bluetooth output {} | {} {}",
+                "  {} -> {} ({}) | {}{} | PC USB input +{} total {} | Bluetooth output {} | {} {}",
                 route.route.source_label(),
                 route.route.pico.uid_hex(),
                 route.route.pico.persona.label(),
                 source_state,
+                source_switch_note,
                 sent_delta,
                 route.sent_total,
                 peer_state,
@@ -1287,10 +1344,11 @@ fn print_status(routes: &mut [RouteRuntime]) {
             );
         } else {
             println!(
-                "  {} -> {} | {} | out +{} total {} | in {} ({}) | {} {}",
+                "  {} -> {} | {}{} | out +{} total {} | in {} ({}) | {} {}",
                 route.route.source_label(),
                 route.route.pico.uid_hex(),
                 source_state,
+                source_switch_note,
                 sent_delta,
                 route.sent_total,
                 route.inbound_total,

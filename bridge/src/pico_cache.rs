@@ -102,6 +102,8 @@ pub struct RouteSnapshot {
     pub sent_delta: Option<u64>,
     pub last_inbound_ms_ago: Option<u64>,
     pub source_connected: Option<bool>,
+    pub source_auto_switch_count: Option<u32>,
+    pub last_source_auto_switch: Option<String>,
     pub last_send_type: Option<String>,
 }
 
