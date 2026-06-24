@@ -70,14 +70,16 @@
 #define CDC_HELLO_FLAG_RUN_MODE_OK 0x04
 #define CDC_HELLO_FLAG_RUN_MODE_ACTIVE 0x08
 
-#define CDC_BT_STATUS_VERSION 4
+#define CDC_BT_STATUS_VERSION 5
 #define CDC_BT_STATUS_V1_VERSION 1
 #define CDC_BT_STATUS_V1_FIXED_LEN 49
 #define CDC_BT_STATUS_V2_VERSION 2
 #define CDC_BT_STATUS_V2_FIXED_LEN 99
 #define CDC_BT_STATUS_V3_VERSION 3
 #define CDC_BT_STATUS_V3_FIXED_LEN 153
-#define CDC_BT_STATUS_FIXED_LEN 213
+#define CDC_BT_STATUS_V4_VERSION 4
+#define CDC_BT_STATUS_V4_FIXED_LEN 213
+#define CDC_BT_STATUS_FIXED_LEN 245
 #define CDC_BT_STATUS_MAX_NAME 64
 
 typedef struct {
@@ -151,6 +153,16 @@ typedef struct {
     uint16_t last_incoming_l2cap_psm;
     uint16_t last_incoming_l2cap_local_cid;
     uint32_t last_incoming_l2cap_ms;
+    uint32_t bt_cdc_state_count;
+    uint32_t bt_cdc_heartbeat_count;
+    uint32_t bt_cdc_bad_length_count;
+    uint32_t bt_cdc_rejected_count;
+    uint32_t bt_cdc_last_frame_ms;
+    uint32_t bt_cdc_last_state_ms;
+    uint32_t bt_cdc_last_heartbeat_ms;
+    uint8_t bt_cdc_last_seq;
+    uint8_t bt_cdc_last_command;
+    uint8_t bt_cdc_last_flags;
     const char *local_name;
 } cdc_bt_status_view_t;
 

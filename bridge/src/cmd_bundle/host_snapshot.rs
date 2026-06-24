@@ -4,7 +4,7 @@ use tokio::process::Command;
 
 use super::manifest::ManifestHostSnapshot;
 use super::redact::redact_bundle_text;
-use crate::config;
+use crate::{config, xinput};
 
 const SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -18,6 +18,7 @@ pub(super) struct HostSnapshotFile {
 pub(super) async fn capture_host_snapshots() -> Vec<HostSnapshotFile> {
     let mut out = Vec::new();
     out.push(capture_redacted_config());
+    out.push(capture_xinput_sources());
     for (name, path, command) in windows_snapshot_commands() {
         out.push(capture_command_snapshot(name, path, command).await);
     }
@@ -69,6 +70,43 @@ fn capture_redacted_config() -> HostSnapshotFile {
         text,
         duration_ms(started.elapsed()),
     )
+}
+
+fn capture_xinput_sources() -> HostSnapshotFile {
+    let started = Instant::now();
+    let slots = xinput::connected_slots();
+    let text = format_xinput_sources_snapshot(&slots);
+    snapshot_file(
+        "xinput_sources",
+        "host/xinput-sources.txt",
+        true,
+        format!("captured in {} ms", started.elapsed().as_millis()),
+        text,
+        duration_ms(started.elapsed()),
+    )
+}
+
+fn format_xinput_sources_snapshot(slots: &[xinput::SlotSnapshot]) -> String {
+    let mut text = String::from("# Windows XInput source slots visible to CouchLink\n\n");
+    if slots.is_empty() {
+        text.push_str("No live XInput sources were visible at bundle time.\n");
+        return text;
+    }
+    for slot in slots {
+        text.push_str(&format!(
+            "{} live packet={} buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}\n",
+            xinput::user_slot_label(slot.slot),
+            slot.packet_number,
+            slot.state.buttons,
+            slot.state.left_trigger,
+            slot.state.right_trigger,
+            slot.state.left_x,
+            slot.state.left_y,
+            slot.state.right_x,
+            slot.state.right_y
+        ));
+    }
+    text
 }
 
 async fn capture_command_snapshot(
@@ -221,4 +259,38 @@ fn windows_snapshot_commands() -> Vec<(&'static str, &'static str, &'static str)
             "Get-PSDrive -PSProvider FileSystem | ForEach-Object { $info = Join-Path $_.Root 'INFO_UF2.TXT'; if (Test-Path $info) { Write-Output \"## $($_.Root)\"; Get-Content $info -TotalCount 80; Write-Output '' } }",
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol;
+
+    #[test]
+    fn xinput_sources_snapshot_lists_live_slots() {
+        let text = format_xinput_sources_snapshot(&[xinput::SlotSnapshot {
+            slot: 1,
+            state: protocol::GamepadState {
+                buttons: 0x1234,
+                left_trigger: 5,
+                right_trigger: 6,
+                left_x: -7,
+                left_y: 8,
+                right_x: -9,
+                right_y: 10,
+            },
+            packet_number: 42,
+        }]);
+
+        assert!(text.contains("Controller 2 live packet=42"));
+        assert!(text.contains("buttons=0x1234"));
+        assert!(text.contains("lt=5 rt=6"));
+    }
+
+    #[test]
+    fn xinput_sources_snapshot_names_empty_capture() {
+        let text = format_xinput_sources_snapshot(&[]);
+
+        assert!(text.contains("No live XInput sources"));
+    }
 }

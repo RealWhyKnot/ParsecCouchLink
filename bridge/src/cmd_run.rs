@@ -7,14 +7,14 @@ mod bluetooth;
 mod debug_harvest;
 mod routing;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{interval, sleep, MissedTickBehavior};
 
 use bluetooth::{
     bluetooth_cdc_frame_from_packet, bluetooth_expected_name, format_bluetooth_peer_state,
@@ -29,7 +29,7 @@ use debug_harvest::{
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, Persona, FLAG_PARSEC_CONNECTED};
 use crate::{
-    cdc, cmd_flash, config, discovery, journal, keyboard, net, pico_cache, support, xinput,
+    cdc, cmd_flash, cmd_lab, config, discovery, journal, keyboard, net, pico_cache, support, xinput,
 };
 
 pub use bluetooth::print_bluetooth_pairing_help;
@@ -48,6 +48,8 @@ const STREAM_TICK: Duration = Duration::from_millis(16);
 const PEER_STALE_AFTER: Duration = Duration::from_secs(5);
 const PEER_RECOVER_EVERY: Duration = Duration::from_secs(10);
 const PEER_RECOVERY_DISCOVER: Duration = Duration::from_secs(2);
+const BLUETOOTH_SOURCE_WAIT: Duration = Duration::from_secs(10);
+const BLUETOOTH_SOURCE_POLL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug)]
 pub struct RunOptions {
@@ -536,10 +538,246 @@ async fn add_manual_ip_targets(
     Ok(picos)
 }
 
+async fn prepare_bluetooth_routes(
+    mut routes: Vec<StreamRoute>,
+    quiet: bool,
+) -> Result<Vec<StreamRoute>> {
+    if !routes.iter().any(|route| route.pico.persona.is_bluetooth()) {
+        return Ok(routes);
+    }
+    verify_bluetooth_picos_are_not_xinput_sources(&routes, quiet)?;
+    wait_for_bluetooth_source_slots(&mut routes, quiet).await?;
+    Ok(routes)
+}
+
+fn verify_bluetooth_picos_are_not_xinput_sources(
+    routes: &[StreamRoute],
+    quiet: bool,
+) -> Result<()> {
+    let uids: BTreeSet<u32> = routes
+        .iter()
+        .filter(|route| route.pico.persona.is_bluetooth())
+        .map(|route| route.pico.info.unique_id_short)
+        .collect();
+    if uids.is_empty() {
+        return Ok(());
+    }
+
+    match cmd_lab::connected_xinput_instance_ids_for_uids(&uids) {
+        Ok(instance_ids) if instance_ids.is_empty() => Ok(()),
+        Ok(instance_ids) => bail!("{}", selected_pico_xinput_source_error(&instance_ids)),
+        Err(e) => {
+            tracing::warn!(
+                "stream: could not verify selected Bluetooth Pico XInput removal: {e:#}"
+            );
+            if !quiet {
+                println!(
+                    "Note: could not verify whether the selected Pico is still exposed as a Windows XInput source: {e:#}"
+                );
+                println!("  Choose the Parsec or local controller source, not the selected Pico.");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn selected_pico_xinput_source_error(instance_ids: &[String]) -> String {
+    let details = if instance_ids.is_empty() {
+        "no instance ID captured".to_string()
+    } else {
+        instance_ids.join(", ")
+    };
+    format!(
+        "the selected Bluetooth Pico is still exposed as a local Windows XInput device ({details}). Unplug/replug the Pico or wait for Windows to remove the old controller, then run the Bluetooth command again."
+    )
+}
+
+async fn wait_for_bluetooth_source_slots(routes: &mut [StreamRoute], quiet: bool) -> Result<()> {
+    let bluetooth_route_count = routes
+        .iter()
+        .filter(|route| route.pico.persona.is_bluetooth())
+        .count();
+    if bluetooth_route_count == 0 {
+        return Ok(());
+    }
+
+    let allow_auto_switch = bluetooth_route_count == 1;
+    let deadline = Instant::now() + BLUETOOTH_SOURCE_WAIT;
+    let mut announced_wait = false;
+    loop {
+        let connected = xinput::connected_slots();
+        let live_slots: Vec<u32> = connected.iter().map(|slot| slot.slot).collect();
+        let mut missing = Vec::new();
+        let mut auto_switched = Vec::new();
+
+        for route in routes
+            .iter_mut()
+            .filter(|route| route.pico.persona.is_bluetooth())
+        {
+            match bluetooth_source_slot_decision(route.source_slot, &connected, allow_auto_switch) {
+                BluetoothSourceSlotDecision::Ready => {}
+                BluetoothSourceSlotDecision::AutoSwitch { from, to } => {
+                    route.source_slot = to;
+                    auto_switched.push((route.pico.uid_hex(), from, to));
+                }
+                BluetoothSourceSlotDecision::Missing => {
+                    missing.push(MissingBluetoothSource {
+                        pico_uid: route.pico.uid_hex(),
+                        selected_slot: route.source_slot,
+                        live_slots: live_slots.clone(),
+                    });
+                }
+            }
+        }
+
+        for (uid, from, to) in auto_switched {
+            tracing::info!(
+                "stream: Bluetooth source auto-switched pico={} from {} to {}",
+                uid,
+                xinput::user_slot_label(from),
+                xinput::user_slot_label(to)
+            );
+            if !quiet {
+                println!(
+                    "Bluetooth source auto-selected: {} was not live, using the only live source {} for Pico {}.",
+                    xinput::user_slot_label(from),
+                    xinput::user_slot_label(to),
+                    uid
+                );
+            }
+        }
+
+        if missing.is_empty() {
+            for route in routes
+                .iter()
+                .filter(|route| route.pico.persona.is_bluetooth())
+            {
+                if let Some(snapshot) = connected
+                    .iter()
+                    .find(|snapshot| snapshot.slot == route.source_slot)
+                {
+                    tracing::info!(
+                        "stream: Bluetooth source ready pico={} source={} packet={} {}",
+                        route.pico.uid_hex(),
+                        route.source_label(),
+                        snapshot.packet_number,
+                        format_xinput_snapshot(snapshot)
+                    );
+                    if !quiet {
+                        println!(
+                            "Bluetooth source ready: {} feeds Pico {} ({}).",
+                            route.source_label(),
+                            route.pico.uid_hex(),
+                            format_xinput_snapshot(snapshot)
+                        );
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            bail!("{}", bluetooth_source_preflight_error(&missing));
+        }
+
+        if !announced_wait && !quiet {
+            println!(
+                "Waiting up to {}s for the Bluetooth source controller to appear...",
+                BLUETOOTH_SOURCE_WAIT.as_secs()
+            );
+            for item in &missing {
+                println!(
+                    "  {} for Pico {} is not live. Live XInput sources: {}.",
+                    xinput::user_slot_label(item.selected_slot),
+                    item.pico_uid,
+                    format_live_slot_labels(&item.live_slots)
+                );
+            }
+            announced_wait = true;
+        }
+        sleep(BLUETOOTH_SOURCE_POLL).await;
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BluetoothSourceSlotDecision {
+    Ready,
+    AutoSwitch { from: u32, to: u32 },
+    Missing,
+}
+
+fn bluetooth_source_slot_decision(
+    selected_slot: u32,
+    connected: &[xinput::SlotSnapshot],
+    allow_auto_switch: bool,
+) -> BluetoothSourceSlotDecision {
+    if connected.iter().any(|slot| slot.slot == selected_slot) {
+        return BluetoothSourceSlotDecision::Ready;
+    }
+    if allow_auto_switch && connected.len() == 1 {
+        return BluetoothSourceSlotDecision::AutoSwitch {
+            from: selected_slot,
+            to: connected[0].slot,
+        };
+    }
+    BluetoothSourceSlotDecision::Missing
+}
+
+#[derive(Clone, Debug)]
+struct MissingBluetoothSource {
+    pico_uid: String,
+    selected_slot: u32,
+    live_slots: Vec<u32>,
+}
+
+fn bluetooth_source_preflight_error(missing: &[MissingBluetoothSource]) -> String {
+    let details = missing
+        .iter()
+        .map(|item| {
+            format!(
+                "{} for Pico {} is not live; live XInput sources: {}",
+                xinput::user_slot_label(item.selected_slot),
+                item.pico_uid,
+                format_live_slot_labels(&item.live_slots)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ");
+    format!(
+        "Bluetooth mode needs a live Windows source controller before streaming. {details}. Connect the Parsec or local controller first, or choose a live source with `couchlink run --route N=UID`."
+    )
+}
+
+fn format_live_slot_labels(slots: &[u32]) -> String {
+    if slots.is_empty() {
+        return "none".to_string();
+    }
+    slots
+        .iter()
+        .map(|slot| xinput::user_slot_label(*slot))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn format_xinput_snapshot(snapshot: &xinput::SlotSnapshot) -> String {
+    format!(
+        "buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
+        snapshot.state.buttons,
+        snapshot.state.left_trigger,
+        snapshot.state.right_trigger,
+        snapshot.state.left_x,
+        snapshot.state.left_y,
+        snapshot.state.right_x,
+        snapshot.state.right_y
+    )
+}
+
 pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> Result<()> {
     if routes.is_empty() {
         bail!("no routes selected");
     }
+    validate_routes(&routes)?;
+    let routes = prepare_bluetooth_routes(routes, options.quiet).await?;
     validate_routes(&routes)?;
     let mut bluetooth_usb_links = open_bluetooth_usb_links(&routes, options.quiet)?;
     if options.save_routes {
@@ -1073,6 +1311,17 @@ fn print_status(routes: &mut [RouteRuntime]) {
         } else if bluetooth_route
             && route.sent_total > 180
             && !route.bluetooth_pairing_hint_printed
+            && !route.source_connected
+        {
+            println!(
+                "    hint: the PC source controller is not live. Connect the Parsec or local controller feeding {}, or stop and choose a live source.",
+                route.route.source_label()
+            );
+            route.bluetooth_pairing_hint_printed = true;
+        } else if bluetooth_route
+            && route.sent_total > 180
+            && !route.bluetooth_pairing_hint_printed
+            && route.source_connected
             && should_print_bluetooth_pairing_hint(route.bluetooth_status.as_ref())
         {
             let expected_name = bluetooth_expected_name(route.route.pico.persona);

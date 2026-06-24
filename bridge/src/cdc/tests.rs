@@ -107,8 +107,18 @@ fn bt_status_payload_decodes_wire_shape() {
     payload[204..206].copy_from_slice(&0x0013u16.to_le_bytes());
     payload[206..208].copy_from_slice(&0x0041u16.to_le_bytes());
     payload[208..212].copy_from_slice(&0x5060_7080u32.to_le_bytes());
-    payload[212] = name.len() as u8;
-    payload[213..].copy_from_slice(name);
+    payload[212..216].copy_from_slice(&37u32.to_le_bytes());
+    payload[216..220].copy_from_slice(&38u32.to_le_bytes());
+    payload[220..224].copy_from_slice(&39u32.to_le_bytes());
+    payload[224..228].copy_from_slice(&40u32.to_le_bytes());
+    payload[228..232].copy_from_slice(&0x6070_8090u32.to_le_bytes());
+    payload[232..236].copy_from_slice(&0x7080_90A0u32.to_le_bytes());
+    payload[236..240].copy_from_slice(&0x8090_A0B0u32.to_le_bytes());
+    payload[240] = 0x51;
+    payload[241] = CMD_BT_STATE;
+    payload[242] = 1;
+    payload[244] = name.len() as u8;
+    payload[245..].copy_from_slice(name);
 
     let status = decode_bt_status_payload(&payload).unwrap();
 
@@ -190,8 +200,48 @@ fn bt_status_payload_decodes_wire_shape() {
     assert_eq!(status.last_incoming_l2cap_local_cid, 0x0041);
     assert_eq!(status.last_incoming_l2cap_ms, 0x50607080);
     assert!(status.incoming_hid_l2cap_seen());
+    assert_eq!(status.bt_cdc_state_count, 37);
+    assert_eq!(status.bt_cdc_heartbeat_count, 38);
+    assert_eq!(status.bt_cdc_bad_length_count, 39);
+    assert_eq!(status.bt_cdc_rejected_count, 40);
+    assert_eq!(status.bt_cdc_last_frame_ms, 0x60708090);
+    assert_eq!(status.bt_cdc_last_state_ms, 0x708090A0);
+    assert_eq!(status.bt_cdc_last_heartbeat_ms, 0x8090A0B0);
+    assert_eq!(status.bt_cdc_last_seq, 0x51);
+    assert_eq!(status.bt_cdc_last_command, CMD_BT_STATE);
+    assert_eq!(status.bt_cdc_last_flags, 1);
+    assert!(status.bt_cdc_input_seen());
     assert!(status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "CouchLink BT HID");
+}
+
+#[test]
+fn bt_status_payload_decodes_v4_wire_shape() {
+    let name = b"Reconnect BT";
+    let mut payload = vec![0u8; BT_STATUS_V4_FIXED_LEN + name.len()];
+    payload[0] = BT_STATUS_V4_VERSION;
+    payload[1] = BT_STATUS_FLAG_STARTED;
+    payload[2] = 1;
+    payload[152] = 0x03;
+    payload[156..160].copy_from_slice(&2u32.to_le_bytes());
+    payload[180..184].copy_from_slice(&3u32.to_le_bytes());
+    payload[192..196].copy_from_slice(&4u32.to_le_bytes());
+    payload[212] = name.len() as u8;
+    payload[213..].copy_from_slice(name);
+
+    let status = decode_bt_status_payload(&payload).unwrap();
+
+    assert_eq!(status.status_version, BT_STATUS_V4_VERSION);
+    assert_eq!(status.decoded_status_version, BT_STATUS_V4_VERSION);
+    assert!(status.started());
+    assert_eq!(status.reconnect_state, 0x03);
+    assert_eq!(status.reconnect_schedule_count, 2);
+    assert_eq!(status.connection_complete_count, 3);
+    assert_eq!(status.incoming_l2cap_connection_count, 4);
+    assert_eq!(status.bt_cdc_state_count, 0);
+    assert_eq!(status.bt_cdc_heartbeat_count, 0);
+    assert!(!status.bt_cdc_input_seen());
+    assert_eq!(status.local_name, "Reconnect BT");
 }
 
 #[test]
@@ -222,6 +272,7 @@ fn bt_status_payload_decodes_v3_wire_shape() {
     assert_eq!(status.reconnect_attempt_count, 0);
     assert_eq!(status.connection_complete_count, 0);
     assert_eq!(status.incoming_l2cap_connection_count, 0);
+    assert_eq!(status.bt_cdc_state_count, 0);
     assert_eq!(status.local_name, "Security BT");
 }
 
@@ -248,6 +299,7 @@ fn bt_status_payload_decodes_v2_wire_shape() {
     assert_eq!(status.reconnect_attempt_count, 0);
     assert_eq!(status.connection_complete_count, 0);
     assert_eq!(status.incoming_l2cap_connection_count, 0);
+    assert_eq!(status.bt_cdc_state_count, 0);
     assert!(!status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "Previous BT");
 }
@@ -278,6 +330,7 @@ fn bt_status_payload_decodes_v1_wire_shape() {
     assert_eq!(status.reconnect_attempt_count, 0);
     assert_eq!(status.connection_complete_count, 0);
     assert_eq!(status.incoming_l2cap_connection_count, 0);
+    assert_eq!(status.bt_cdc_state_count, 0);
     assert!(!status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "Legacy BT");
 }
@@ -290,27 +343,33 @@ fn bt_status_payload_rejects_bad_shape() {
     assert!(decode_bt_status_payload(&bad_version).is_err());
     let mut bad_name = vec![0u8; BT_STATUS_FIXED_LEN];
     bad_name[0] = BT_STATUS_VERSION;
-    bad_name[212] = 1;
+    bad_name[BT_STATUS_FIXED_LEN - 1] = 1;
     assert!(decode_bt_status_payload(&bad_name).is_err());
 }
 
 #[test]
 fn bt_status_payload_decodes_future_version_prefix() {
-    let mut payload = vec![0u8; BT_STATUS_V3_FIXED_LEN + 8];
+    let mut payload = vec![0u8; BT_STATUS_FIXED_LEN + 8];
     payload[0] = BT_STATUS_VERSION + 1;
     payload[1] = BT_STATUS_FLAG_STARTED;
     payload[2] = 1;
     payload[106..110].copy_from_slice(&2u32.to_le_bytes());
     payload[146] = 0x16;
+    payload[212..216].copy_from_slice(&5u32.to_le_bytes());
+    payload[216..220].copy_from_slice(&6u32.to_le_bytes());
+    payload[241] = CMD_BT_HEARTBEAT;
 
     let status = decode_bt_status_payload(&payload).unwrap();
 
     assert_eq!(status.status_version, BT_STATUS_VERSION + 1);
-    assert_eq!(status.decoded_status_version, BT_STATUS_V3_VERSION);
+    assert_eq!(status.decoded_status_version, BT_STATUS_VERSION);
     assert!(status.newer_status_version());
     assert!(status.started());
     assert_eq!(status.user_confirmation_request_count, 2);
     assert_eq!(status.last_disconnection_reason, 0x16);
     assert_eq!(status.reconnect_attempt_count, 0);
+    assert_eq!(status.bt_cdc_state_count, 5);
+    assert_eq!(status.bt_cdc_heartbeat_count, 6);
+    assert_eq!(status.bt_cdc_last_command, CMD_BT_HEARTBEAT);
     assert_eq!(status.local_name, "");
 }

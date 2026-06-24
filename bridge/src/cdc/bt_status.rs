@@ -3,7 +3,8 @@ use anyhow::{bail, Result};
 use super::{
     BT_STATUS_FIXED_LEN, BT_STATUS_FLAG_CONNECTED, BT_STATUS_FLAG_SEND_REQUESTED,
     BT_STATUS_FLAG_STARTED, BT_STATUS_V1_FIXED_LEN, BT_STATUS_V1_VERSION, BT_STATUS_V2_FIXED_LEN,
-    BT_STATUS_V2_VERSION, BT_STATUS_V3_FIXED_LEN, BT_STATUS_V3_VERSION, BT_STATUS_VERSION,
+    BT_STATUS_V2_VERSION, BT_STATUS_V3_FIXED_LEN, BT_STATUS_V3_VERSION, BT_STATUS_V4_FIXED_LEN,
+    BT_STATUS_V4_VERSION, BT_STATUS_VERSION,
 };
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BtStatus {
@@ -79,6 +80,16 @@ pub struct BtStatus {
     pub last_incoming_l2cap_psm: u16,
     pub last_incoming_l2cap_local_cid: u16,
     pub last_incoming_l2cap_ms: u32,
+    pub bt_cdc_state_count: u32,
+    pub bt_cdc_heartbeat_count: u32,
+    pub bt_cdc_bad_length_count: u32,
+    pub bt_cdc_rejected_count: u32,
+    pub bt_cdc_last_frame_ms: u32,
+    pub bt_cdc_last_state_ms: u32,
+    pub bt_cdc_last_heartbeat_ms: u32,
+    pub bt_cdc_last_seq: u8,
+    pub bt_cdc_last_command: u8,
+    pub bt_cdc_last_flags: u8,
     pub local_name: String,
 }
 
@@ -143,6 +154,10 @@ impl BtStatus {
             || self.incoming_l2cap_hid_interrupt_count > 0
             || self.last_incoming_l2cap_psm != 0
     }
+
+    pub fn bt_cdc_input_seen(&self) -> bool {
+        self.bt_cdc_state_count > 0 || self.bt_cdc_heartbeat_count > 0
+    }
 }
 
 fn read_u16_le(payload: &[u8], offset: usize) -> u16 {
@@ -167,14 +182,16 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
         BT_STATUS_V1_VERSION => BT_STATUS_V1_FIXED_LEN,
         BT_STATUS_V2_VERSION => BT_STATUS_V2_FIXED_LEN,
         BT_STATUS_V3_VERSION => BT_STATUS_V3_FIXED_LEN,
+        BT_STATUS_V4_VERSION => BT_STATUS_V4_FIXED_LEN,
         BT_STATUS_VERSION => BT_STATUS_FIXED_LEN,
-        newer if newer > BT_STATUS_VERSION => BT_STATUS_V3_FIXED_LEN,
+        newer if newer > BT_STATUS_VERSION => BT_STATUS_FIXED_LEN,
         _ => bail!(
-            "BT_STATUS version mismatch (got {}, want {}, {}, {}, or {})",
+            "BT_STATUS version mismatch (got {}, want {}, {}, {}, {}, or {})",
             payload[0],
             BT_STATUS_V1_VERSION,
             BT_STATUS_V2_VERSION,
             BT_STATUS_V3_VERSION,
+            BT_STATUS_V4_VERSION,
             BT_STATUS_VERSION
         ),
     };
@@ -186,6 +203,7 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
         BT_STATUS_V1_VERSION => BT_STATUS_V1_FIXED_LEN - 1,
         BT_STATUS_V2_VERSION => BT_STATUS_V2_FIXED_LEN - 1,
         BT_STATUS_V3_VERSION => BT_STATUS_V3_FIXED_LEN - 1,
+        BT_STATUS_V4_VERSION => BT_STATUS_V4_FIXED_LEN - 1,
         BT_STATUS_VERSION => BT_STATUS_FIXED_LEN - 1,
         _ => payload.len(),
     };
@@ -208,13 +226,17 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
     }
     let has_v2 = version == BT_STATUS_V2_VERSION
         || version == BT_STATUS_V3_VERSION
+        || version == BT_STATUS_V4_VERSION
         || version >= BT_STATUS_VERSION;
-    let has_v3 = version == BT_STATUS_V3_VERSION || version >= BT_STATUS_VERSION;
-    let has_v4 = version == BT_STATUS_VERSION;
+    let has_v3 = version == BT_STATUS_V3_VERSION
+        || version == BT_STATUS_V4_VERSION
+        || version >= BT_STATUS_VERSION;
+    let has_v4 = version == BT_STATUS_V4_VERSION || version >= BT_STATUS_VERSION;
+    let has_v5 = version >= BT_STATUS_VERSION;
     Ok(BtStatus {
         status_version: version,
         decoded_status_version: if version > BT_STATUS_VERSION {
-            BT_STATUS_V3_VERSION
+            BT_STATUS_VERSION
         } else {
             version
         },
@@ -288,6 +310,16 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
         last_incoming_l2cap_psm: if has_v4 { read_u16_le(payload, 204) } else { 0 },
         last_incoming_l2cap_local_cid: if has_v4 { read_u16_le(payload, 206) } else { 0 },
         last_incoming_l2cap_ms: if has_v4 { read_u32_le(payload, 208) } else { 0 },
+        bt_cdc_state_count: if has_v5 { read_u32_le(payload, 212) } else { 0 },
+        bt_cdc_heartbeat_count: if has_v5 { read_u32_le(payload, 216) } else { 0 },
+        bt_cdc_bad_length_count: if has_v5 { read_u32_le(payload, 220) } else { 0 },
+        bt_cdc_rejected_count: if has_v5 { read_u32_le(payload, 224) } else { 0 },
+        bt_cdc_last_frame_ms: if has_v5 { read_u32_le(payload, 228) } else { 0 },
+        bt_cdc_last_state_ms: if has_v5 { read_u32_le(payload, 232) } else { 0 },
+        bt_cdc_last_heartbeat_ms: if has_v5 { read_u32_le(payload, 236) } else { 0 },
+        bt_cdc_last_seq: if has_v5 { payload[240] } else { 0 },
+        bt_cdc_last_command: if has_v5 { payload[241] } else { 0 },
+        bt_cdc_last_flags: if has_v5 { payload[242] } else { 0 },
         local_name: String::from_utf8_lossy(&payload[name_start..need]).into_owned(),
     })
 }

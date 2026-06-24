@@ -396,6 +396,8 @@ fn bluetooth_report_captures_usb_input_and_bt_send_state() {
     assert!(report.bt_started);
     assert!(report.bt_connected);
     assert_eq!(report.bt_report_send_count, 3);
+    assert!(report.pc_input_observed);
+    assert_eq!(report.pc_input_evidence, "pico_state_input");
     assert_eq!(report.bt_receiver_contact, "hid_receiver_contact_seen");
     assert!(!report.bt_status_cdc_captured);
     assert_eq!(report.usb_mounted, Some(true));
@@ -406,6 +408,9 @@ fn bluetooth_report_captures_usb_input_and_bt_send_state() {
     assert!(text.contains("expected_connection=pc_usb_input_bluetooth_output"));
     assert!(text.contains("usb_transport=cdc_framed_controller_state"));
     assert!(text.contains("bt_receiver_contact=hid_receiver_contact_seen"));
+    assert!(text.contains("- pc_input_observed=true"));
+    assert!(text.contains("- pc_input_evidence=pico_state_input"));
+    assert!(text.contains("bt_cdc_input="));
     assert!(text.contains("bt_control_plane="));
     assert!(text.contains("- get_report_count=not_captured"));
     assert!(text.contains("- bt_report_send_count=3"));
@@ -418,6 +423,8 @@ fn bluetooth_report_captures_usb_input_and_bt_send_state() {
     assert_eq!(value["bt_connected"], true);
     assert_eq!(value["bt_status_cdc_captured"], false);
     assert_eq!(value["bt_receiver_contact"], "hid_receiver_contact_seen");
+    assert_eq!(value["pc_input_observed"], true);
+    assert_eq!(value["pc_input_evidence"], "pico_state_input");
     assert_eq!(value["usb_transport"], "cdc_framed_controller_state");
 }
 
@@ -452,6 +459,14 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     status.user_confirmation_response_count = 2;
     status.authentication_complete_count = 1;
     status.last_security_event_ms = 700;
+    status.bt_cdc_state_count = 4;
+    status.bt_cdc_heartbeat_count = 12;
+    status.bt_cdc_last_frame_ms = 950;
+    status.bt_cdc_last_state_ms = 940;
+    status.bt_cdc_last_heartbeat_ms = 950;
+    status.bt_cdc_last_seq = 22;
+    status.bt_cdc_last_command = cdc::CMD_BT_HEARTBEAT;
+    status.bt_cdc_last_flags = protocol::FLAG_PARSEC_CONNECTED;
 
     let report = build_bluetooth_report(
         "02E22DA9",
@@ -470,6 +485,8 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     assert_eq!(report.bt_receiver_contact, "hid_receiver_contact_seen");
     assert!(report.bt_connected);
     assert_eq!(report.bt_report_send_count, 5);
+    assert!(report.pc_input_observed);
+    assert_eq!(report.pc_input_evidence, "bt_status_cdc_input");
     assert_eq!(
         report.bt_reported_local_name.as_deref(),
         Some("Xbox Wireless Controller")
@@ -479,6 +496,8 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     assert_eq!(report.bt_out_report_count, Some(1));
     assert_eq!(report.bt_security_event_source, "cdc_status");
     assert_eq!(report.bt_user_confirmation_request_count, Some(2));
+    assert_eq!(report.bt_cdc_state_count, Some(4));
+    assert_eq!(report.bt_cdc_heartbeat_count, Some(12));
 
     let text = format_bluetooth_report_text(&report);
     assert!(text.contains("bt_status_cdc_captured=true"));
@@ -493,6 +512,10 @@ fn bluetooth_report_uses_cdc_status_for_receiver_control_plane() {
     assert!(text.contains("bt_security="));
     assert!(text.contains("- security_event_source=cdc_status"));
     assert!(text.contains("- user_confirmation_request_count=2"));
+    assert!(text.contains("bt_cdc_input="));
+    assert!(text.contains("- state_count=4"));
+    assert!(text.contains("- heartbeat_count=12"));
+    assert!(text.contains("- last_command=0x0D"));
 }
 
 #[test]
@@ -681,6 +704,50 @@ fn bluetooth_report_statuses_are_actionable() {
         .next_steps
         .iter()
         .any(|step| step.contains("source controller")));
+
+    let mut no_pc_input_state = bluetooth_pico_state(
+        protocol::BT_HID_STATUS_STARTED | protocol::BT_HID_STATUS_CONNECTED,
+        42,
+    );
+    no_pc_input_state.last_bridge_packet_ms = 0;
+    no_pc_input_state.xinput_in_queued_count = 0;
+    no_pc_input_state.xinput_in_sent_count = 0;
+    no_pc_input_state.activity_flags = 0;
+    no_pc_input_state.last_in_queued_ms = 0;
+    no_pc_input_state.last_in_sent_ms = 0;
+    let mut no_pc_input_usb = bluetooth_usb_diag();
+    no_pc_input_usb.last_bridge_packet_ms = 0;
+    no_pc_input_usb.xinput_in_queued_count = 0;
+    no_pc_input_usb.xinput_in_sent_count = 0;
+    no_pc_input_usb.activity_flags = 0;
+    no_pc_input_usb.last_in_queued_ms = 0;
+    no_pc_input_usb.last_in_sent_ms = 0;
+    let no_pc_input = build_bluetooth_report(
+        "02E22DA9",
+        "picos/02E22DA9",
+        &target,
+        bt_report_input(
+            Some(&no_pc_input_state),
+            Some(&bluetooth_cdc_status(
+                cdc::BT_STATUS_FLAG_STARTED | cdc::BT_STATUS_FLAG_CONNECTED,
+                42,
+            )),
+            Some(&no_pc_input_usb),
+            "bt_hid: connected\n",
+        ),
+    );
+    assert_eq!(no_pc_input.status, "receiver_reports_sent_no_pc_input");
+    assert!(no_pc_input.warning);
+    assert!(!no_pc_input.pc_input_observed);
+    assert_eq!(no_pc_input.pc_input_evidence, "none");
+    assert!(no_pc_input
+        .next_steps
+        .iter()
+        .any(|step| step.contains("no PC controller input frames")));
+    let text = format_bluetooth_report_text(&no_pc_input);
+    assert!(text.contains("status=receiver_reports_sent_no_pc_input"));
+    assert!(text.contains("- pc_input_observed=false"));
+    assert!(text.contains("- state_count=0"));
 }
 
 #[test]
@@ -1196,6 +1263,16 @@ fn bluetooth_cdc_status(flags: u8, report_send_count: u32) -> cdc::BtStatus {
         last_incoming_l2cap_psm: 0,
         last_incoming_l2cap_local_cid: 0,
         last_incoming_l2cap_ms: 0,
+        bt_cdc_state_count: 0,
+        bt_cdc_heartbeat_count: 0,
+        bt_cdc_bad_length_count: 0,
+        bt_cdc_rejected_count: 0,
+        bt_cdc_last_frame_ms: 0,
+        bt_cdc_last_state_ms: 0,
+        bt_cdc_last_heartbeat_ms: 0,
+        bt_cdc_last_seq: 0,
+        bt_cdc_last_command: 0,
+        bt_cdc_last_flags: 0,
         local_name: String::new(),
     }
 }

@@ -23,6 +23,16 @@ static uint8_t log_payload[4 + DIAG_LOG_RING_SIZE];
 static size_t rx_len;
 static bool reboot_pending;
 static bool bootsel_pending;
+static uint32_t bt_cdc_state_count;
+static uint32_t bt_cdc_heartbeat_count;
+static uint32_t bt_cdc_bad_length_count;
+static uint32_t bt_cdc_rejected_count;
+static uint32_t bt_cdc_last_frame_ms;
+static uint32_t bt_cdc_last_state_ms;
+static uint32_t bt_cdc_last_heartbeat_ms;
+static uint8_t bt_cdc_last_seq;
+static uint8_t bt_cdc_last_command;
+static uint8_t bt_cdc_last_flags;
 
 static void write_cdc_frame(const uint8_t *frame, size_t n) {
     if (!frame || n == 0)
@@ -172,15 +182,33 @@ static void apply_bt_state_body(const uint8_t *payload) {
     g_last_packet_ms = to_ms_since_boot(get_absolute_time());
 }
 
+static void note_bt_cdc_frame(const cdc_frame_view_t *req) {
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    bt_cdc_last_frame_ms = now;
+    bt_cdc_last_seq = req->seq;
+    bt_cdc_last_command = req->command;
+    bt_cdc_last_flags = req->payload_len > 0 ? req->payload[0] : 0;
+}
+
 static size_t handle_bt_state(const cdc_frame_view_t *req, uint8_t *reply, size_t cap) {
+    note_bt_cdc_frame(req);
     if (boot_mode_current() != BOOT_MODE_RUN ||
         !boot_mode_persona_uses_bluetooth(boot_mode_run_persona())) {
+        bt_cdc_rejected_count++;
         uint8_t err[2] = {CDC_ERR_INTERNAL, 1};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
     if (req->payload_len != 13) {
+        bt_cdc_bad_length_count++;
         uint8_t err[2] = {CDC_ERR_BAD_LENGTH, (uint8_t)req->payload_len};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    if (req->command == CDC_CMD_BT_STATE) {
+        bt_cdc_state_count++;
+        bt_cdc_last_state_ms = bt_cdc_last_frame_ms;
+    } else {
+        bt_cdc_heartbeat_count++;
+        bt_cdc_last_heartbeat_ms = bt_cdc_last_frame_ms;
     }
     apply_bt_state_body(req->payload);
     return 0;
@@ -270,6 +298,16 @@ static size_t handle_bt_get_status(const cdc_frame_view_t *req, uint8_t *reply, 
         .last_incoming_l2cap_psm = snap.last_incoming_l2cap_psm,
         .last_incoming_l2cap_local_cid = snap.last_incoming_l2cap_local_cid,
         .last_incoming_l2cap_ms = snap.last_incoming_l2cap_ms,
+        .bt_cdc_state_count = bt_cdc_state_count,
+        .bt_cdc_heartbeat_count = bt_cdc_heartbeat_count,
+        .bt_cdc_bad_length_count = bt_cdc_bad_length_count,
+        .bt_cdc_rejected_count = bt_cdc_rejected_count,
+        .bt_cdc_last_frame_ms = bt_cdc_last_frame_ms,
+        .bt_cdc_last_state_ms = bt_cdc_last_state_ms,
+        .bt_cdc_last_heartbeat_ms = bt_cdc_last_heartbeat_ms,
+        .bt_cdc_last_seq = bt_cdc_last_seq,
+        .bt_cdc_last_command = bt_cdc_last_command,
+        .bt_cdc_last_flags = bt_cdc_last_flags,
         .local_name = bt_hid_local_name((bt_hid_target_t)snap.target),
     };
     uint8_t payload[CDC_BT_STATUS_FIXED_LEN + CDC_BT_STATUS_MAX_NAME];
@@ -395,6 +433,16 @@ void cdc_handlers_init(void) {
     rx_len = 0;
     reboot_pending = false;
     bootsel_pending = false;
+    bt_cdc_state_count = 0;
+    bt_cdc_heartbeat_count = 0;
+    bt_cdc_bad_length_count = 0;
+    bt_cdc_rejected_count = 0;
+    bt_cdc_last_frame_ms = 0;
+    bt_cdc_last_state_ms = 0;
+    bt_cdc_last_heartbeat_ms = 0;
+    bt_cdc_last_seq = 0;
+    bt_cdc_last_command = 0;
+    bt_cdc_last_flags = 0;
 }
 
 bool cdc_handlers_reboot_pending(void) {

@@ -153,6 +153,55 @@ fn validate_routes_rejects_same_pico_twice() {
 }
 
 #[test]
+fn bluetooth_source_slot_decision_keeps_live_selected_source() {
+    let connected = vec![xinput_slot(1), xinput_slot(2)];
+
+    assert_eq!(
+        bluetooth_source_slot_decision(1, &connected, true),
+        BluetoothSourceSlotDecision::Ready
+    );
+}
+
+#[test]
+fn bluetooth_source_slot_decision_auto_switches_single_dead_saved_source() {
+    let connected = vec![xinput_slot(0)];
+
+    assert_eq!(
+        bluetooth_source_slot_decision(1, &connected, true),
+        BluetoothSourceSlotDecision::AutoSwitch { from: 1, to: 0 }
+    );
+}
+
+#[test]
+fn bluetooth_source_slot_decision_refuses_ambiguous_or_absent_source() {
+    assert_eq!(
+        bluetooth_source_slot_decision(1, &[xinput_slot(0), xinput_slot(2)], true),
+        BluetoothSourceSlotDecision::Missing
+    );
+    assert_eq!(
+        bluetooth_source_slot_decision(1, &[xinput_slot(0)], false),
+        BluetoothSourceSlotDecision::Missing
+    );
+    assert_eq!(
+        bluetooth_source_slot_decision(1, &[], true),
+        BluetoothSourceSlotDecision::Missing
+    );
+}
+
+#[test]
+fn bluetooth_source_preflight_error_lists_live_slots() {
+    let message = bluetooth_source_preflight_error(&[MissingBluetoothSource {
+        pico_uid: "28249370".to_string(),
+        selected_slot: 1,
+        live_slots: vec![0, 2],
+    }]);
+
+    assert!(message.contains("Controller 2 for Pico 28249370 is not live"));
+    assert!(message.contains("Controller 1, Controller 3"));
+    assert!(message.contains("couchlink run --route N=UID"));
+}
+
+#[test]
 fn debug_packet_harvest_targets_only_include_enabled_debug_routes() {
     let mut debug = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
     debug.persona = Persona::Debug;
@@ -187,6 +236,22 @@ fn debug_packet_harvest_targets_only_include_enabled_debug_routes() {
     let disabled = HashSet::from([0x07D37EB6]);
     assert!(!has_debug_packet_routes(&routes, &disabled));
     assert!(debug_packet_harvest_targets(&routes, &disabled).is_empty());
+}
+
+fn xinput_slot(slot: u32) -> xinput::SlotSnapshot {
+    xinput::SlotSnapshot {
+        slot,
+        state: protocol::GamepadState {
+            buttons: slot as u16,
+            left_trigger: slot as u8,
+            right_trigger: 0,
+            left_x: 0,
+            left_y: 0,
+            right_x: 0,
+            right_y: 0,
+        },
+        packet_number: 100 + slot,
+    }
 }
 
 #[test]
@@ -250,7 +315,7 @@ fn bluetooth_status_formatter_explains_pairing_and_connection() {
     assert!(should_print_bluetooth_pairing_hint(Some(&status)));
 
     status.status_version = cdc::BT_STATUS_VERSION + 1;
-    status.decoded_status_version = cdc::BT_STATUS_V3_VERSION;
+    status.decoded_status_version = cdc::BT_STATUS_VERSION;
     let newer = format_bluetooth_peer_state(Some(&status), None, false, None);
     assert!(newer.contains("newer BT_STATUS"));
     assert!(newer.contains("update CouchLink"));
@@ -316,7 +381,18 @@ fn bluetooth_status_formatter_explains_pairing_and_connection() {
     assert!(connected.contains("last GET feature 0x02 len 36"));
     assert!(connected.contains("SET_REPORT accepted 1/1"));
     assert!(connected.contains("last SET output 0x11 len 77"));
+    assert!(connected.contains("no PC CDC input frames yet"));
     assert!(!should_print_bluetooth_pairing_hint(Some(&status)));
+
+    status.bt_cdc_state_count = 4;
+    status.bt_cdc_heartbeat_count = 9;
+    status.bt_cdc_last_frame_ms = 200;
+    status.bt_cdc_last_command = cdc::CMD_BT_HEARTBEAT;
+    status.bt_cdc_last_seq = 31;
+    status.bt_cdc_last_flags = protocol::FLAG_PARSEC_CONNECTED;
+    let connected_with_input = format_bluetooth_peer_state(Some(&status), Some(1), false, None);
+    assert!(connected_with_input.contains("PC CDC input state 4 heartbeat 9"));
+    assert!(connected_with_input.contains("last cmd 0x0D seq 31 flags 0x01"));
 }
 
 #[test]
@@ -432,6 +508,16 @@ fn bt_status(flags: u8, report_send_count: u32, close_count: u32) -> cdc::BtStat
         last_incoming_l2cap_psm: 0,
         last_incoming_l2cap_local_cid: 0,
         last_incoming_l2cap_ms: 0,
+        bt_cdc_state_count: 0,
+        bt_cdc_heartbeat_count: 0,
+        bt_cdc_bad_length_count: 0,
+        bt_cdc_rejected_count: 0,
+        bt_cdc_last_frame_ms: 0,
+        bt_cdc_last_state_ms: 0,
+        bt_cdc_last_heartbeat_ms: 0,
+        bt_cdc_last_seq: 0,
+        bt_cdc_last_command: 0,
+        bt_cdc_last_flags: 0,
         local_name: String::new(),
     }
 }

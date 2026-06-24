@@ -344,6 +344,26 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
             ));
         }
     }
+    if status.bt_cdc_input_seen() {
+        msg.push_str(&format!(
+            "; PC CDC input state {} heartbeat {}",
+            status.bt_cdc_state_count, status.bt_cdc_heartbeat_count
+        ));
+        if status.bt_cdc_last_frame_ms > 0 {
+            msg.push_str(&format!(
+                " last cmd 0x{:02X} seq {} flags 0x{:02X}",
+                status.bt_cdc_last_command, status.bt_cdc_last_seq, status.bt_cdc_last_flags
+            ));
+        }
+    } else {
+        msg.push_str("; no PC CDC input frames yet");
+    }
+    if status.bt_cdc_bad_length_count > 0 || status.bt_cdc_rejected_count > 0 {
+        msg.push_str(&format!(
+            "; CDC input errors bad_len {} rejected {}",
+            status.bt_cdc_bad_length_count, status.bt_cdc_rejected_count
+        ));
+    }
     if status.close_count > 0 {
         msg.push_str(&format!("; disconnects {}", status.close_count));
     }

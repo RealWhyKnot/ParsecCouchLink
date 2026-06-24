@@ -122,9 +122,20 @@ size_t cdc_build_bt_status_payload(const cdc_bt_status_view_t *status, uint8_t *
     put_u16_le(&out[204], status->last_incoming_l2cap_psm);
     put_u16_le(&out[206], status->last_incoming_l2cap_local_cid);
     put_u32_le(&out[208], status->last_incoming_l2cap_ms);
-    out[212] = (uint8_t)name_len;
+    put_u32_le(&out[212], status->bt_cdc_state_count);
+    put_u32_le(&out[216], status->bt_cdc_heartbeat_count);
+    put_u32_le(&out[220], status->bt_cdc_bad_length_count);
+    put_u32_le(&out[224], status->bt_cdc_rejected_count);
+    put_u32_le(&out[228], status->bt_cdc_last_frame_ms);
+    put_u32_le(&out[232], status->bt_cdc_last_state_ms);
+    put_u32_le(&out[236], status->bt_cdc_last_heartbeat_ms);
+    out[240] = status->bt_cdc_last_seq;
+    out[241] = status->bt_cdc_last_command;
+    out[242] = status->bt_cdc_last_flags;
+    out[243] = 0;
+    out[244] = (uint8_t)name_len;
     if (name_len)
-        memcpy(&out[213], status->local_name, name_len);
+        memcpy(&out[245], status->local_name, name_len);
     return CDC_BT_STATUS_FIXED_LEN + name_len;
 }
 

@@ -199,6 +199,16 @@ static void test_bt_status_payload_shape(void) {
         .last_incoming_l2cap_psm = 0x0013,
         .last_incoming_l2cap_local_cid = 0x0041,
         .last_incoming_l2cap_ms = 0x50607080,
+        .bt_cdc_state_count = 37,
+        .bt_cdc_heartbeat_count = 38,
+        .bt_cdc_bad_length_count = 39,
+        .bt_cdc_rejected_count = 40,
+        .bt_cdc_last_frame_ms = 0x60708090,
+        .bt_cdc_last_state_ms = 0x708090A0,
+        .bt_cdc_last_heartbeat_ms = 0x8090A0B0,
+        .bt_cdc_last_seq = 0x51,
+        .bt_cdc_last_command = CDC_CMD_BT_STATE,
+        .bt_cdc_last_flags = 1,
         .local_name = "CouchLink BT HID",
     };
     uint8_t payload[CDC_BT_STATUS_FIXED_LEN + CDC_BT_STATUS_MAX_NAME];
@@ -283,18 +293,31 @@ static void test_bt_status_payload_shape(void) {
     CHECK(get_u16_le(&payload[204]) == status.last_incoming_l2cap_psm);
     CHECK(get_u16_le(&payload[206]) == status.last_incoming_l2cap_local_cid);
     CHECK(get_u32_le(&payload[208]) == status.last_incoming_l2cap_ms);
-    CHECK(payload[212] == strlen(status.local_name));
-    CHECK(memcmp(&payload[213], status.local_name, strlen(status.local_name)) == 0);
+    CHECK(get_u32_le(&payload[212]) == status.bt_cdc_state_count);
+    CHECK(get_u32_le(&payload[216]) == status.bt_cdc_heartbeat_count);
+    CHECK(get_u32_le(&payload[220]) == status.bt_cdc_bad_length_count);
+    CHECK(get_u32_le(&payload[224]) == status.bt_cdc_rejected_count);
+    CHECK(get_u32_le(&payload[228]) == status.bt_cdc_last_frame_ms);
+    CHECK(get_u32_le(&payload[232]) == status.bt_cdc_last_state_ms);
+    CHECK(get_u32_le(&payload[236]) == status.bt_cdc_last_heartbeat_ms);
+    CHECK(payload[240] == status.bt_cdc_last_seq);
+    CHECK(payload[241] == status.bt_cdc_last_command);
+    CHECK(payload[242] == status.bt_cdc_last_flags);
+    CHECK(payload[243] == 0);
+    CHECK(payload[244] == strlen(status.local_name));
+    CHECK(memcmp(&payload[245], status.local_name, strlen(status.local_name)) == 0);
 }
 
 static void test_bt_status_version_lengths(void) {
-    CHECK(CDC_BT_STATUS_VERSION == 4);
+    CHECK(CDC_BT_STATUS_VERSION == 5);
     CHECK(CDC_BT_STATUS_V1_FIXED_LEN == 49);
     CHECK(CDC_BT_STATUS_V2_VERSION == 2);
     CHECK(CDC_BT_STATUS_V2_FIXED_LEN == 99);
     CHECK(CDC_BT_STATUS_V3_VERSION == 3);
     CHECK(CDC_BT_STATUS_V3_FIXED_LEN == 153);
-    CHECK(CDC_BT_STATUS_FIXED_LEN == 213);
+    CHECK(CDC_BT_STATUS_V4_VERSION == 4);
+    CHECK(CDC_BT_STATUS_V4_FIXED_LEN == 213);
+    CHECK(CDC_BT_STATUS_FIXED_LEN == 245);
 }
 
 int main(void) {
