@@ -8,6 +8,12 @@ _No notable changes since the last release._
 
 ---
 
+## [v2026.6.25.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.25.0-beta) -- 2026-06-25
+
+_Maintenance release; see commit log for details._
+
+---
+
 ## [v2026.6.24.1-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.24.1-beta) -- 2026-06-24
 
 ### Fixed
