@@ -7,6 +7,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 ### Added
 - Add nickname support for Pico devices and implement blink LED action (9e79e6f)
 
+### Fixed
+- Streamline Pnp instance identification for Xinput devices (7a06a4b)
+
 ---
 
 ## [v2026.6.25.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.25.0-beta) -- 2026-06-25
