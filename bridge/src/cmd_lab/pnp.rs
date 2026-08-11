@@ -113,10 +113,9 @@ fn pnp_instance_from_id(id: &str) -> Option<PnpInstance> {
     let upper = id.to_ascii_uppercase();
     let (persona, serial) = if let Some(serial) = upper.strip_prefix(r"USB\VID_2E8A&PID_CAF0\") {
         (PnpPersona::Setup, serial)
-    } else if let Some(serial) = upper.strip_prefix(r"USB\VID_045E&PID_028E\") {
-        (PnpPersona::Xinput, serial)
     } else {
-        return None;
+        let serial = upper.strip_prefix(r"USB\VID_045E&PID_028E\")?;
+        (PnpPersona::Xinput, serial)
     };
     let uid = uid_from_usb_serial(serial)?;
     Some(PnpInstance {
