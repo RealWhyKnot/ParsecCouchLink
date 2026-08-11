@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.8.10.1-beta](https://github.com/SticksDev/ParsecCouchLink/releases/tag/v2026.8.10.1-beta) -- 2026-08-10
+
 ### Added
 - Add nickname support for Pico devices and implement blink LED action (9e79e6f)
 
