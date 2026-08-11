@@ -9,6 +9,7 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ### Fixed
 - Streamline Pnp instance identification for Xinput devices (7a06a4b)
+- Handle empty previous tag case in release workflow and scripts (b4cd9ae)
 
 ---
 
