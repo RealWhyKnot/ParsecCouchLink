@@ -264,6 +264,10 @@ if ($Mode -eq "Append") {
         $log = & git log --no-merges --format="%H%x09%s%x09%ae" $Range 2>$null
         if ($LASTEXITCODE -ne 0) {
             Write-Host "git log failed for range '$Range'; leaving CHANGELOG.md unchanged."
+            # Treated as a no-op, not a failure: clear the stale git exit
+            # code so a caller (or GitHub's appended `exit $LASTEXITCODE`)
+            # does not fail the surrounding step.
+            $global:LASTEXITCODE = 0
             return
         }
     } finally {

@@ -67,6 +67,14 @@ pub const TYPE_GET_PICO_STATE: u8 = 0x0C;
 /// persona flash byte and `body[1]` is 1 to enable capture or 0 to clear
 /// runtime capture without rebooting.
 pub const TYPE_SET_USB_CAPTURE: u8 = 0x0D;
+/// Ask a run-mode Pico to blink its onboard LED so a user with several
+/// boards can match a list entry to physical hardware. `body[0]` is the
+/// blink duration in seconds (firmware clamps; 0 stops an active blink).
+/// The firmware confirms with a normal `TYPE_ACK`; older firmware ignores
+/// the request entirely, which the bridge reports as "no confirmation".
+/// All eight ACK capability/persona flag bits are taken, so support is
+/// detected by that reply rather than a new capability bit.
+pub const TYPE_IDENTIFY: u8 = 0x0E;
 /// Chunk of diag-log payload sent by the firmware in reply to
 /// `TYPE_GET_LOG`. Variable-length (12-byte header + up to 256 bytes of
 /// payload + 2 bytes CRC-16). High bit set, matching the CDC convention
@@ -299,6 +307,26 @@ impl Persona {
             Persona::BluetoothHid => "Bluetooth generic HID",
             Persona::BluetoothXbox => "Bluetooth Xbox Wireless Controller",
             Persona::BluetoothPlaystation => "Bluetooth DualShock 4",
+        }
+    }
+
+    /// Short console-oriented name for home-screen card titles and
+    /// nickname suggestions ("which console is this Pico for?"). The
+    /// Maple persona exists for Dreamcast adapters, so it reads as
+    /// "Dreamcast" here even though the USB descriptor is Xbox-shaped.
+    pub fn console_label(self) -> &'static str {
+        match self {
+            Persona::Xinput => "Xbox 360",
+            Persona::Keyboard => "Keyboard",
+            Persona::Maple => "Dreamcast",
+            Persona::Ps3 => "PS3",
+            Persona::Ps4 => "PS4",
+            Persona::XboxOne => "Xbox One",
+            Persona::Debug => "Debug",
+            Persona::GenericHid => "Generic HID",
+            Persona::BluetoothHid => "Bluetooth",
+            Persona::BluetoothXbox => "Bluetooth Xbox",
+            Persona::BluetoothPlaystation => "Bluetooth PS4",
         }
     }
 
@@ -634,6 +662,18 @@ pub fn encode_get_pico_state(seq: u8) -> [u8; PACKET_SIZE] {
     buf[0] = MAGIC;
     buf[1] = TYPE_GET_PICO_STATE;
     buf[2] = seq;
+    buf[16] = crc8(&buf[..16]);
+    buf
+}
+
+/// Build a `TYPE_IDENTIFY` request datagram. `body[0]` carries the blink
+/// duration in seconds; 0 asks the firmware to stop an active blink.
+pub fn encode_identify(seq: u8, blink_seconds: u8) -> [u8; PACKET_SIZE] {
+    let mut buf = [0u8; PACKET_SIZE];
+    buf[0] = MAGIC;
+    buf[1] = TYPE_IDENTIFY;
+    buf[2] = seq;
+    buf[4] = blink_seconds;
     buf[16] = crc8(&buf[..16]);
     buf
 }

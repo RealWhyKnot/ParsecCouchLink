@@ -15,6 +15,7 @@ pub fn identity_from_target(pico: &PicoTarget) -> config::PicoIdentity {
         fw_patch: pico.info.fw_patch,
         last_ip: Some(pico.peer.ip().to_string()),
         device_name: Some(pico.board_label().to_string()),
+        nickname: None,
     }
 }
 

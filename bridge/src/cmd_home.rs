@@ -90,6 +90,9 @@ enum PicoAction {
     SwitchToUsbDebug {
         target: cmd_run::PicoTarget,
     },
+    BlinkLed {
+        target: cmd_run::PicoTarget,
+    },
     RecoverToWifi {
         port: String,
     },
@@ -112,6 +115,11 @@ enum PicoAction {
     },
     SaveIdentity {
         identity: config::PicoIdentity,
+        nickname_suggestion: Option<String>,
+    },
+    Rename {
+        identity: config::PicoIdentity,
+        nickname_suggestion: Option<String>,
     },
     RemoveSaved {
         identity: config::PicoIdentity,
@@ -309,12 +317,13 @@ fn build_pico_cards(cfg: &config::Config, inventory: &PicoInventory) -> Vec<Pico
     let mut cards = Vec::new();
 
     for saved in &cfg.picos {
+        let nickname = saved.nickname.as_deref();
         if let Some(wifi) = inventory
             .wifi
             .iter()
             .find(|p| p.info.unique_id_short == saved.unique_id_short)
         {
-            cards.push(wifi_card(wifi.clone(), true));
+            cards.push(wifi_card(wifi.clone(), true, nickname));
             continue;
         }
         if let Some(usb) = inventory
@@ -322,7 +331,7 @@ fn build_pico_cards(cfg: &config::Config, inventory: &PicoInventory) -> Vec<Pico
             .iter()
             .find(|p| p.unique_id_short == Some(saved.unique_id_short))
         {
-            cards.push(setup_usb_card(usb.clone(), true));
+            cards.push(setup_usb_card(usb.clone(), true, nickname));
             continue;
         }
         cards.push(missing_saved_card(saved.clone()));
@@ -330,7 +339,7 @@ fn build_pico_cards(cfg: &config::Config, inventory: &PicoInventory) -> Vec<Pico
 
     for pico in &inventory.wifi {
         if !saved_ids.contains(&pico.info.unique_id_short) {
-            cards.push(wifi_card(pico.clone(), false));
+            cards.push(wifi_card(pico.clone(), false, None));
         }
     }
     for pico in &inventory.usb {
@@ -341,7 +350,7 @@ fn build_pico_cards(cfg: &config::Config, inventory: &PicoInventory) -> Vec<Pico
         {
             continue;
         }
-        cards.push(setup_usb_card(pico.clone(), false));
+        cards.push(setup_usb_card(pico.clone(), false, None));
     }
     for pico in &inventory.bootsel {
         cards.push(bootsel_card(pico.clone()));
@@ -350,7 +359,8 @@ fn build_pico_cards(cfg: &config::Config, inventory: &PicoInventory) -> Vec<Pico
     cards
 }
 
-fn wifi_card(pico: cmd_run::PicoTarget, saved: bool) -> PicoCard {
+fn wifi_card(pico: cmd_run::PicoTarget, saved: bool, nickname: Option<&str>) -> PicoCard {
+    let nickname_suggestion = Some(pico.persona.console_label().to_string());
     let mut actions = vec![
         PicoAction::StartStreaming {
             target: pico.clone(),
@@ -361,18 +371,35 @@ fn wifi_card(pico: cmd_run::PicoTarget, saved: bool) -> PicoCard {
         PicoAction::CheckUsbAdapter {
             target: pico.clone(),
         },
+        PicoAction::BlinkLed {
+            target: pico.clone(),
+        },
         PicoAction::SwitchToUsbDebug {
             target: pico.clone(),
         },
     ];
-    if !saved {
+    if saved {
+        actions.push(PicoAction::Rename {
+            identity: cmd_run::identity_from_target(&pico),
+            nickname_suggestion,
+        });
+    } else {
         actions.push(PicoAction::SaveIdentity {
             identity: cmd_run::identity_from_target(&pico),
+            nickname_suggestion,
         });
     }
 
     PicoCard {
-        title: format!("{} {}", pico.board_label(), pico.uid_hex()),
+        title: titled(
+            nickname,
+            format!(
+                "{} {} ({})",
+                pico.board_label(),
+                pico.uid_hex(),
+                pico.persona.console_label()
+            ),
+        ),
         status: format!(
             "Wi-Fi ready at {} (fw v{})",
             pico.peer.ip(),
@@ -390,7 +417,15 @@ fn wifi_card(pico: cmd_run::PicoTarget, saved: bool) -> PicoCard {
     }
 }
 
-fn setup_usb_card(pico: SetupUsbPico, saved: bool) -> PicoCard {
+/// "<nickname> - <base>" when the Pico is named, else just the base.
+fn titled(nickname: Option<&str>, base: String) -> String {
+    match nickname {
+        Some(name) => format!("{name} - {base}"),
+        None => base,
+    }
+}
+
+fn setup_usb_card(pico: SetupUsbPico, saved: bool, nickname: Option<&str>) -> PicoCard {
     let uid = pico
         .unique_id_short
         .map(|uid| format!(" {uid:08X}"))
@@ -410,14 +445,25 @@ fn setup_usb_card(pico: SetupUsbPico, saved: bool) -> PicoCard {
     actions.push(PicoAction::ReadUsbLog {
         port: pico.port.clone(),
     });
-    if !saved {
-        if let Some(identity) = identity_from_usb_pico(&pico) {
-            actions.push(PicoAction::SaveIdentity { identity });
+    if let Some(identity) = identity_from_usb_pico(&pico) {
+        if saved {
+            actions.push(PicoAction::Rename {
+                identity,
+                nickname_suggestion: None,
+            });
+        } else {
+            actions.push(PicoAction::SaveIdentity {
+                identity,
+                nickname_suggestion: None,
+            });
         }
     }
 
     PicoCard {
-        title: format!("{}{}", setup_board_label(pico.board_type), uid),
+        title: titled(
+            nickname,
+            format!("{}{}", setup_board_label(pico.board_type), uid),
+        ),
         status: format!("USB debug on {} (fw v{})", pico.port, pico.firmware),
         details: vec![
             format!("saved Wi-Fi: {}", yes_no(pico.creds_present)),
@@ -460,6 +506,10 @@ fn missing_saved_card(pico: config::PicoIdentity) -> PicoCard {
             ip: ip.clone(),
         });
     }
+    actions.push(PicoAction::Rename {
+        identity: pico.clone(),
+        nickname_suggestion: None,
+    });
     actions.push(PicoAction::RemoveSaved {
         identity: pico.clone(),
     });
@@ -469,7 +519,7 @@ fn missing_saved_card(pico: config::PicoIdentity) -> PicoCard {
         .map(|ip| format!("last IP {ip}"))
         .unwrap_or_else(|| "no last IP saved".to_string());
     PicoCard {
-        title: format!("{} {}", pico.board_label(), pico.uid_hex()),
+        title: pico.display_title(),
         status: format!(
             "Not seen right now ({last_ip}, fw v{})",
             pico.firmware_version()
@@ -486,6 +536,7 @@ impl PicoAction {
             Self::ChooseRouting { .. } => "Choose controller and stream".to_string(),
             Self::CheckUsbAdapter { .. } => "Check console USB adapter".to_string(),
             Self::SwitchToUsbDebug { .. } => "Switch to USB debug mode".to_string(),
+            Self::BlinkLed { .. } => "Blink the LED".to_string(),
             Self::RecoverToWifi { .. } => "Recover to Wi-Fi/input mode".to_string(),
             Self::ConfigureWifi { .. } => "Set up or change Wi-Fi".to_string(),
             Self::UpdateFirmwareFromSetupUsb { .. } => "Update firmware".to_string(),
@@ -493,6 +544,7 @@ impl PicoAction {
             Self::FlashBootsel { .. } => "Flash or reinstall firmware".to_string(),
             Self::FindLastIp { ip, .. } => format!("Find at last IP {ip}"),
             Self::SaveIdentity { .. } => "Save this Pico".to_string(),
+            Self::Rename { .. } => "Name or rename this Pico".to_string(),
             Self::RemoveSaved { .. } => "Remove saved Pico".to_string(),
         }
     }
@@ -502,6 +554,9 @@ impl PicoAction {
             Self::StartStreaming { .. } => "stream this Pico only".to_string(),
             Self::ChooseRouting { .. } => "pick one Windows controller for this Pico".to_string(),
             Self::CheckUsbAdapter { .. } => "query this Pico's USB adapter status".to_string(),
+            Self::BlinkLed { .. } => {
+                "flash this Pico's onboard LED so you can spot the board".to_string()
+            }
             Self::SwitchToUsbDebug { .. } => "move this Wi-Fi Pico to setup USB".to_string(),
             Self::RecoverToWifi { .. } => "move this USB Pico back to normal mode".to_string(),
             Self::ConfigureWifi { .. } => "send Wi-Fi credentials to this USB Pico".to_string(),
@@ -512,6 +567,7 @@ impl PicoAction {
             Self::FlashBootsel { .. } => "copy the matching UF2 to this BOOTSEL drive".to_string(),
             Self::FindLastIp { .. } => "probe the saved IP for this Pico".to_string(),
             Self::SaveIdentity { .. } => "add this Pico to the saved list".to_string(),
+            Self::Rename { .. } => "set the name shown for this Pico (e.g. Dreamcast)".to_string(),
             Self::RemoveSaved { .. } => "forget this saved Pico and its routes".to_string(),
         }
     }
@@ -521,6 +577,7 @@ impl PicoAction {
             Self::StartStreaming { target }
             | Self::ChooseRouting { target }
             | Self::CheckUsbAdapter { target }
+            | Self::BlinkLed { target }
             | Self::SwitchToUsbDebug { target } => {
                 format!("target {} / {}", target.uid_hex(), target.peer.ip())
             }
@@ -532,7 +589,9 @@ impl PicoAction {
             Self::FindLastIp { identity, ip } => {
                 format!("target {} at {ip}", identity.uid_hex())
             }
-            Self::SaveIdentity { identity } | Self::RemoveSaved { identity } => {
+            Self::SaveIdentity { identity, .. }
+            | Self::Rename { identity, .. }
+            | Self::RemoveSaved { identity } => {
                 format!("target {}", identity.uid_hex())
             }
         }
@@ -559,6 +618,7 @@ async fn run_pico_action(action: PicoAction) -> Result<()> {
         PicoAction::SwitchToUsbDebug { target } => {
             cmd_debug::switch_wifi_target_to_usb_debug(target).await
         }
+        PicoAction::BlinkLed { target } => blink_pico_led(target).await,
         PicoAction::RecoverToWifi { port } => {
             cmd_debug::switch_setup_port_to_wifi_target(port).await
         }
@@ -570,9 +630,95 @@ async fn run_pico_action(action: PicoAction) -> Result<()> {
         }
         PicoAction::FlashBootsel { mount, board } => flash_bootsel_mount(mount, board).await,
         PicoAction::FindLastIp { identity, ip } => find_saved_pico_by_last_ip(identity, ip).await,
-        PicoAction::SaveIdentity { identity } => save_identity(identity),
+        PicoAction::SaveIdentity {
+            identity,
+            nickname_suggestion,
+        } => {
+            save_identity(identity.clone())?;
+            prompt_nickname(identity.unique_id_short, nickname_suggestion).await
+        }
+        PicoAction::Rename {
+            identity,
+            nickname_suggestion,
+        } => rename_pico(identity, nickname_suggestion).await,
         PicoAction::RemoveSaved { identity } => remove_saved_pico_identity(identity).await,
     }
+}
+
+/// How long a blink-to-identify request asks the LED to flash. Long
+/// enough to walk to a console across the room, short enough that a
+/// wrong guess doesn't leave a board flashing for ages.
+const IDENTIFY_BLINK_SECONDS: u8 = 10;
+
+async fn blink_pico_led(target: cmd_run::PicoTarget) -> Result<()> {
+    println!();
+    println!(
+        "Asking {} to blink its onboard LED for {IDENTIFY_BLINK_SECONDS} seconds...",
+        target.short_label()
+    );
+    match pico_mode::request_identify(&target, IDENTIFY_BLINK_SECONDS).await {
+        Ok(true) => {
+            println!("Confirmed. Watch for the fast-blinking green LED on the Pico board.");
+        }
+        Ok(false) => {
+            println!("The Pico did not confirm the blink request.");
+            println!(
+                "Its firmware likely predates the blink feature; run `Firmware update` and try again."
+            );
+        }
+        Err(e) => println!("Could not send the blink request: {e:#}"),
+    }
+    press_enter("Press Enter to return to Basic.").await
+}
+
+/// Ask for a nickname right after a Pico is saved. Blank skips.
+async fn prompt_nickname(unique_id_short: u32, suggestion: Option<String>) -> Result<()> {
+    let example = suggestion.as_deref().unwrap_or("Dreamcast");
+    let name = input_text(&format!(
+        "Name this Pico so it's easy to identify, e.g. {example} (blank to skip)"
+    ))
+    .await?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(());
+    }
+    set_saved_nickname(unique_id_short, Some(name.to_string()))
+}
+
+async fn rename_pico(identity: config::PicoIdentity, suggestion: Option<String>) -> Result<()> {
+    let cfg = config::load().unwrap_or_default();
+    println!();
+    match cfg.nickname_for(identity.unique_id_short) {
+        Some(current) => println!("Current name for {}: {current}", identity.uid_hex()),
+        None => println!("{} has no name yet.", identity.uid_hex()),
+    }
+    let example = suggestion.as_deref().unwrap_or("Dreamcast");
+    let name = input_text(&format!(
+        "New name, e.g. {example} (blank to cancel, `-` to remove the name)"
+    ))
+    .await?;
+    let name = name.trim();
+    if name.is_empty() {
+        println!("Name unchanged.");
+        return Ok(());
+    }
+    let value = (name != "-").then(|| name.to_string());
+    set_saved_nickname(identity.unique_id_short, value)
+}
+
+fn set_saved_nickname(unique_id_short: u32, nickname: Option<String>) -> Result<()> {
+    let mut cfg = config::load().unwrap_or_default();
+    let label = nickname.clone();
+    if !cfg.set_nickname(unique_id_short, nickname) {
+        println!("This Pico is not in the saved list yet; choose `Save this Pico` first.");
+        return Ok(());
+    }
+    config::save(&cfg)?;
+    match label {
+        Some(name) => println!("Saved name \"{name}\"."),
+        None => println!("Removed the saved name."),
+    }
+    Ok(())
 }
 
 async fn update_setup_usb_firmware(port: String) -> Result<()> {
@@ -685,14 +831,19 @@ fn refresh_saved_observations(cfg: &mut config::Config, inventory: &PicoInventor
         if !saved_ids.contains(&pico.info.unique_id_short) {
             continue;
         }
-        let identity = cmd_run::identity_from_target(pico);
-        if cfg
+        let mut identity = cmd_run::identity_from_target(pico);
+        let Some(saved) = cfg
             .picos
             .iter()
             .find(|p| p.unique_id_short == identity.unique_id_short)
-            .map(|p| p != &identity)
-            .unwrap_or(false)
-        {
+        else {
+            continue;
+        };
+        // Fresh observations never carry a nickname; copy the saved one
+        // over before comparing so a named Pico doesn't look "changed"
+        // (and trigger a config rewrite) on every scan.
+        identity.nickname = saved.nickname.clone();
+        if saved != &identity {
             cfg.remember_pico(identity);
             changed = true;
         }
@@ -758,6 +909,7 @@ fn identity_from_usb_pico(pico: &SetupUsbPico) -> Option<config::PicoIdentity> {
         fw_patch: pico.fw_patch,
         last_ip: None,
         device_name: Some(setup_board_label(pico.board_type).to_string()),
+        nickname: None,
     })
 }
 
@@ -811,7 +963,11 @@ fn print_xinput_sources() {
 }
 
 async fn route_one(picos: Vec<cmd_run::PicoTarget>) -> Result<()> {
-    let pico_items: Vec<String> = picos.iter().map(|p| p.detail_label()).collect();
+    let cfg = config::load().unwrap_or_default();
+    let pico_items: Vec<String> = picos
+        .iter()
+        .map(|p| titled(cfg.nickname_for(p.info.unique_id_short), p.detail_label()))
+        .collect();
     let pico_index = select("Which Pico should receive the controller?", &pico_items, 0).await?;
     let pico = picos[pico_index].clone();
     let mode = choose_input_mode().await?;

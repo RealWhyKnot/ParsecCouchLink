@@ -147,7 +147,7 @@ jobs:
         run: |
           $tag = '${{ steps.version.outputs.tag }}'
           $prevTag = & ./.github/scripts/Resolve-ReleaseBaseTag.ps1 -Tag $tag
-          if ($LASTEXITCODE -eq 0 -and $prevTag) {
+          if ($prevTag) {
               Write-Host "Preloading changelog entries from $prevTag..$tag before promotion."
               ./.github/scripts/Update-Changelog.ps1 -Mode Append -Range "$prevTag..$tag"
           } else {

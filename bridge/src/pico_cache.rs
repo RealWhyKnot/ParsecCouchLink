@@ -331,6 +331,7 @@ mod tests {
             fw_patch: 15,
             last_ip: Some("10.0.0.16".to_string()),
             device_name: Some("Pico 2 W".to_string()),
+            nickname: None,
         };
 
         let snap = PicoStateSnapshot::offline_from_config("test", &pico);
