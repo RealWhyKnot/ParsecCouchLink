@@ -32,6 +32,7 @@ Packet types:
 | `0x09` | `KEY_HEARTBEAT` -- keyboard heartbeat, sent when the report is unchanged so the firmware watchdog stays fed. |
 | `0x0A` | `SET_PERSONA` -- bridge asks run-mode firmware to persist an output persona and reboot into it. `body[0]` is the persona (`0` = Xbox 360 / XInput, `1` = keyboard, `2` = Maple, `3` = PS3, `4` = PS4, `5` = Xbox One). Ignored if the Pico is already in that persona. |
 | `0x0B` | `GET_VERSION` -- bridge requests the exact runtime firmware build. Same 17-byte request shape as the others; body is reserved. |
+| `0x0E` | `IDENTIFY` -- bridge asks run-mode firmware to blink the onboard LED so the user can match a discovery entry to a physical board. `body[0]` is the blink duration in seconds (firmware clamps to 60; `0` stops an active blink). The firmware confirms with a normal ack. There is no spare ACK capability bit left, so the bridge detects support by whether that ack arrives; older firmware ignores the request silently. |
 | `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
 | `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, IN/OUT report counters, recent timestamps, and CRC-16. |
 | `0x87` | `VERSION` -- fixed 17-byte reply to `GET_VERSION` with `year`, `month`, `day`, `revision`, and optional four-character development suffix. |

@@ -85,6 +85,7 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_GET_VERSION 0x0B
 #define TYPE_GET_PICO_STATE 0x0C
 #define TYPE_SET_USB_CAPTURE 0x0D
+#define TYPE_IDENTIFY 0x0E
 #define TYPE_LOG_CHUNK 0x85
 #define TYPE_USB_DIAG 0x86
 #define TYPE_VERSION 0x87
@@ -155,6 +156,18 @@ static bool set_usb_capture_pending;
 static uint8_t set_usb_capture_persona;
 static bool set_usb_capture_enabled;
 static uint32_t malformed_count;
+
+// Blink-to-identify state (TYPE_IDENTIFY). The request handler only
+// records the deadline; the LED itself is driven from net_udp_task() on
+// the main loop, where cyw43_arch_gpio_put is safe alongside
+// cyw43_arch_poll. The onboard LED sits on the CYW43 chip on both the
+// Pico W and the Pico 2 W, so this needs no board-specific GPIO.
+#define IDENTIFY_MAX_SECONDS 60u
+#define IDENTIFY_TOGGLE_MS 125u
+static bool identify_active;
+static bool identify_led_on;
+static absolute_time_t identify_until;
+static absolute_time_t identify_next_toggle;
 
 // CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
 static uint8_t crc8(const uint8_t *data, size_t n) {
@@ -778,6 +791,22 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
                         (unsigned)set_persona_value, ip4_addr1(ip_2_ip4(addr)),
                         ip4_addr2(ip_2_ip4(addr)), ip4_addr3(ip_2_ip4(addr)),
                         ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
+    } else if (type == TYPE_IDENTIFY) {
+        send_ack(addr, port, seq);
+        uint8_t secs = buf[4]; // body[0] = blink seconds, 0 = stop
+        if (secs > IDENTIFY_MAX_SECONDS)
+            secs = IDENTIFY_MAX_SECONDS;
+        if (secs == 0) {
+            // Expire immediately; net_udp_task turns the LED off.
+            identify_until = get_absolute_time();
+        } else {
+            identify_until = make_timeout_time_ms((uint32_t)secs * 1000u);
+            identify_next_toggle = get_absolute_time();
+        }
+        identify_active = true;
+        diag_log_printf("net_udp: identify blink %us requested by %u.%u.%u.%u:%u", (unsigned)secs,
+                        ip4_addr1(ip_2_ip4(addr)), ip4_addr2(ip_2_ip4(addr)),
+                        ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
     } else if (type == TYPE_SET_USB_CAPTURE) {
         send_ack(addr, port, seq);
         set_usb_capture_persona = buf[4]; // body[0] = desired FLASH_PERSONA_*
@@ -864,6 +893,8 @@ bool net_udp_init(void) {
     reboot_to_setup_pending = false;
     set_persona_pending = false;
     set_usb_capture_pending = false;
+    identify_active = false;
+    identify_led_on = false;
     next_keepalive = make_timeout_time_ms(1000);
     diag_log_msg("net_udp: listening on UDP/4242");
     return true;
@@ -884,6 +915,18 @@ void net_udp_task(void) {
     if (set_usb_capture_pending) {
         set_usb_capture_pending = false;
         apply_set_usb_capture(set_usb_capture_persona, set_usb_capture_enabled);
+    }
+    if (identify_active) {
+        if (time_reached(identify_until)) {
+            identify_active = false;
+            identify_led_on = false;
+            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, false);
+            diag_log_msg("net_udp: identify blink finished");
+        } else if (time_reached(identify_next_toggle)) {
+            identify_led_on = !identify_led_on;
+            cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, identify_led_on);
+            identify_next_toggle = make_timeout_time_ms(IDENTIFY_TOGGLE_MS);
+        }
     }
     if (!have_peer)
         return;

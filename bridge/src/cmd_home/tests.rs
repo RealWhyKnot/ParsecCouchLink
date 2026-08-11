@@ -28,6 +28,7 @@ fn saved_pico(uid: u32, ip: Option<&str>) -> config::PicoIdentity {
         fw_patch: 30,
         last_ip: ip.map(|s| s.to_string()),
         device_name: None,
+        nickname: None,
     }
 }
 
@@ -156,6 +157,82 @@ fn basic_cards_keep_multiple_wifi_picos_targeted() {
             )
         })
     }));
+}
+
+#[test]
+fn wifi_card_shows_nickname_persona_and_identify_actions() {
+    let mut saved = saved_pico(0x07D37EB6, Some("192.168.50.1"));
+    saved.nickname = Some("Living room DC".to_string());
+    let cfg = config::Config {
+        picos: vec![saved],
+        ..config::Config::default()
+    };
+    let mut target = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    target.persona = protocol::Persona::Maple;
+    let inventory = PicoInventory {
+        wifi: vec![target],
+        ..PicoInventory::default()
+    };
+
+    let cards = build_pico_cards(&cfg, &inventory);
+
+    assert_eq!(cards.len(), 1);
+    assert_eq!(
+        cards[0].title,
+        "Living room DC - Pico 2 W 07D37EB6 (Dreamcast)"
+    );
+    assert!(cards[0].actions.iter().any(|action| matches!(
+        action,
+        PicoAction::BlinkLed { target }
+            if target.info.unique_id_short == 0x07D37EB6
+    )));
+    assert!(cards[0].actions.iter().any(|action| matches!(
+        action,
+        PicoAction::Rename { identity, .. }
+            if identity.unique_id_short == 0x07D37EB6
+    )));
+}
+
+#[test]
+fn unsaved_wifi_card_suggests_console_nickname_on_save() {
+    let cfg = config::Config::default();
+    let mut target = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    target.persona = protocol::Persona::Ps3;
+    let inventory = PicoInventory {
+        wifi: vec![target],
+        ..PicoInventory::default()
+    };
+
+    let cards = build_pico_cards(&cfg, &inventory);
+
+    assert_eq!(cards[0].title, "Pico 2 W 07D37EB6 (PS3)");
+    assert!(cards[0].actions.iter().any(|action| matches!(
+        action,
+        PicoAction::SaveIdentity { nickname_suggestion, .. }
+            if nickname_suggestion.as_deref() == Some("PS3")
+    )));
+    assert!(!cards[0]
+        .actions
+        .iter()
+        .any(|action| matches!(action, PicoAction::Rename { .. })));
+}
+
+#[test]
+fn missing_saved_card_title_uses_nickname() {
+    let mut saved = saved_pico(0x07D37EB6, None);
+    saved.nickname = Some("N64".to_string());
+    let cfg = config::Config {
+        picos: vec![saved],
+        ..config::Config::default()
+    };
+
+    let cards = build_pico_cards(&cfg, &PicoInventory::default());
+
+    assert_eq!(cards[0].title, "N64 - Pico 2 W 07D37EB6");
+    assert!(cards[0]
+        .actions
+        .iter()
+        .any(|action| matches!(action, PicoAction::Rename { .. })));
 }
 
 #[test]

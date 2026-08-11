@@ -78,17 +78,51 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn remember_pico(&mut self, pico: PicoIdentity) {
+    pub fn remember_pico(&mut self, mut pico: PicoIdentity) {
         if let Some(existing) = self
             .picos
             .iter_mut()
             .find(|p| p.unique_id_short == pico.unique_id_short)
         {
+            // Fresh observations (discovery acks, USB hello) never carry a
+            // nickname; keep the user's saved one instead of clobbering it.
+            if pico.nickname.is_none() {
+                pico.nickname = existing.nickname.clone();
+            }
             *existing = pico.clone();
         } else {
             self.picos.push(pico.clone());
         }
         self.last_pico = Some(pico);
+    }
+
+    pub fn nickname_for(&self, unique_id_short: u32) -> Option<&str> {
+        self.picos
+            .iter()
+            .find(|p| p.unique_id_short == unique_id_short)?
+            .nickname
+            .as_deref()
+    }
+
+    /// Set or clear a saved Pico's nickname. Returns false when no saved
+    /// Pico has that UID.
+    pub fn set_nickname(&mut self, unique_id_short: u32, nickname: Option<String>) -> bool {
+        let Some(pico) = self
+            .picos
+            .iter_mut()
+            .find(|p| p.unique_id_short == unique_id_short)
+        else {
+            return false;
+        };
+        pico.nickname = nickname.clone();
+        if let Some(last) = self
+            .last_pico
+            .as_mut()
+            .filter(|p| p.unique_id_short == unique_id_short)
+        {
+            last.nickname = nickname;
+        }
+        true
     }
 
     pub fn forget_pico(&mut self, unique_id_short: u32) {
@@ -114,11 +148,24 @@ pub struct PicoIdentity {
     pub fw_patch: u8,
     pub last_ip: Option<String>,
     pub device_name: Option<String>,
+    /// User-assigned name, usually the console this Pico is dedicated to
+    /// ("Dreamcast", "N64 player 2"). Shown ahead of the board/UID in the
+    /// home screen and pickers.
+    #[serde(default)]
+    pub nickname: Option<String>,
 }
 
 impl PicoIdentity {
     pub fn uid_hex(&self) -> String {
         format!("{:08X}", self.unique_id_short)
+    }
+
+    /// "<nickname> - <board> <uid>" when named, else "<board> <uid>".
+    pub fn display_title(&self) -> String {
+        match self.nickname.as_deref() {
+            Some(name) => format!("{name} - {} {}", self.board_label(), self.uid_hex()),
+            None => format!("{} {}", self.board_label(), self.uid_hex()),
+        }
     }
 
     pub fn board_label(&self) -> &'static str {
@@ -200,6 +247,7 @@ mod tests {
             fw_patch: 30,
             last_ip: ip.map(|s| s.to_string()),
             device_name: None,
+            nickname: None,
         }
     }
 
@@ -212,6 +260,33 @@ mod tests {
         assert_eq!(cfg.picos.len(), 1);
         assert_eq!(cfg.picos[0].last_ip.as_deref(), Some("192.168.50.227"));
         assert_eq!(cfg.last_pico.as_ref().unwrap().unique_id_short, 0x07D37EB6);
+    }
+
+    #[test]
+    fn remember_pico_keeps_nickname_when_fresh_observation_has_none() {
+        let mut cfg = Config::default();
+        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.226")));
+        assert!(cfg.set_nickname(0x07D37EB6, Some("Dreamcast".to_string())));
+
+        // A rescan rebuilds the identity from the ack, without a nickname.
+        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.227")));
+
+        assert_eq!(cfg.nickname_for(0x07D37EB6), Some("Dreamcast"));
+        assert_eq!(
+            cfg.last_pico.as_ref().unwrap().nickname.as_deref(),
+            Some("Dreamcast")
+        );
+        assert_eq!(cfg.picos[0].last_ip.as_deref(), Some("192.168.50.227"));
+    }
+
+    #[test]
+    fn set_nickname_clears_and_reports_unknown_uid() {
+        let mut cfg = Config::default();
+        cfg.remember_pico(pico(0x07D37EB6, None));
+        assert!(cfg.set_nickname(0x07D37EB6, Some("N64".to_string())));
+        assert!(cfg.set_nickname(0x07D37EB6, None));
+        assert_eq!(cfg.nickname_for(0x07D37EB6), None);
+        assert!(!cfg.set_nickname(0xDEADBEEF, Some("nope".to_string())));
     }
 
     #[test]

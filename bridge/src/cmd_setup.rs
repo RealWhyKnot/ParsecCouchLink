@@ -46,6 +46,19 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
     let (peer_ip, identity) = stage_lan_discovery().await?;
     stage_install_autostart().await?;
 
+    // Ask for a name while the physical board is unambiguous -- it is the
+    // one Pico that just went through this wizard on the USB cable. With
+    // several Picos saved, the name is how the home screen tells them
+    // apart. Blank keeps any previously saved name.
+    println!();
+    let nickname = crate::tui::input_text(
+        "Name this Pico so it's easy to identify later, e.g. Dreamcast (blank to skip)",
+    )
+    .await
+    .map(|s| s.trim().to_string())
+    .ok()
+    .filter(|s| !s.is_empty());
+
     let mut cfg = config::load().unwrap_or_default();
     cfg.setup_complete = true;
     cfg.remember_pico(config::PicoIdentity {
@@ -56,6 +69,7 @@ pub async fn run(uf2_override: Option<PathBuf>) -> Result<()> {
         fw_patch: identity.fw_patch,
         last_ip: Some(peer_ip.clone()),
         device_name: None,
+        nickname,
     });
     config::save(&cfg).context("saving config")?;
 
