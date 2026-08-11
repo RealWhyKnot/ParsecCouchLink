@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   append:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip changelog]')) }}
+    if: ${{ github.repository == 'RealWhyKnot/ParsecCouchLink' && (github.event_name == 'workflow_dispatch' || (github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip changelog]'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

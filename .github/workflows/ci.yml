@@ -21,6 +21,30 @@ permissions:
   contents: read
 
 jobs:
+  changelog-guard:
+    name: Reject changelog edits in pull requests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check for CHANGELOG.md changes
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA" | grep -qx 'CHANGELOG.md'; then
+            echo "::error::CHANGELOG.md is maintained by the release workflows. Drop the changelog edits from this pull request; entries for merged commits are appended automatically."
+            exit 1
+          fi
+          echo "No CHANGELOG.md changes."
+
   bridge:
     runs-on: windows-latest
     timeout-minutes: 10

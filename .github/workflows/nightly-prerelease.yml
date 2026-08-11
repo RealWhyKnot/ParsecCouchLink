@@ -16,6 +16,7 @@ concurrency:
 jobs:
   tag:
     name: Create prerelease when release inputs changed
+    if: github.repository == 'RealWhyKnot/ParsecCouchLink'
     runs-on: windows-latest
     timeout-minutes: 15
 
