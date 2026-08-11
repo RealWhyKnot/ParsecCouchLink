@@ -39,6 +39,10 @@ try {
     Invoke-Git @('init', '-q')
     Invoke-Git @('config', 'user.email', 'release-test@example.com')
     Invoke-Git @('config', 'user.name', 'Release Test')
+    # Keep the throwaway repo hermetic: a developer's global gitconfig may
+    # sign commits/tags, which breaks plain `git tag` in this sandbox.
+    Invoke-Git @('config', 'commit.gpgsign', 'false')
+    Invoke-Git @('config', 'tag.gpgsign', 'false')
 
     Add-TestCommit -Content 'base' -Subject 'chore: base'
     Invoke-Git @('tag', 'v2026.5.1.0')
@@ -57,6 +61,18 @@ try {
     $preBase = & $resolver -Tag 'v2026.5.2.0-beta'
     if ($preBase -ne 'v2026.5.1.0') {
         throw "Prerelease base was '$preBase', expected 'v2026.5.1.0'."
+    }
+
+    # First release in a repo: no previous tag exists. The resolver must
+    # return empty AND leave $LASTEXITCODE at 0, because GitHub's pwsh
+    # step wrapper ends the step with `exit $LASTEXITCODE` and a stale
+    # git describe failure code would fail the release job silently.
+    $firstBase = & $resolver -Tag 'v2026.5.1.0'
+    if ($firstBase) {
+        throw "First-release base was '$firstBase', expected empty."
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "First-release resolve left LASTEXITCODE=$LASTEXITCODE, expected 0."
     }
 
     Write-Host 'Resolve-ReleaseBaseTag tests passed.'
