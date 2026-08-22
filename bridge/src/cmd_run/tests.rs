@@ -1,5 +1,3 @@
-use super::bluetooth::*;
-use super::debug_harvest::*;
 use super::*;
 
 fn pico(uid: u32, ip: &str, board: u8) -> PicoTarget {

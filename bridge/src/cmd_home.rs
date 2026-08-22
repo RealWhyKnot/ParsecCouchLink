@@ -405,14 +405,12 @@ fn wifi_card(pico: cmd_run::PicoTarget, saved: bool, nickname: Option<&str>) -> 
             pico.peer.ip(),
             pico.info.firmware_version()
         ),
-        details: vec![format!(
-            "{}",
-            if saved {
-                "Saved Pico"
-            } else {
-                "Connected but not saved"
-            }
-        )],
+        details: vec![if saved {
+            "Saved Pico"
+        } else {
+            "Connected but not saved"
+        }
+        .to_string()],
         actions,
     }
 }
