@@ -375,21 +375,33 @@ $AuthorHandleMap = @{
 # One compare call returns every commit in the range with the account it is
 # attributed to. Best-effort: the tag may not exist remotely yet on a manual
 # dispatch, so compare against the checked-out HEAD rather than the tag.
+# Parsed in PowerShell rather than with gh --jq: Windows PowerShell splits a
+# jq expression containing double quotes into separate native arguments.
 $AuthorLoginBySha = @{}
 if ($Repo -and $prevTag -and -not $changelogNotes) {
-    $headSha = (& git rev-parse HEAD 2>$null)
-    if ($LASTEXITCODE -eq 0 -and $headSha) {
-        $compare = & gh api "repos/$Repo/compare/$prevTag...$($headSha.Trim())" --jq '.commits[] | [.sha, (.author.login // "")] | @tsv' 2>$null
-        if ($LASTEXITCODE -eq 0 -and $compare) {
-            foreach ($row in ($compare -split "`r?`n")) {
-                if (-not $row) { continue }
-                $cols = $row -split "`t", 2
-                if ($cols.Count -eq 2 -and $cols[1]) { $AuthorLoginBySha[$cols[0]] = $cols[1] }
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $headSha = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and $headSha) {
+            $compareJson = & gh api "repos/$Repo/compare/$prevTag...$($headSha.Trim())" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $compareJson) {
+                foreach ($commit in (($compareJson -join "`n") | ConvertFrom-Json).commits) {
+                    $login = $commit.author.login
+                    if ($login) { $AuthorLoginBySha[$commit.sha] = $login }
+                }
             }
         }
-        else {
-            Write-Host "::warning::Could not resolve GitHub logins from the compare API; using the author handle map."
-        }
+    }
+    catch {
+        $AuthorLoginBySha = @{}
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
+    if ($AuthorLoginBySha.Count -eq 0) {
+        Write-Host "::warning::Could not resolve GitHub logins from the compare API; using the author handle map."
     }
 }
 
