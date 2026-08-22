@@ -45,9 +45,11 @@ jobs:
           ./.github/scripts/Test-ReleaseVersionSequence.ps1
           ./.github/scripts/Test-NightlyPrereleasePlan.ps1
 
+      # Keep in step with rust-toolchain.toml at the repo root.
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98.0"
           components: rustfmt, clippy
 
       - name: Rust cache
@@ -378,3 +380,42 @@ jobs:
             exit 1
           fi
           echo "Committed changelog promotion: $new_oid"
+
+  # A nightly tag is pushed by nightly-prerelease.yml before this workflow is
+  # dispatched, so a failure here would otherwise leave the tag behind with no
+  # release attached. Eleven accumulated that way before this job existed.
+  cleanup-failed-tag:
+    needs: release
+    if: always() && needs.release.result == 'failure' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the orphaned nightly tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAG_NAME: v${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Only nightly betas. A stable tag is deliberate and stays put so the
+          # failure can be inspected and the run retried against the same ref.
+          case "$TAG_NAME" in
+            *-beta) ;;
+            *) echo "$TAG_NAME is not a nightly beta tag; leaving it in place."; exit 0 ;;
+          esac
+
+          # Load-bearing: deleting a tag that has a release breaks the release.
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$TAG_NAME has a release attached; leaving it in place."
+            exit 0
+          fi
+
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG_NAME" >/dev/null 2>&1; then
+            echo "$TAG_NAME does not exist on the remote; nothing to clean up."
+            exit 0
+          fi
+
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG_NAME"
+          echo "Deleted orphaned tag $TAG_NAME after a failed release run."
