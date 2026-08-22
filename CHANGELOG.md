@@ -10,6 +10,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 ### Fixed
 - Handle empty previous tag case in release workflow and scripts (b4cd9ae)
 - Streamline Pnp instance identification for Xinput devices (7a06a4b)
+- **release:** Resolve contributor handles from GitHub, drop the public-wording gate (a1946ca)
+- **bridge:** Clear clippy and unused import errors on 1.98 (11c07ae)
 
 ---
 
