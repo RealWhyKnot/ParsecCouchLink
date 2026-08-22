@@ -706,5 +706,10 @@ if (-not $SkipScrub) {
     }
 }
 
+# Tolerated native failures above -- an absent previous tag, an unauthenticated
+# gh -- leave a non-zero $LASTEXITCODE that callers read as a script failure.
+# Everything fatal has already thrown by this point.
+$global:LASTEXITCODE = 0
+
 # Single trimmed string so $(...) capture in calling scripts gets clean text.
 $body
