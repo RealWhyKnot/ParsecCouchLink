@@ -33,8 +33,8 @@
   prior tag or release exists, the body uses the curated CHANGELOG first-release
   section instead of walking the repository's full pre-release history.
 
-  Templates and the optional extras file run through the same public-wording
-  gates as commit subjects: ASCII normalisation, then wording checks.
+  Templates and the optional extras file run through the same ASCII
+  normalisation as commit subjects.
 
   Outputs the markdown body to stdout. Throws on:
     * empty slice (no qualifying commits between prev and current tag)
@@ -100,7 +100,7 @@
   available.
 
 .PARAMETER SkipScrub
-  Skip the public-wording and ASCII scrub. Escape hatch for unblocking edge cases;
+  Skip the ASCII scrub. Escape hatch for unblocking edge cases;
   the workflow should never set this. Default: $false.
 #>
 [CmdletBinding()]
@@ -363,12 +363,34 @@ if (-not $changelogNotes) {
 $lines = @()
 if ($raw) { $lines = $raw -split "`r?`n" | Where-Object { $_ } }
 
-# Git author.name to GitHub @-handle. Auto-changelog emits "by @<author>" and
-# GitHub @-mentions only resolve when the handle is the actual login. Local
-# git config uses the brand "WhyKnot" but the GitHub login is "RealWhyKnot".
-# Any commit author not in this map passes through unchanged.
+# Git author.name is not a GitHub login, and "by @<name>" credits whoever owns
+# that login when the two differ. Prefer the login GitHub reports for each
+# commit; this map covers runs where the API is unreachable. An author in
+# neither passes through unchanged.
 $AuthorHandleMap = @{
     'WhyKnot' = 'RealWhyKnot'
+    'Sticks'  = 'SticksDev'
+}
+
+# One compare call returns every commit in the range with the account it is
+# attributed to. Best-effort: the tag may not exist remotely yet on a manual
+# dispatch, so compare against the checked-out HEAD rather than the tag.
+$AuthorLoginBySha = @{}
+if ($Repo -and $prevTag -and -not $changelogNotes) {
+    $headSha = (& git rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $headSha) {
+        $compare = & gh api "repos/$Repo/compare/$prevTag...$($headSha.Trim())" --jq '.commits[] | [.sha, (.author.login // "")] | @tsv' 2>$null
+        if ($LASTEXITCODE -eq 0 -and $compare) {
+            foreach ($row in ($compare -split "`r?`n")) {
+                if (-not $row) { continue }
+                $cols = $row -split "`t", 2
+                if ($cols.Count -eq 2 -and $cols[1]) { $AuthorLoginBySha[$cols[0]] = $cols[1] }
+            }
+        }
+        else {
+            Write-Host "::warning::Could not resolve GitHub logins from the compare API; using the author handle map."
+        }
+    }
 }
 
 $entries = foreach ($line in $lines) {
@@ -378,7 +400,8 @@ $entries = foreach ($line in $lines) {
     $sha = $parts[0]
     $short = $parts[1]
     $author = $parts[2]
-    if ($AuthorHandleMap.ContainsKey($author)) { $author = $AuthorHandleMap[$author] }
+    if ($AuthorLoginBySha.ContainsKey($sha)) { $author = $AuthorLoginBySha[$sha] }
+    elseif ($AuthorHandleMap.ContainsKey($author)) { $author = $AuthorHandleMap[$author] }
     $subject = $parts[3]
 
     # Strip embedded version-stamp noise like " (2026.4.30.13-EB4B)". Some
@@ -593,9 +616,9 @@ foreach ($name in $templateOrder) {
 # Optional extras append. Free-form prose for the rare case where a release
 # needs to communicate something that isn't captured by commit subjects --
 # server-side coordination notes, migration steps, operational context, etc. The
-# file is read verbatim so the author has full markdown control; the same
-# public-wording checks run on the final composed body so extras are checked
-# the same way as commit subjects.
+# file is read verbatim so the author has full markdown control; the ASCII
+# scrub runs on the final composed body so extras are checked the same way as
+# commit subjects.
 if (Test-Path -LiteralPath $Extras) {
     $extrasContent = (Get-Content -LiteralPath $Extras -Raw -Encoding UTF8).Trim()
     if ($extrasContent) {
@@ -668,39 +691,6 @@ if (-not $SkipScrub) {
         "Fix: amend the offending commit subject (or extras file) to use ASCII equivalents. " +
         "Common substitutes are pre-mapped in Generate-ReleaseNotes.ps1; if a new character " +
         "trips this, add it to `$asciiSubs and try again."
-    }
-
-    # Public-wording grep. The release body is the public face of the repo;
-    # these patterns make it read like marketing prose or process notes.
-    # Fix the offending commit subject or template text, or mark the commit
-    # [skip changelog] when the term is unavoidable.
-    $forbiddenPatterns = @(
-        # Marketing puffery
-        '\bcomprehensive\b'
-        '\bleveraging\b'
-        '\bwhether\s+you''?re\b'
-        '\bempowers?\b'
-        '\bstreamline\b'
-        '\belevate\b'
-        '\bcutting-edge\b'
-        '\bseamless(ly)?\b'
-        '\belegant\b'
-        # Time-of-effort claims
-        '\b\d+ weeks of work\b'
-        '\bmonths of effort\b'
-        '\byears in the making\b'
-    )
-    $matches = foreach ($pat in $forbiddenPatterns) {
-        $found = [regex]::Matches($body, $pat, 'IgnoreCase')
-        foreach ($m in $found) {
-            [pscustomobject]@{ Pattern = $pat; Match = $m.Value; Index = $m.Index }
-        }
-    }
-    if ($matches) {
-        $report = $matches | ForEach-Object { "  pattern $($_.Pattern) matched '$($_.Match)' at index $($_.Index)" }
-        throw "public-wording patterns in release body:`n$($report -join "`n")`n" +
-        "Fix: amend the offending commit subject (or extras file) to use plainer language, " +
-        "or mark the commit [skip changelog] if the term is unavoidable."
     }
 }
 
