@@ -167,7 +167,7 @@ function Get-KnownPrereleaseTags([string]$Repo, [string[]]$AdditionalTags) {
     }
 
     if ($Repo) {
-        $listJson = & gh release list --repo $Repo --limit 100 --json tagName, isPrerelease 2>$null
+        $listJson = & gh release list --repo $Repo --limit 100 --json tagName,isPrerelease 2>$null
         if ($LASTEXITCODE -eq 0 -and $listJson) {
             try {
                 $releases = $listJson | ConvertFrom-Json
@@ -228,7 +228,7 @@ function Resolve-PrevTagForSlice([string]$Tag, [string]$Repo, [string[]]$Additio
 
     # Layer 2: subject-match the most recent published GitHub release.
     if ($Repo) {
-        $listJson = & gh release list --repo $Repo --limit 20 --json tagName, publishedAt, isPrerelease 2>$null
+        $listJson = & gh release list --repo $Repo --limit 20 --json tagName,publishedAt,isPrerelease 2>$null
         if ($LASTEXITCODE -eq 0 -and $listJson) {
             $candidatePrevTag = $null
             try {
