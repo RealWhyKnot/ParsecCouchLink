@@ -12,6 +12,7 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 - Streamline Pnp instance identification for Xinput devices (7a06a4b)
 - **release:** Resolve contributor handles from GitHub, drop the public-wording gate (a1946ca)
 - **bridge:** Clear clippy and unused import errors on 1.98 (11c07ae)
+- **release:** Parse the compare response in PowerShell so 5.1 handles it (51c108c)
 
 ---
 
