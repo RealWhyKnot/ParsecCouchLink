@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.8.23.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.8.23.0-beta) -- 2026-08-23
+
 ### Fixed
 - **release:** Pass gh --json field lists as a single argument (156869e)
 
