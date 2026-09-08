@@ -42,7 +42,6 @@ jobs:
           ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
           ./.github/scripts/Test-GenerateReleaseNotes.ps1
-          ./.github/scripts/Test-ReleaseVersionSequence.ps1
           ./.github/scripts/Test-NightlyPrereleasePlan.ps1
 
       # Keep in step with rust-toolchain.toml at the repo root.
@@ -138,8 +137,9 @@ jobs:
           "tag=$tag" >> $env:GITHUB_OUTPUT
 
       - name: Validate release version sequence
-        shell: pwsh
-        run: ./.github/scripts/Assert-ReleaseVersionSequence.ps1 -Tag '${{ steps.version.outputs.tag }}'
+        uses: RealWhyKnot/workflows/version-sequence@v1
+        with:
+          tag: '${{ steps.version.outputs.tag }}'
 
       - name: Promote changelog
         id: changelog
