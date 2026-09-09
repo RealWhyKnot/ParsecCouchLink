@@ -6,8 +6,8 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: Version without leading v, such as 2026.5.15.0
+      tag:
+        description: Tag to release, such as v2026.5.15.0
         required: true
         type: string
 
@@ -119,22 +119,10 @@ jobs:
 
       - name: Resolve version
         id: version
-        shell: pwsh
-        run: |
-          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            $version = '${{ inputs.version }}'
-            $tag = "v$version"
-          } else {
-            $tag = '${{ github.ref_name }}'
-            $version = $tag.TrimStart('v')
-          }
-          if ($version -notmatch '^\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$') {
-            throw "Invalid version '$version'. Expected YYYY.M.D.N, YYYY.M.D.N-XXXX, or YYYY.M.D.N-beta."
-          }
-          $isBeta = $tag -like '*-beta*'
-          "is_beta=$($isBeta.ToString().ToLower())" >> $env:GITHUB_OUTPUT
-          "version=$version" >> $env:GITHUB_OUTPUT
-          "tag=$tag" >> $env:GITHUB_OUTPUT
+        uses: RealWhyKnot/workflows/resolve-tag@v1
+        with:
+          tag: ${{ inputs.tag }}
+          tag-pattern: '^v\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$'
 
       - name: Validate release version sequence
         uses: RealWhyKnot/workflows/version-sequence@v1
@@ -241,7 +229,7 @@ jobs:
           # workflow's failure is visible -- preferable to publishing a
           # release that's missing assets.
           $extra = @('--draft')
-          if ('${{ steps.version.outputs.is_beta }}' -eq 'true') { $extra += @('--prerelease','--latest=false') }
+          if ('${{ steps.version.outputs.prerelease }}' -eq 'true') { $extra += @('--prerelease','--latest=false') }
           gh release create $env:TAG_NAME $env:ZIP_PATH $env:INTEGRITY_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath @extra
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }
 
@@ -395,7 +383,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          TAG_NAME: v${{ inputs.version }}
+          TAG_NAME: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 

@@ -78,7 +78,7 @@ jobs:
           git push $remote "refs/tags/$env:TAG_NAME"
           if ($LASTEXITCODE -ne 0) { throw "Could not push beta tag $env:TAG_NAME" }
 
-          gh workflow run release.yml --ref main --field "version=$env:VERSION"
+          gh workflow run release.yml --ref main --field "tag=$env:TAG_NAME"
           if ($LASTEXITCODE -ne 0) { throw "Could not dispatch release.yml for $env:VERSION" }
 
           Write-Host "Pushed $env:TAG_NAME and dispatched release.yml for $env:VERSION."
