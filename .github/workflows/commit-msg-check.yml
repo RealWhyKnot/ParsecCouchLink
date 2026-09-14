@@ -12,4 +12,5 @@ jobs:
   check:
     uses: RealWhyKnot/workflows/.github/workflows/commit-msg-check.yml@v1
     with:
+      check-conventional: true
       stamp-pattern: '\([0-9]{4}\.[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9]{4})?\)'
