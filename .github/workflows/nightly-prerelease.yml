@@ -42,14 +42,22 @@ jobs:
           git fetch --tags --force
           ./.github/scripts/Get-NightlyPrereleasePlan.ps1
 
+      - name: Check for functional changes
+        id: gate
+        if: ${{ steps.plan.outputs.has_changes == 'true' }}
+        uses: RealWhyKnot/workflows/beta-gate@v1
+        with:
+          ignore-paths: |
+            pico-bridge/tests/**
+
       - name: Report no changes
-        if: ${{ steps.plan.outputs.has_changes != 'true' }}
+        if: ${{ steps.gate.outputs.has_changes != 'true' }}
         shell: pwsh
         run: |
           Write-Host "No releasable inputs changed since ${{ steps.plan.outputs.base_tag }}."
 
       - name: Push beta tag and dispatch release
-        if: ${{ steps.plan.outputs.has_changes == 'true' }}
+        if: ${{ steps.gate.outputs.has_changes == 'true' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
