@@ -4,20 +4,8 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
-
----
-
-## [v2026.9.9.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.9.9.0-beta) -- 2026-09-09
-
 ### Fixed
 - Keep the build stamp in the git dir under the shared hook (2026.9.8.0-16ED4) (d98d607)
-
----
-
-## [v2026.8.23.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.8.23.0-beta) -- 2026-08-23
-
-### Fixed
 - **release:** Pass gh --json field lists as a single argument (156869e)
 
 ---
@@ -34,12 +22,6 @@ _No notable changes since the last release._
 - **bridge:** Clear clippy and unused import errors on 1.98 (11c07ae)
 - **release:** Parse the compare response in PowerShell so 5.1 handles it (51c108c)
 - **release:** Stop tolerated git failures leaking a non-zero exit code (ad5f4ee)
-
----
-
-## [v2026.6.25.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.6.25.0-beta) -- 2026-06-25
-
-_Maintenance release; see commit log for details._
 
 ---
 
