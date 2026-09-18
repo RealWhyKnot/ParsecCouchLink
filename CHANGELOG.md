@@ -7,6 +7,7 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 ### Fixed
 - Keep the build stamp in the git dir under the shared hook (2026.9.8.0-16ED4) (d98d607)
 - **release:** Pass gh --json field lists as a single argument (156869e)
+- **release:** Credit authors by profile link instead of a mention (dff6f0a)
 
 ---
 
