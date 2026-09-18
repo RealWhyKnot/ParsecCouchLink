@@ -372,6 +372,15 @@ $AuthorHandleMap = @{
     'Sticks'  = 'SticksDev'
 }
 
+function Format-AuthorCredit {
+    param([string] $Author)
+
+    if (-not $Author) { return "" }
+    if ($Author -match '\[bot]$') { return $Author }
+    if ($Author -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$') { return $Author }
+    return "[$Author](https://github.com/$Author)"
+}
+
 # One compare call returns every commit in the range with the account it is
 # attributed to. Best-effort: the tag may not exist remotely yet on a manual
 # dispatch, so compare against the checked-out HEAD rather than the tag.
@@ -580,14 +589,14 @@ elseif ($useGroups) {
         [void]$sb.AppendLine("### $($g.Name)")
         foreach ($t in $g.Group) {
             $e = $t.Entry
-            [void]$sb.AppendLine("- $($e.Subject) by @$($e.Author) in $($e.Short)")
+            [void]$sb.AppendLine("- $($e.Subject) by $(Format-AuthorCredit $e.Author) in $($e.Short)")
         }
         [void]$sb.AppendLine()
     }
 }
 else {
     foreach ($e in $entries) {
-        [void]$sb.AppendLine("- $($e.Subject) by @$($e.Author) in $($e.Short)")
+        [void]$sb.AppendLine("- $($e.Subject) by $(Format-AuthorCredit $e.Author) in $($e.Short)")
     }
     [void]$sb.AppendLine()
 }
