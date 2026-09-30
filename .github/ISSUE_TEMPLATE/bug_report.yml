@@ -14,7 +14,7 @@ body:
         resulting `couchlink-bundle-*.zip` into the comment box at
         the bottom. The bundle has logs, doctor output, USB state,
         and firmware diagnostics when the Pico is reachable. It does
-        NOT contain your Wi-Fi password.
+        not contain your Wi-Fi password.
 
   - type: input
     id: bridge_version
@@ -73,13 +73,13 @@ body:
         script itself never ran (couchlink.exe missing, PowerShell
         execution policy, etc.).
       options:
-        - "1 -- intro / press-Enter"
-        - "2 -- waiting for BOOTSEL drive"
-        - "3 -- flashing UF2"
-        - "4 -- Wi-Fi provisioning over USB-CDC"
-        - "5 -- Pico joining Wi-Fi"
-        - "6 -- LAN discovery from this PC"
-        - "7 -- Windows Startup shortcut"
+        - "1 - intro / press-Enter"
+        - "2 - waiting for BOOTSEL drive"
+        - "3 - flashing UF2"
+        - "4 - Wi-Fi provisioning over USB-CDC"
+        - "5 - Pico joining Wi-Fi"
+        - "6 - LAN discovery from this PC"
+        - "7 - Windows Startup shortcut"
         - "did not start"
         - "unknown / not applicable"
     validations:

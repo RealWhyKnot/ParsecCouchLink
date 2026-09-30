@@ -1,4 +1,4 @@
-# Hardware Lab
+# Hardware lab
 
 `couchlink lab` is an unattended bench harness for development and release
 checks. It is meant for plugged-in Picos on a Windows host, not for normal
@@ -33,7 +33,7 @@ By default, `--power auto` uses an external power backend only when one is
 configured and its probe command passes. Otherwise it falls back to firmware
 reset re-enumeration.
 
-## Reconnect Backends
+## Reconnect backends
 
 | Power value | Behavior |
 |---|---|
@@ -58,7 +58,7 @@ Example full reconnect run without reflashing:
 .\couchlink.exe lab --scenario full --cycles 1 --power pnp-remove --no-flash --json .\lab-report.json
 ```
 
-## Select Boards
+## Select boards
 
 With no selector, the lab probes every visible Pico:
 
@@ -72,7 +72,7 @@ Select one or more boards by UID, IP, or board name:
 .\couchlink.exe lab --pico 07D37EB6 --pico 192.168.50.4
 ```
 
-## Firmware Inputs
+## Firmware inputs
 
 The flash cycle resolves the matching UF2 for the detected board. Point `--uf2`
 at either a specific UF2 or a directory containing board-specific release files:
@@ -84,7 +84,7 @@ at either a specific UF2 or a directory containing board-specific release files:
 Use `--no-flash` when the bench should exercise mode and reconnect paths
 without writing firmware.
 
-## External Power Backend
+## External power backend
 
 External power commands live in the per-user config file:
 

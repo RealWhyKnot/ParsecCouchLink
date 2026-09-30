@@ -21,19 +21,19 @@ USB4MAPLE or another USB-to-console adapter
 Console player 2
 ```
 
-## Start Here
+## Start here
 
-- [[Quick Start]] - install from a release zip and run the setup script.
-- [[Controller Routing]] - choose which controller goes to which Pico.
-- [[Setup and Flashing]] - what the script does and how to recover a Pico.
-- [[Troubleshooting]] - what to run when setup or discovery fails.
-- [[Hardware Lab]] - unattended bench checks for firmware, reconnects, and controller output.
-- [[Reporting-Bugs]] - how to make a bundle and what to include in an issue.
-- [[Build]] - build the release zip from source.
-- [[Protocol]] - short runtime and setup protocol reference.
-- [[Changelog]] - release notes.
+- [Quick Start](Quick-Start.md) - install from a release zip and run the setup script.
+- [Controller Routing](Controller-Routing.md) - choose which controller goes to which Pico.
+- [Setup and Flashing](Setup-and-Flashing.md) - what the script does and how to recover a Pico.
+- [Troubleshooting](Troubleshooting.md) - what to run when setup or discovery fails.
+- [Hardware Lab](Hardware-Lab.md) - unattended bench checks for firmware, reconnects, and controller output.
+- [Reporting bugs](Reporting-Bugs.md) - how to make a bundle and what to include in an issue.
+- [Build](Build.md) - build the release zip from source.
+- [Protocol](Protocol.md) - short runtime and setup protocol reference.
+- [Changelog](Changelog.md) - release notes.
 
-## What Ships In A Release
+## What ships in a release
 
 | File | Purpose |
 |---|---|
@@ -45,7 +45,7 @@ Console player 2
 | `CHANGELOG.md` | Release history. |
 | `LICENSE` / `NOTICE` | License text and release archive notes. |
 
-## Normal Flow
+## Normal flow
 
 1. Download the release zip.
 2. Extract it.
@@ -59,4 +59,4 @@ The Wi-Fi password is sent to the Pico over USB setup mode. It is not saved on t
 
 For development benches with the Pico plugged into the Windows host, `couchlink lab`
 can cycle setup mode, BOOTSEL flashing, run-mode controller enumeration, and
-signal checks. See [[Hardware Lab]].
+signal checks. See [Hardware Lab](Hardware-Lab.md).

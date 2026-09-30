@@ -34,7 +34,7 @@ For a shareable support bundle:
 
 The bundle includes recent logs and diagnostic output. It does not include Wi-Fi credentials or SSID.
 
-## Pico Debug And Recovery
+## Pico debug and recovery
 
 If the Pico feels "lost", use the debug menu first:
 
@@ -62,7 +62,7 @@ Useful direct commands:
 If none of those modes show a Pico, use BOOTSEL flashing. Hold BOOTSEL while
 plugging the Pico into this PC, then run the guided firmware update.
 
-## Setup Cannot Find The Pico In BOOTSEL
+## Setup cannot find the Pico in BOOTSEL
 
 Check:
 
@@ -77,7 +77,7 @@ Then rerun:
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
 
-## Setup Cannot Find USB Serial Mode
+## Setup cannot find USB serial mode
 
 This happens after flashing if the Pico did not boot the firmware setup mode.
 
@@ -96,7 +96,7 @@ If neither setup-mode USB nor Wi-Fi discovery appears, try:
 
 If it still fails, flash again.
 
-## Wi-Fi Provisioning Fails
+## Wi-Fi provisioning fails
 
 Check:
 
@@ -111,7 +111,7 @@ Run:
 .\couchlink.exe configure-wifi
 ```
 
-## Discovery Fails
+## Discovery fails
 
 Run:
 
@@ -144,7 +144,7 @@ Try this in order:
 5. If the router name or password changed, run `.\couchlink.exe
    configure-wifi`.
 6. If `configure-wifi` cannot find the Pico, use BOOTSEL flashing in
-   [[Setup and Flashing]], then run `configure-wifi` again.
+   [Setup and Flashing](Setup-and-Flashing.md), then run `configure-wifi` again.
 7. Run `.\couchlink.exe doctor`.
 8. Run `.\couchlink.exe bundle` and attach the ZIP to a bug report.
 
@@ -152,25 +152,25 @@ Common causes:
 
 - Windows Firewall blocks UDP broadcast. The bridge will print a
   `New-NetFirewallRule` command the first time it sees a bind / self-ping
-  failure -- copy that into an elevated PowerShell prompt to allow inbound
+  failure; copy that into an elevated PowerShell prompt to allow inbound
   UDP for the bridge.
 - The Pico joined a different Wi-Fi network. Verify with
   `.\couchlink.exe doctor`.
 - Router AP isolation blocks device-to-device traffic. Many consumer
   routers and APs ship with a feature called "AP isolation" or "Client
-  isolation" (the exact name varies -- UniFi, Eero, and a number of ISP
+  isolation" (the exact name varies: UniFi, Eero, and a number of ISP
   gateways have it). When enabled, two clients on the same Wi-Fi cannot
   see each other, so UDP discovery never reaches the Pico. Disable it in
   your router's admin UI, or move the Pico and PC onto a network without
   it.
-- Multi-homed Windows PC -- if your PC has both Ethernet and Wi-Fi
+- Multi-homed Windows PC: if your PC has both Ethernet and Wi-Fi
   connected at the same time, broadcast traffic can go out the wrong
   adapter and never reach the Pico on the Wi-Fi side. The bridge tries
   to broadcast on every active interface; if it still misses, temporarily
   disable the adapter that does not lead to the Pico.
 - The Pico is powered from the console side but too far from Wi-Fi.
 
-## Wi-Fi Country Code (EU / UK channels 12 and 13)
+## Wi-Fi country code (EU / UK channels 12 and 13)
 
 The shipped firmware uses the `CYW43_COUNTRY_WORLDWIDE` country code by
 default. That is safe to ship anywhere but excludes channels 12 and 13
@@ -186,7 +186,7 @@ cmake --build build
 Use one of the `CYW43_COUNTRY_*` macros documented in
 `pico-sdk/src/rp2_common/pico_cyw43_arch/include/pico/cyw43_arch.h`.
 
-## Controller Input Is Missing
+## Controller input is missing
 
 Run:
 
@@ -206,7 +206,7 @@ On the **Basic** tab, choose the Pico, then use **Start streaming with Controlle
 
 For Bluetooth mode, the Pico must stay plugged into the bridge PC over USB. The live command keeps running until you stop it, and the status line shows PC USB input plus Bluetooth receiver state instead of Pico UDP replies. If the stream refuses to start, confirm Windows sees the CouchLink USB diagnostic device, then rerun `.\couchlink.exe bluetooth`.
 
-## USB Adapter Does Not See The Pico
+## USB adapter does not see the Pico
 
 If the Pico is on Wi-Fi but the console adapter or a test PC does not see it as a controller, run:
 
@@ -228,13 +228,13 @@ The result tells you where USB stopped:
 - `host is polling the <persona> endpoint`: the adapter accepted the Pico as a controller. Some adapters do not send rumble, LED, or output traffic until a game starts.
 
 On a development bench where the Pico is plugged into the Windows host, use
-[[Hardware Lab]] for repeatable reconnect checks. `couchlink lab --scenario full
+[Hardware Lab](Hardware-Lab.md) for repeatable reconnect checks. `couchlink lab --scenario full
 --power pnp-remove --no-flash` removes and rescans the CouchLink setup and
 XInput PnP instances, then verifies Wi-Fi/input detection and signal
 delivery after reconnect. It is still a Windows PnP simulation, not a physical
 power cut.
 
-## Bluetooth Receiver Does Not React
+## Bluetooth receiver does not react
 
 Bluetooth mode does not use the Pico as a console-side USB controller. Leave the Pico plugged into the bridge PC, pair the receiver with the CouchLink Bluetooth device, then run:
 

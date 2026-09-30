@@ -10,7 +10,7 @@ Local builds use the root `build.ps1`, which stages the same shape as a release 
 - ARM GNU Toolchain with `arm-none-eabi-gcc` on `PATH`.
 - PowerShell 7 or Windows PowerShell.
 
-## Build Everything
+## Build everything
 
 ```powershell
 .\build.ps1
@@ -31,7 +31,7 @@ dist\ParsecCouchLink\NOTICE
 
 Both Pico variants are built every time. The release setup script picks the matching firmware at flash time based on which Pico is in BOOTSEL, so only one of the two UF2s is actually written to a given device.
 
-## Build A Release Zip
+## Build a release zip
 
 ```powershell
 .\build.ps1 -Package
@@ -46,7 +46,7 @@ dist\ParsecCouchLink-v<version>.manifest.tsv
 
 The manifest lists each file in the zip with size and SHA-256.
 
-## Build Only One Side
+## Build only one side
 
 Rebuild just the Windows bridge:
 
@@ -100,12 +100,11 @@ Run the formatting and lint script used locally before commits:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\lint.ps1
 ```
 
-For plugged-in Pico benches, see [[Hardware Lab]]. The lab harness can produce
+For plugged-in Pico benches, see [Hardware Lab](Hardware-Lab.md). The lab harness can produce
 a JSON report and can exercise setup-mode reconnects, BOOTSEL flash cycles,
 run-mode XInput enumeration, and controller signal checks.
 
-## GitHub Workflows
+## GitHub workflows
 
 - `ci.yml` checks the Rust bridge and builds the Pico firmware.
 - `release.yml` builds the release zip on `v*` tags and publishes it.
-- `wiki-sync.yml` mirrors `wiki/` to the GitHub Wiki.

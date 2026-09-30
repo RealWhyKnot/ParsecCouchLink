@@ -5,4 +5,4 @@
 3. Open PowerShell in the extracted folder.
 4. Run `powershell -ExecutionPolicy Bypass -File .\setup.ps1`.
 
-Quick start: <https://github.com/{full-repo}/wiki/Quick-Start>.
+Quick start: <https://github.com/{full-repo}/blob/main/wiki/Quick-Start.md>.

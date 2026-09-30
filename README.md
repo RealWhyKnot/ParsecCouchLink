@@ -4,22 +4,22 @@ Parsec CouchLink lets a remote Parsec player use a real retro console as player 
 
 The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a USB controller to a console adapter such as USB4MAPLE.
 
-For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, for one -- the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For adapters with uncertain gamepad support, `couchlink.exe auto` tries the supported gamepad USB modes and keeps the first one the adapter polls. See [Controller Routing](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Controller-Routing) for Auto, Xbox, DInput/PlayStation, Maple, and keyboard modes.
+For games that need a keyboard instead, such as Typing of the Dead on the Dreamcast, the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For adapters with uncertain gamepad support, `couchlink.exe auto` tries the supported gamepad USB modes and keeps the first one the adapter polls. See [Controller Routing](wiki/Controller-Routing.md) for Auto, Xbox, DInput/PlayStation, Maple, and keyboard modes.
 
-**[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases)** | **[Wiki](https://github.com/RealWhyKnot/ParsecCouchLink/wiki)** | **[Quick Start](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Quick-Start)** | **[Troubleshooting](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Troubleshooting)**
+[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases) | [Docs](wiki/Home.md) | [Quick start](wiki/Quick-Start.md) | [Troubleshooting](wiki/Troubleshooting.md)
 
-## What You Need
+## What you need
 
 - Windows 10/11 PC running Parsec
 - One of these Pico boards:
-  - Raspberry Pi Pico 2 W (RP2350 + Wi-Fi) -- the default target
-  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi) -- also fully supported
+  - Raspberry Pi Pico 2 W (RP2350 + Wi-Fi), the default target
+  - Raspberry Pi Pico W or Pico WH (RP2040 + Wi-Fi), also supported
 - Micro-USB data cable
 - 2.4 GHz Wi-Fi name and password (both boards use a 2.4 GHz-only radio)
 - USB4MAPLE or another USB-to-console adapter that accepts Xbox 360, Xbox One, PS3, PS4, or keyboard USB devices
 - The console and controller adapter you want to use
 
-## Quick Start
+## Quick start
 
 1. Download the latest `ParsecCouchLink-v*.zip` from Releases.
 2. Extract the whole zip to a normal folder, such as `Downloads` or `C:\Tools\ParsecCouchLink`.
@@ -34,7 +34,7 @@ For games that need a keyboard instead -- Typing of the Dead on the Dreamcast, f
 
 After setup, have the remote player join through Parsec and run `couchlink.exe`. The app opens on the **Basic** tab, scans Wi-Fi, setup USB, and BOOTSEL, then shows each Pico with commands under that Pico only. Use the Pico's **Start streaming with Controller 1** or **Choose controller and stream** command for normal play. One-off diagnostics and fixes are under the **Advanced** tab.
 
-## Release Contents
+## Release contents
 
 | File | Purpose |
 |---|---|
@@ -48,7 +48,7 @@ After setup, have the remote player join through Parsec and run `couchlink.exe`.
 
 Setup detects which Pico you have at BOOTSEL time and uses the matching UF2 automatically. Only one of the two firmware files is written to your Pico.
 
-## Daily Use
+## Daily use
 
 If you accepted the startup shortcut during setup, sign into Windows and leave the bridge running. If not, run `couchlink.exe` before the Parsec session starts.
 
@@ -99,26 +99,24 @@ If something went wrong, the fastest path is:
 3. Fill in the form and drag the generated ZIP into the comment box.
 
 The bundle contains logs, doctor output, firmware diagnostics, USB adapter
-counters, and recent Windows USB events when the Pico is reachable. It does
-NOT contain your Wi-Fi password.
+counters, and recent Windows USB events when the Pico is reachable. It does not contain your Wi-Fi password.
 
 If the bridge won't run at all, the setup transcript at
 `%LOCALAPPDATA%\ParsecCouchLink\data\logs\setup-*.log` is the next-best
-thing -- attach that instead.
+thing, so attach that instead.
 
-See the wiki's [Reporting-Bugs](https://github.com/RealWhyKnot/ParsecCouchLink/wiki/Reporting-Bugs)
-page for the full version.
+See [Reporting bugs](wiki/Reporting-Bugs.md) for the full version.
 
-## Source Layout
+## Source layout
 
 - `bridge/` - Rust Windows bridge and setup wizard.
 - `pico-bridge/` - Pico firmware.
 - `setup.ps1` - release entrypoint for first-run setup.
 - `build.ps1` - local build and release zip staging.
-- `wiki/` - source-controlled GitHub Wiki pages.
+- `wiki/` - the docs.
 
 Runtime protocol v1 and setup protocol v1 are documented in the
-[Protocol](wiki/Protocol.md) wiki page. Hardware bench coverage is documented
+[Protocol](wiki/Protocol.md) page. Hardware bench coverage is documented
 in [Hardware Lab](wiki/Hardware-Lab.md).
 
 ## License

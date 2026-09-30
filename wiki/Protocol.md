@@ -1,6 +1,6 @@
 # Protocol
 
-This page is for maintainers. Normal users should start with [[Quick Start]].
+This page is for maintainers. Normal users should start with [Quick Start](Quick-Start.md).
 
 Parsec CouchLink has three small protocols:
 
@@ -25,17 +25,17 @@ Packet types:
 | `0x02` | Heartbeat. |
 | `0x03` | Discovery broadcast from the bridge. |
 | `0x04` | Pico ack with firmware and board identity. |
-| `0x05` | `GET_LOG` -- bridge requests the firmware diagnostic ring. Same 17-byte shape as the others; body is reserved. |
-| `0x06` | `GET_USB_DIAG` -- bridge requests current run-mode USB status. Same 17-byte request shape as the others; body is reserved. |
-| `0x07` | `REBOOT_TO_SETUP` -- bridge asks run-mode firmware to reboot into setup-mode USB-CDC so Wi-Fi can be changed. Same 17-byte request shape as the others; body is reserved. |
-| `0x08` | `KEY_STATE` -- keyboard report for the keyboard persona. The 8-byte USB HID boot report sits in the first 8 body bytes: modifier bitmap, reserved, then six key usage codes. |
-| `0x09` | `KEY_HEARTBEAT` -- keyboard heartbeat, sent when the report is unchanged so the firmware watchdog stays fed. |
-| `0x0A` | `SET_PERSONA` -- bridge asks run-mode firmware to persist an output persona and reboot into it. `body[0]` is the persona (`0` = Xbox 360 / XInput, `1` = keyboard, `2` = Maple, `3` = PS3, `4` = PS4, `5` = Xbox One). Ignored if the Pico is already in that persona. |
-| `0x0B` | `GET_VERSION` -- bridge requests the exact runtime firmware build. Same 17-byte request shape as the others; body is reserved. |
-| `0x0E` | `IDENTIFY` -- bridge asks run-mode firmware to blink the onboard LED so the user can match a discovery entry to a physical board. `body[0]` is the blink duration in seconds (firmware clamps to 60; `0` stops an active blink). The firmware confirms with a normal ack. There is no spare ACK capability bit left, so the bridge detects support by whether that ack arrives; older firmware ignores the request silently. |
-| `0x85` | `LOG_CHUNK` -- one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
-| `0x86` | `USB_DIAG` -- fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, IN/OUT report counters, recent timestamps, and CRC-16. |
-| `0x87` | `VERSION` -- fixed 17-byte reply to `GET_VERSION` with `year`, `month`, `day`, `revision`, and optional four-character development suffix. |
+| `0x05` | `GET_LOG`: bridge requests the firmware diagnostic ring. Same 17-byte shape as the others; body is reserved. |
+| `0x06` | `GET_USB_DIAG`: bridge requests current run-mode USB status. Same 17-byte request shape as the others; body is reserved. |
+| `0x07` | `REBOOT_TO_SETUP`: bridge asks run-mode firmware to reboot into setup-mode USB-CDC so Wi-Fi can be changed. Same 17-byte request shape as the others; body is reserved. |
+| `0x08` | `KEY_STATE`: keyboard report for the keyboard persona. The 8-byte USB HID boot report sits in the first 8 body bytes: modifier bitmap, reserved, then six key usage codes. |
+| `0x09` | `KEY_HEARTBEAT`: keyboard heartbeat, sent when the report is unchanged so the firmware watchdog stays fed. |
+| `0x0A` | `SET_PERSONA`: bridge asks run-mode firmware to persist an output persona and reboot into it. `body[0]` is the persona (`0` = Xbox 360 / XInput, `1` = keyboard, `2` = Maple, `3` = PS3, `4` = PS4, `5` = Xbox One). Ignored if the Pico is already in that persona. |
+| `0x0B` | `GET_VERSION`: bridge requests the exact runtime firmware build. Same 17-byte request shape as the others; body is reserved. |
+| `0x0E` | `IDENTIFY`: bridge asks run-mode firmware to blink the onboard LED so the user can match a discovery entry to a physical board. `body[0]` is the blink duration in seconds (firmware clamps to 60; `0` stops an active blink). The firmware confirms with a normal ack. There is no spare ACK capability bit left, so the bridge detects support by whether that ack arrives; older firmware ignores the request silently. |
+| `0x85` | `LOG_CHUNK`: one variable-length reply chunk to `GET_LOG`. 12-byte header (chunk index, flags, total chunks, payload length, lost-bytes counter) + up to 256 bytes of log payload + CRC-16. The final chunk sets the `LAST_CHUNK` flag bit. |
+| `0x86` | `USB_DIAG`: fixed 78-byte reply to `GET_USB_DIAG` with USB mount/suspend state, descriptor counters, IN/OUT report counters, recent timestamps, and CRC-16. |
+| `0x87` | `VERSION`: fixed 17-byte reply to `GET_VERSION` with `year`, `month`, `day`, `revision`, and optional four-character development suffix. |
 
 The controller fields match the standard XInput button, trigger, and stick layout so the bridge can copy the Windows XInput state directly into the packet body. The Xbox 360, Maple, PS3, PS4, Xbox One, generic HID, and Bluetooth personas consume the controller state body; the Pico maps the same state into the selected output report shape. Keyboard packets carry a standard USB HID boot-keyboard report, so a Pico in the keyboard persona processes `KEY_STATE`/`KEY_HEARTBEAT`. The bridge sends whichever packet type matches the persona the Pico advertised in its ack.
 
@@ -43,7 +43,7 @@ Compatibility is gated by protocol version. The bridge refuses to stream to a Pi
 
 The ACK keeps its compact legacy body for compatibility: protocol version, date triplet, board type, uptime, and short UID. When `FULL_VERSION_SUPPORTED` is set, the bridge immediately follows discovery with `GET_VERSION` so user-facing Wi-Fi status can show the exact firmware string, including suffixes such as `2026.6.15.0-0030`.
 
-## USB-CDC Setup
+## USB-CDC setup
 
 Setup mode is used before the Pico has working Wi-Fi credentials, or when credentials are cleared. Bluetooth run mode intentionally keeps the same CDC identity so the bridge PC can send live controller input with one local USB hop.
 
@@ -77,9 +77,9 @@ four-character development suffix. Development builds report versions such as
 
 `BT_STATUS` payload version 4 starts with the version 1 fixed fields: `version`, `flags`, `target`, `last_status`, `report_len`, one reserved byte, `cid`, ten little-endian counters (`init`, `ready`, `open`, `close`, `can_send`, `report_build`, `report_send`, `send_request`, `last_event_ms`, `last_send_ms`). Flag bit 0 means the Bluetooth stack started, bit 1 means a receiver is connected, and bit 2 means a report send is queued. Version 2 added little-endian control-report counters: `get_report_count`, `get_report_success_count`, `get_report_unsupported_count`, `set_report_count`, `set_report_accepted_count`, `set_report_unsupported_count`, `out_report_count`, `out_report_accepted_count`, and `out_report_unsupported_count`; one-byte last report IDs/types for GET, SET, and interrupt OUT; two reserved bytes; and little-endian last payload lengths for GET, SET, and interrupt OUT. Version 3 appended pairing/security counters: PIN request/response, user-confirmation request/response, simple-pairing complete, authentication complete, link-key notification, encryption change, disconnection complete, HID open failure, `last_security_event_ms`, and the last security/open status bytes. Version 4 appends active HID reconnect counters (`reconnect_state`, cycle attempts, last status/reason, schedule/attempt/success/failure/blocked counts, and `last_reconnect_ms`), Classic ACL connection-complete status, and observed incoming HID L2CAP PSM/local CID counters. Byte 212 is the advertised-name length, followed by the advertised Classic Bluetooth HID name. Version 3 used byte 152 for the name length, version 2 used byte 98, and version 1 used byte 48. Current bridge builds decode versions 1, 2, and 3 with newer fields set to zero, and future higher versions decode the stable version 3 prefix while reporting the newer status version.
 
-## USB Vendor Diag (setup mode)
+## USB vendor diag (setup mode)
 
-Setup mode's composite also exposes a vendor-class interface (interface 2, class `0xFF`) that Windows binds to WinUSB. MS OS 2.0 descriptors advertise the binding, so no INF file is needed on Windows 8.1+. The host reads the firmware diagnostic ring buffer via a vendor IN control transfer on EP0, which works regardless of CDC bulk endpoint state -- diag retrieval no longer relies on the CDC FIFO being drained.
+Setup mode's composite also exposes a vendor-class interface (interface 2, class `0xFF`) that Windows binds to WinUSB. MS OS 2.0 descriptors advertise the binding, so no INF file is needed on Windows 8.1+. The host reads the firmware diagnostic ring buffer via a vendor IN control transfer on EP0, which works regardless of CDC bulk endpoint state; diag retrieval no longer relies on the CDC FIFO being drained.
 
 Control transfer:
 
@@ -92,24 +92,24 @@ Control transfer:
 
 Response payload matches the CDC `GET_LOG_BUFFER` body: a 4-byte little-endian lost-bytes counter, followed by the most-recent ring contents.
 
-USB-output run modes do not expose this interface -- the XInput persona is deliberately minimal to keep `xusb22.sys` binding stable. In those run modes, diag retrieval uses UDP `GET_LOG` instead. Bluetooth run mode keeps the setup USB identity on the bridge PC so CDC can carry live controller input and diagnostics while Bluetooth carries the controller output.
+USB-output run modes do not expose this interface; the XInput persona is deliberately minimal to keep `xusb22.sys` binding stable. In those run modes, diag retrieval uses UDP `GET_LOG` instead. Bluetooth run mode keeps the setup USB identity on the bridge PC so CDC can carry live controller input and diagnostics while Bluetooth carries the controller output.
 
 The bridge's `couchlink bundle` tries CDC, vendor control, and UDP in order; the first to succeed wins, and `manifest.json`'s `pico_diag_source` records which path produced the captured log (`setup-cdc`, `vendor-control`, or `run-udp`).
 
-## Runtime Persona
+## Runtime persona
 
 In run mode, the Pico presents one output persona, chosen by a persona byte stored alongside the Wi-Fi credentials in flash. Auto is a bridge-side selector that chooses one of the gamepad personas; it is not a firmware persona.
 
 - **Xbox 360 / XInput** (default): a wired Xbox 360 controller (`0x045E:0x028E`, vendor class for `xusb22.sys`).
-- **Keyboard**: a standard USB HID boot keyboard (`0x2E8A:0xCAF1`), for console games that need a keyboard such as Typing of the Dead on the Dreamcast.
-- **Maple**: a Dreamcast Maple adapter mode fed by the same XInput state packets as the XInput persona. USB enumeration and reports intentionally match the wired Xbox 360 XInput persona (`0x045E:0x028E`) so USB-to-Maple adapters can translate it.
-- **PS3**: a DualShock 3-style HID gamepad (`0x054C:0x0268`).
-- **PS4**: a DualShock 4-style HID gamepad (`0x054C:0x09CC`).
-- **Xbox One**: an Xbox One-compatible XGIP vendor-class gamepad.
-- **Generic HID**: a USB HID gamepad for adapters that accept a simple HID descriptor.
-- **Bluetooth**: a generic Classic Bluetooth HID gamepad target for wireless receivers. The Pico advertises as `CouchLink BT HID ...` and stays plugged into the bridge PC over USB CDC for live controller input.
-- **Bluetooth Xbox**: a Classic Bluetooth HID target that advertises as `Xbox Wireless Controller` with Microsoft `0x045E:0x02FD` PnP identity and an Xbox Wireless Controller-style report descriptor. This is a Classic HID mimic, not Xbox BLE/HOGP mode.
-- **Bluetooth PlayStation**: a DualShock 4 Classic Bluetooth HID target that advertises as `Wireless Controller` with Sony `0x054C:0x05C4` PnP identity and DS4 Bluetooth report `0x11`.
+- Keyboard: a standard USB HID boot keyboard (`0x2E8A:0xCAF1`), for console games that need a keyboard such as Typing of the Dead on the Dreamcast.
+- Maple: a Dreamcast Maple adapter mode fed by the same XInput state packets as the XInput persona. USB enumeration and reports intentionally match the wired Xbox 360 XInput persona (`0x045E:0x028E`) so USB-to-Maple adapters can translate it.
+- PS3: a DualShock 3-style HID gamepad (`0x054C:0x0268`).
+- PS4: a DualShock 4-style HID gamepad (`0x054C:0x09CC`).
+- Xbox One: an Xbox One-compatible XGIP vendor-class gamepad.
+- Generic HID: a USB HID gamepad for adapters that accept a simple HID descriptor.
+- Bluetooth: a generic Classic Bluetooth HID gamepad target for wireless receivers. The Pico advertises as `CouchLink BT HID ...` and stays plugged into the bridge PC over USB CDC for live controller input.
+- Bluetooth Xbox: a Classic Bluetooth HID target that advertises as `Xbox Wireless Controller` with Microsoft `0x045E:0x02FD` PnP identity and an Xbox Wireless Controller-style report descriptor. This is a Classic HID mimic, not Xbox BLE/HOGP mode.
+- Bluetooth PlayStation: a DualShock 4 Classic Bluetooth HID target that advertises as `Wireless Controller` with Sony `0x054C:0x05C4` PnP identity and DS4 Bluetooth report `0x11`.
 
 Only one persona is selected at a time. Because the runtime output is fixed at boot, switching persona persists the new value and reboots the board. USB-output personas usually have the Pico plugged into the console-side adapter, so the switch happens over Wi-Fi: `couchlink keyboard`, `couchlink xinput`, `couchlink xboxone`, `couchlink maple`, `couchlink ps3`, `couchlink ps4`, and `couchlink generic-hid` send a `SET_PERSONA` request, then wait for the board to rejoin Wi-Fi advertising the new persona. `couchlink bluetooth`, `couchlink bluetooth-xbox`, and `couchlink bluetooth-playstation` also switch over Wi-Fi, but streaming then requires the matching Pico to be plugged into the bridge PC over USB. `couchlink dinput` cycles PS3, generic HID, then PS4, and `couchlink auto` tries the USB gamepad personas and keeps the first one that the USB host polls. A record written before personas existed reads back as the XInput default, so existing boards keep working without re-provisioning. Setup mode and each USB runtime persona use USB identities chosen for their target host binding. Bluetooth personas keep CDC diagnostic USB on the bridge PC; `couchlink bundle` writes `bluetooth-report.txt` and skips the console USB adapter survey for those personas.
 

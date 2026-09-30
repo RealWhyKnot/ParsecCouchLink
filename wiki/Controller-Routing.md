@@ -1,4 +1,4 @@
-# Controller Routing
+# Controller routing
 
 Run:
 
@@ -8,7 +8,7 @@ Run:
 
 On the **Basic** tab, choose the Pico you want to use. Pick **Start streaming with Controller 1** for the normal one-controller path, or **Choose controller and stream** to select Controller 1, 2, 3, or 4 for that Pico. Before streaming starts, choose the Pico input mode: Auto, Xbox, DInput / PlayStation, Bluetooth, Maple, or Keyboard. Xbox then lets you choose Auto Xbox, Xbox 360, or Xbox One; DInput / PlayStation lets you choose Auto DInput, PS3, or PS4.
 
-## Common Layouts
+## Common layouts
 
 For one Pico, use **Start streaming with Controller 1**.
 
@@ -21,7 +21,7 @@ For two or more Picos, Basic keeps actions under each Pico so you do not run a b
 
 Basic streaming actions save the selected layout. After that, `couchlink.exe run` uses the saved layout without asking again, which is what the Startup shortcut uses. Direct `run --all` and `run --route ...` commands use the layout on the command line.
 
-## Auto Mode
+## Auto mode
 
 Auto mode is for adapters where you do not know which gamepad USB shape works. It tries the Pico's gamepad personas, watches the Pico's USB diagnostics, and keeps the first mode where the adapter configures the USB device and accepts input reports.
 
@@ -42,7 +42,7 @@ Auto tries the current gamepad mode first, then Xbox 360, Xbox One, PS3, PS4, an
 
 Auto can prove that the adapter configured and polled the Pico's USB device. It cannot prove that a Dreamcast game accepted the translated Maple-side input; use the game's controller test or gameplay for that final check.
 
-## XInput Mode
+## XInput mode
 
 XInput mode is the default gamepad persona. The Pico presents a wired Xbox 360-style USB controller and consumes the normal Parsec/XInput gamepad state from the PC. `xbox360` is a direct alias for the same persona.
 
@@ -66,7 +66,7 @@ With several Picos, pick one:
 
 Add `--no-stream` to change the persona without starting a stream.
 
-## Xbox One Mode
+## Xbox One mode
 
 Xbox One mode presents an Xbox One-compatible USB gamepad persona and consumes the same Parsec/XInput controller source as Xbox 360 mode. It is useful for adapters that support Xbox One-style devices but do not poll the wired Xbox 360 shape.
 
@@ -84,11 +84,11 @@ To try only the Xbox family and keep whichever one the adapter polls:
 
 Use the guided menu's **Xbox** choice for the family prompt. Add `--no-stream` to change the persona without starting a stream.
 
-## Keyboard Mode
+## Keyboard mode
 
-Some console games need a keyboard instead of a controller -- Typing of the Dead on the Dreamcast is the usual reason. A Pico can present itself as a USB keyboard instead of an XInput gamepad, and the bridge forwards the remote player's typing to it.
+Some console games need a keyboard instead of a controller, usually Typing of the Dead on the Dreamcast. A Pico can present itself as a USB keyboard instead of an XInput gamepad, and the bridge forwards the remote player's typing to it.
 
-Only the remote Parsec player's keystrokes are forwarded -- the bridge captures Parsec-injected input, not anything typed locally at the host PC. This matches the controller path, which reads Parsec's virtual gamepad rather than a local one.
+Only the remote Parsec player's keystrokes are forwarded; the bridge captures Parsec-injected input, not anything typed locally at the host PC. This matches the controller path, which reads Parsec's virtual gamepad rather than a local one.
 
 Switch a Pico to keyboard mode and start streaming:
 
@@ -116,7 +116,7 @@ A keyboard adapter is required on the console side: the Pico presents a standard
 Keyboard -> 07D37EB6 | source live | out +60 total 900 | in 30 (reply 0.2s ago) | keys mods=0x02 keys=[0x04]
 ```
 
-## Maple Mode
+## Maple mode
 
 Maple mode is for Dreamcast adapters that already accept wired Xbox 360 controllers and translate them to Dreamcast Maple. It uses the same Parsec/XInput controller source and the same Xbox 360-compatible USB reports as XInput mode, but keeps a separate persisted mode and status label for Dreamcast setups.
 
@@ -140,7 +140,7 @@ Switch back to XInput mode with:
 
 Add `--no-stream` to change the persona without starting a stream. While streaming, Maple mode status still shows a controller source and the live XInput button/axis values because those are the values sent to the Maple-capable adapter.
 
-## DInput Mode
+## DInput mode
 
 DInput mode is a PlayStation-family compatibility selector for USB4MAPLE-style adapters that accept PS3 or PS4 HID controllers but do not accept the Pico's Xbox 360-compatible USB shape. It uses the same Parsec/XInput controller source as XInput and Maple mode, then cycles PS3 and PS4 until the adapter polls one.
 
@@ -171,7 +171,7 @@ Switch back to XInput mode with:
 
 Add `--no-stream` to change the persona without starting a stream. PS3 is tried before PS4 because USB4MAPLE field reports more consistently recommend PS3 mode for generic DInput-style compatibility. Rumble is not implemented for these personas.
 
-## Bluetooth Mode
+## Bluetooth mode
 
 Bluetooth mode is for a wireless receiver or adapter that accepts a Classic Bluetooth HID gamepad. Unlike the USB-output modes, the Pico stays plugged into the bridge PC. CouchLink sends each controller frame to the Pico over USB CDC, and the Pico sends Bluetooth HID reports to the paired receiver. The live Bluetooth command is a streaming loop and keeps printing status until you stop it.
 
@@ -211,9 +211,9 @@ To confirm the bridge is capturing the player's keystrokes, run with verbose log
 .\couchlink.exe keyboard -vv
 ```
 
-A single `keyboard: capturing Parsec-injected input` line confirms the hook is seeing the guest's input; `-vv` then logs each captured key. If that line never appears while the guest is typing, the input isn't being injected the way the bridge expects -- check the Parsec settings above.
+A single `keyboard: capturing Parsec-injected input` line confirms the hook is seeing the guest's input; `-vv` then logs each captured key. If that line never appears while the guest is typing, the input isn't being injected the way the bridge expects, so check the Parsec settings above.
 
-## What Parsec Provides
+## What Parsec provides
 
 Parsec passes guest gamepads to the host through its virtual USB gamepad driver. On Windows, those gamepads normally appear as Xbox 360 controllers, which CouchLink reads as XInput slots. Parsec's [gamepad setup guide](https://support.parsec.app/hc/en-us/articles/32381705301908-Setup-Gamepad) also covers virtual gamepad setup and controller order management.
 
@@ -226,7 +226,7 @@ If multiple guests join with controllers, Windows can expose multiple XInput slo
 | Controller 3 | Slot 2 |
 | Controller 4 | Slot 3 |
 
-## Live Status
+## Live status
 
 While streaming, the terminal prints status lines like:
 
@@ -243,7 +243,7 @@ Use this to confirm:
 
 Bluetooth mode shows USB output counters instead of Pico UDP replies because live input is carried over the plugged-in USB cable.
 
-## Direct Commands
+## Direct commands
 
 The menu is the normal path. These commands are for scripts and launchers:
 
@@ -260,6 +260,6 @@ If broadcast discovery fails but the router shows the Pico's IP, use
 `.\couchlink.exe test discover --ip 192.168.50.4` or choose **Enter Pico
 IP manually** in the guided menu.
 
-## Bench Testing Note
+## Bench testing note
 
 In USB-output modes, the Pico USB side plugs into the console adapter. If you plug that output into the same Windows PC for testing, Windows may see the Pico itself as an Xbox controller. Do not pick that Pico output as the source controller; pick the Parsec virtual controller or a local test controller instead. Bluetooth mode is the exception: the Pico intentionally stays plugged into the bridge PC for USB CDC input.
