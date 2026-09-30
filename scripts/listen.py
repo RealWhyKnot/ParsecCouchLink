@@ -2,8 +2,8 @@
 """
 Throwaway bench listener for couchlink.exe development.
 
-Binds UDP 4242, decodes incoming Parsec CouchLink wire-protocol datagrams
-per wiki/Protocol.md, replies to discover packets with a fake Pico ack, and
+Binds UDP 4242, decodes incoming Parsec CouchLink wire-protocol datagrams,
+replies to discover packets with a fake Pico ack, and
 prints decoded state in real time.
 
 Use this to verify the bridge end of the chain before any Pico firmware

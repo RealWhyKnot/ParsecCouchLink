@@ -55,7 +55,7 @@ function New-TestRepo {
     Write-TestFile -Path (Join-Path $root "bridge/src/main.rs") -Content "fn main() {}`n"
     Write-TestFile -Path (Join-Path $root "pico-bridge/src/main.c") -Content "int main(void) { return 0; }`n"
     Write-TestFile -Path (Join-Path $root "CHANGELOG.md") -Content "# Changelog`n"
-    Write-TestFile -Path (Join-Path $root "wiki/Quick-Start.md") -Content "# Quick Start`n"
+    Write-TestFile -Path (Join-Path $root "docs/notes.md") -Content "# Notes`n"
 
     Invoke-TestGit -RepoRoot $root -Arguments @("add", ".") | Out-Null
     Invoke-TestGit -RepoRoot $root -Arguments @("commit", "-q", "-m", "initial") | Out-Null
@@ -157,11 +157,11 @@ try {
     $repo = New-TestRepo
     $tempRoots.Add($repo) | Out-Null
     $state = Write-ReleaseState -RepoRoot $repo -Tag "v2026.6.1.0"
-    Write-TestFile -Path (Join-Path $repo "wiki/Quick-Start.md") -Content "# Updated docs`n"
+    Write-TestFile -Path (Join-Path $repo "docs/notes.md") -Content "# Updated docs`n"
     Invoke-TestGit -RepoRoot $repo -Arguments @("add", ".") | Out-Null
-    Invoke-TestGit -RepoRoot $repo -Arguments @("commit", "-q", "-m", "docs wiki") | Out-Null
+    Invoke-TestGit -RepoRoot $repo -Arguments @("commit", "-q", "-m", "docs notes") | Out-Null
     $plan = Invoke-Plan -RepoRoot $repo -ReleaseStatePath $state -Tag "v2026.6.2.0-beta"
-    Assert-Equal -Actual $plan.has_changes -Expected $false -Message "Wiki-only changes should not produce a prerelease plan"
+    Assert-Equal -Actual $plan.has_changes -Expected $false -Message "Docs-only changes should not produce a prerelease plan"
 
     $repo = New-TestRepo
     $tempRoots.Add($repo) | Out-Null

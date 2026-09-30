@@ -6,7 +6,7 @@
 
 #include "diag_log.h"
 
-// Mirrors bridge/src/cdc.rs and wiki/Protocol.md v1. Frame format:
+// Mirrors bridge/src/cdc.rs v1. Frame format:
 //
 //   magic(2)=A5 5A | proto_version(1) | command(1) | payload_len(2 LE)
 //   | seq(1) | reserved(1) | payload(N) | crc16(2 LE)

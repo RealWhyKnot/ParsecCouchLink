@@ -1,4 +1,4 @@
-//! Wire protocol per wiki/Protocol.md. UDP port 4242, 17-byte fixed datagrams,
+//! Wire protocol. UDP port 4242, 17-byte fixed datagrams,
 //! little-endian, CRC-8/SMBUS over the first 16 bytes.
 //!
 //! Constants and helpers in this module mirror the protocol spec

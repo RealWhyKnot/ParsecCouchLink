@@ -1,8 +1,1 @@
 blank_issues_enabled: false
-contact_links:
-  - name: Troubleshooting
-    url: https://github.com/RealWhyKnot/ParsecCouchLink/blob/main/wiki/Troubleshooting.md
-    about: Check this first for common issues and the diagnostic steps.
-  - name: Reporting a bug
-    url: https://github.com/RealWhyKnot/ParsecCouchLink/blob/main/wiki/Reporting-Bugs.md
-    about: How to make a bundle and what to include in the report.

@@ -1,4 +1,4 @@
-//! USB-CDC setup-mode framed protocol (see wiki/Protocol.md).
+//! USB-CDC setup-mode framed protocol.
 //!
 //! All work in this module is blocking. Callers should wrap it in
 //! `tokio::task::spawn_blocking` if they need to keep an async runtime

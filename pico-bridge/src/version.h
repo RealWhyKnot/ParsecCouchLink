@@ -32,7 +32,7 @@
 // invalidates stale setup-mode USB bindings without tying the descriptor
 // cache directly to the product release suffix.
 
-// On-wire protocol versions, must match wiki/Protocol.md.
+// On-wire protocol versions.
 #define PICO_BRIDGE_UDP_PROTO_VERSION 1
 #define PICO_BRIDGE_CDC_PROTO_VERSION 1
 
