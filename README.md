@@ -4,9 +4,9 @@ Parsec CouchLink lets a remote Parsec player use a real retro console as player 
 
 The Windows host reads the Parsec virtual Xbox controller, sends the button state over Wi-Fi, and a Raspberry Pi Pico 2 W or Pico W presents that input as a USB controller to a console adapter such as USB4MAPLE.
 
-For games that need a keyboard instead, such as Typing of the Dead on the Dreamcast, the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For adapters with uncertain gamepad support, `couchlink.exe auto` tries the supported gamepad USB modes and keeps the first one the adapter polls. See [Controller Routing](wiki/Controller-Routing.md) for Auto, Xbox, DInput/PlayStation, Maple, and keyboard modes.
+For games that need a keyboard instead, such as Typing of the Dead on the Dreamcast, the same Pico can switch to a USB keyboard with `couchlink.exe keyboard` and forward the player's typing. For adapters with uncertain gamepad support, `couchlink.exe auto` tries the supported gamepad USB modes and keeps the first one the adapter polls.
 
-[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases) | [Docs](wiki/Home.md) | [Quick start](wiki/Quick-Start.md) | [Troubleshooting](wiki/Troubleshooting.md)
+[Releases](https://github.com/RealWhyKnot/ParsecCouchLink/releases)
 
 ## What you need
 
@@ -105,19 +105,12 @@ If the bridge won't run at all, the setup transcript at
 `%LOCALAPPDATA%\ParsecCouchLink\data\logs\setup-*.log` is the next-best
 thing, so attach that instead.
 
-See [Reporting bugs](wiki/Reporting-Bugs.md) for the full version.
-
 ## Source layout
 
 - `bridge/` - Rust Windows bridge and setup wizard.
 - `pico-bridge/` - Pico firmware.
 - `setup.ps1` - release entrypoint for first-run setup.
 - `build.ps1` - local build and release zip staging.
-- `wiki/` - the docs.
-
-Runtime protocol v1 and setup protocol v1 are documented in the
-[Protocol](wiki/Protocol.md) page. Hardware bench coverage is documented
-in [Hardware Lab](wiki/Hardware-Lab.md).
 
 ## License
 
