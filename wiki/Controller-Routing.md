@@ -21,6 +21,8 @@ For two or more Picos, Basic keeps actions under each Pico so you do not run a b
 
 Basic streaming actions save the selected layout. After that, `couchlink.exe run` uses the saved layout without asking again, which is what the Startup shortcut uses. Direct `run --all` and `run --route ...` commands use the layout on the command line.
 
+Add `--no-stream` to any mode command to change the persona without starting a stream.
+
 ## Auto mode
 
 Auto mode is for adapters where you do not know which gamepad USB shape works. It tries the Pico's gamepad personas, watches the Pico's USB diagnostics, and keeps the first mode where the adapter configures the USB device and accepts input reports.
@@ -82,13 +84,13 @@ To try only the Xbox family and keep whichever one the adapter polls:
 .\couchlink.exe xbox --no-stream
 ```
 
-Use the guided menu's **Xbox** choice for the family prompt. Add `--no-stream` to change the persona without starting a stream.
+Use the guided menu's **Xbox** choice for the family prompt.
 
 ## Keyboard mode
 
 Some console games need a keyboard instead of a controller, usually Typing of the Dead on the Dreamcast. A Pico can present itself as a USB keyboard instead of an XInput gamepad, and the bridge forwards the remote player's typing to it.
 
-Only the remote Parsec player's keystrokes are forwarded; the bridge captures Parsec-injected input, not anything typed locally at the host PC. This matches the controller path, which reads Parsec's virtual gamepad rather than a local one.
+Only the remote Parsec player's keystrokes are forwarded; the bridge captures Parsec-injected input, not anything typed locally at the host PC.
 
 Switch a Pico to keyboard mode and start streaming:
 
@@ -138,7 +140,7 @@ Switch back to XInput mode with:
 .\couchlink.exe xinput
 ```
 
-Add `--no-stream` to change the persona without starting a stream. While streaming, Maple mode status still shows a controller source and the live XInput button/axis values because those are the values sent to the Maple-capable adapter.
+While streaming, Maple mode status still shows a controller source and the live XInput button/axis values because those are the values sent to the Maple-capable adapter.
 
 ## DInput mode
 
@@ -169,7 +171,7 @@ Switch back to XInput mode with:
 .\couchlink.exe xinput
 ```
 
-Add `--no-stream` to change the persona without starting a stream. PS3 is tried before PS4 because USB4MAPLE field reports more consistently recommend PS3 mode for generic DInput-style compatibility. Rumble is not implemented for these personas.
+PS3 is tried before PS4 because USB4MAPLE field reports more consistently recommend PS3 mode for generic DInput-style compatibility. Rumble is not implemented for these personas.
 
 ## Bluetooth mode
 
@@ -198,12 +200,12 @@ During streaming, the status lines separate the local USB input link from the Bl
 
 ### If the player's typing isn't reaching the game
 
-A few Parsec-side settings gate guest keyboard input:
+Four things can block guest keyboard input:
 
-- **Keyboard permission.** Guests default to controller-only. The host must grant the guest keyboard and mouse permission (click the guest's profile picture during the session, or set default permissions in Parsec).
-- **Approved Apps.** If the host has Approved Apps enabled, guest input is blocked unless the focused window is on the whitelist. It is off by default.
-- **Same session.** Run the bridge in the same signed-in Windows session Parsec is injecting into. It will not see input across the lock screen, a UAC/secure desktop prompt, or a different user session.
-- **Layout and lock keys.** The character a key produces follows the host keyboard layout, so a client/host layout mismatch (for example AZERTY vs QWERTY) can type the wrong characters, and Caps/Num Lock state can drift between the two ends.
+- Keyboard permission: Guests default to controller-only. The host must grant the guest keyboard and mouse permission (click the guest's profile picture during the session, or set default permissions in Parsec).
+- Approved Apps: If the host has Approved Apps enabled, guest input is blocked unless the focused window is on the whitelist. It is off by default.
+- Same session: Run the bridge in the same signed-in Windows session Parsec is injecting into. It will not see input across the lock screen, a UAC/secure desktop prompt, or a different user session.
+- Layout and lock keys: The character a key produces follows the host keyboard layout, so a client/host layout mismatch (for example AZERTY vs QWERTY) can type the wrong characters, and Caps/Num Lock state can drift between the two ends.
 
 To confirm the bridge is capturing the player's keystrokes, run with verbose logging while the guest types:
 

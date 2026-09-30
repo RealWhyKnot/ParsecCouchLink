@@ -1,11 +1,11 @@
 # Setup and flashing
 
-`setup.ps1` is the release entrypoint. It calls `couchlink.exe setup`, which detects which Pico you have in BOOTSEL and flashes the matching firmware. The user does not have to know whether they have a Pico 2 W (RP2350) or a Pico W / Pico WH (RP2040).
+`setup.ps1` is the release entrypoint. It calls `couchlink.exe setup`, which detects which Pico you have in BOOTSEL and flashes the matching firmware. You don't need to know whether you have a Pico 2 W (RP2350) or a Pico W / Pico WH (RP2040).
 
 ## What setup does
 
 1. Checks that the release folder has `couchlink.exe` and at least one firmware file (`couchlink-pico2w.uf2` or `couchlink-picow.uf2`).
-2. Tells the user what hardware is needed.
+2. Tells you what hardware is needed.
 3. Starts the bridge setup wizard.
 4. Detects the Pico in BOOTSEL mode and copies the matching UF2 onto it.
 5. Sends Wi-Fi credentials over USB setup mode.
@@ -94,7 +94,7 @@ From the guided menu:
 
 The guided path tries setup-mode USB first. If that is not available, it switches to BOOTSEL flashing instructions.
 
-Advanced flash choices are still available under **Advanced flash options**, but most users should not need them.
+Advanced flash choices are still available under **Advanced flash options**, but you shouldn't normally need them.
 
 Direct command:
 
@@ -123,7 +123,7 @@ failing credentials bounces back to setup mode so `configure-wifi` can reach it.
 
 ## Manual flash
 
-Manual flash is still available. With no `--uf2`, the bridge picks the matching file from next to `couchlink.exe`:
+With no `--uf2`, the bridge picks the matching file from next to `couchlink.exe`:
 
 ```powershell
 .\couchlink.exe flash

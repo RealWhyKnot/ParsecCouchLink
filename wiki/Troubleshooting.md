@@ -1,8 +1,7 @@
 # Troubleshooting
 
-If you've already tried the doctor and still can't get unstuck, see
-[Reporting bugs](Reporting-Bugs.md) for what to attach to an issue if
-you want a maintainer to take a look.
+If the doctor doesn't explain it, [Reporting bugs](Reporting-Bugs.md) covers
+what to attach to an issue.
 
 Start with:
 
@@ -44,9 +43,9 @@ If the Pico feels "lost", use the debug menu first:
 
 The menu checks all three recoverable states:
 
-- **Wi-Fi/input mode**: the normal running mode. The bridge can ask this Pico to reboot into USB debug mode.
-- **USB debug mode**: the setup USB serial mode. From here you can read logs, change Wi-Fi, switch back to Wi-Fi/input mode, or enter BOOTSEL.
-- **BOOTSEL firmware mode**: the hardware fallback used by firmware update.
+- Wi-Fi/input mode: the normal running mode. The bridge can ask this Pico to reboot into USB debug mode.
+- USB debug mode: the setup USB serial mode. From here you can read logs, change Wi-Fi, switch back to Wi-Fi/input mode, or enter BOOTSEL.
+- BOOTSEL firmware mode: the hardware fallback used by firmware update.
 
 Useful direct commands:
 
@@ -119,9 +118,9 @@ Run:
 .\couchlink.exe test discover
 ```
 
-If the guided menu says `No Pico replied on Wi-Fi`, that is not a
-controller problem. It means the PC did not receive a UDP discovery reply
-from a running Pico.
+If the guided menu says `No Pico replied on Wi-Fi`, the PC
+received no UDP discovery reply from a running Pico. Controllers aren't
+involved.
 
 The **Basic** tab shows setup USB Picos separately. If a Pico has saved Wi-Fi,
 use that Pico's **Recover to Wi-Fi/input mode** command before streaming.
@@ -156,13 +155,11 @@ Common causes:
   UDP for the bridge.
 - The Pico joined a different Wi-Fi network. Verify with
   `.\couchlink.exe doctor`.
-- Router AP isolation blocks device-to-device traffic. Many consumer
-  routers and APs ship with a feature called "AP isolation" or "Client
-  isolation" (the exact name varies: UniFi, Eero, and a number of ISP
-  gateways have it). When enabled, two clients on the same Wi-Fi cannot
-  see each other, so UDP discovery never reaches the Pico. Disable it in
-  your router's admin UI, or move the Pico and PC onto a network without
-  it.
+- Router AP isolation blocks device-to-device traffic. Routers call it
+  "AP isolation" or "client isolation", and UniFi, Eero and some ISP
+  gateways have it. When it's on, two clients on the same Wi-Fi can't
+  see each other, so UDP discovery never reaches the Pico. Turn it off in
+  the router's admin UI, or put the Pico and PC on a network without it.
 - Multi-homed Windows PC: if your PC has both Ethernet and Wi-Fi
   connected at the same time, broadcast traffic can go out the wrong
   adapter and never reach the Pico on the Wi-Fi side. The bridge tries
@@ -242,7 +239,7 @@ Bluetooth mode does not use the Pico as a console-side USB controller. Leave the
 .\couchlink.exe bluetooth
 ```
 
-If it still fails, run a bundle and check `bluetooth-report.txt`. The important fields are `bt_started`, `bt_connected`, `bt_receiver_contact`, `bt_report_send_count`, `bt_reconnect`, `bt_acl_l2cap`, and the PC USB input counters. `bt_receiver_contact=pairing_security_contact_no_hid_open` means the receiver reached Bluetooth pairing/security but did not open a Classic HID channel. `hid_reconnect_pending` means the Pico scheduled or started an active reconnect to the paired receiver. `hid_reconnect_attempted_no_hid_open` means the Pico tried active reconnect and the `bt_reconnect` / `bt_acl_l2cap` counters show whether paging failed, ACL connected, or a lower channel was reached. `hid_l2cap_incoming_no_hid_open` means an incoming HID L2CAP channel was observed, but BTstack did not report a completed HID open. For BITFUNX/BlueRetro N64, clear receiver-side pairing and try `.\couchlink.exe blueretro-playstation` first, then `.\couchlink.exe blueretro`; use `blueretro-xbox` only as a diagnostic. `bt_connected=true` with `bt_report_send_count=0` points at the PC source controller or stream command.
+If it still fails, run a bundle and check `bluetooth-report.txt`. Check `bt_started`, `bt_connected`, `bt_receiver_contact`, `bt_report_send_count`, `bt_reconnect`, `bt_acl_l2cap`, and the PC USB input counters. `bt_receiver_contact=pairing_security_contact_no_hid_open` means the receiver reached Bluetooth pairing/security but did not open a Classic HID channel. `hid_reconnect_pending` means the Pico scheduled or started an active reconnect to the paired receiver. `hid_reconnect_attempted_no_hid_open` means the Pico tried active reconnect and the `bt_reconnect` / `bt_acl_l2cap` counters show whether paging failed, ACL connected, or a lower channel was reached. `hid_l2cap_incoming_no_hid_open` means an incoming HID L2CAP channel was observed, but BTstack did not report a completed HID open. For BITFUNX/BlueRetro N64, clear receiver-side pairing and try `.\couchlink.exe blueretro-playstation` first, then `.\couchlink.exe blueretro`; use `blueretro-xbox` only as a diagnostic. `bt_connected=true` with `bt_report_send_count=0` points at the PC source controller or stream command.
 
 ## Logs
 

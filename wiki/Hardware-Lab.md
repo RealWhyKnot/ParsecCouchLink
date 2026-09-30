@@ -29,9 +29,7 @@ Run the full scenario once:
 .\couchlink.exe lab --scenario full --cycles 1
 ```
 
-By default, `--power auto` uses an external power backend only when one is
-configured and its probe command passes. Otherwise it falls back to firmware
-reset re-enumeration.
+`--power auto` is the default.
 
 ## Reconnect backends
 
