@@ -194,9 +194,9 @@ Run the app from this folder:
   couchlink.exe lab --scenario status
                                  development bench status snapshot
 
-setup.ps1 records a setup transcript under
+setup.ps1 writes a setup transcript to
   %LOCALAPPDATA%\ParsecCouchLink\data\logs
-alongside the bridge's own logs, so one folder has what a bug report needs.
+next to the bridge's own logs.
 "@
 Set-Content -LiteralPath (Join-Path $StageDir "README.txt") -Value $ReleaseReadme -Encoding ASCII
 

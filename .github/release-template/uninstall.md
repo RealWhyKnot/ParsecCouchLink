@@ -1,3 +1,3 @@
 ## Uninstall
 
-Remove any Windows Startup shortcut created during setup, stop `couchlink.exe`, then delete the extracted release folder. Logs and setup transcripts live under `%LOCALAPPDATA%\ParsecCouchLink\data\logs`.
+Delete the Windows Startup shortcut if setup made one, stop `couchlink.exe`, then delete the extracted release folder. Logs and setup transcripts are in `%LOCALAPPDATA%\ParsecCouchLink\data\logs`.
