@@ -38,7 +38,7 @@ getrandom = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 # Filesystem / OS paths
-directories = "5"
+directories = "6"
 
 # Support bundles
 zip = { version = "2", default-features = false, features = ["deflate"] }
