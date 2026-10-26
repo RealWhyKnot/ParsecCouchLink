@@ -9,6 +9,7 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ### Changed
 - **deps:** Bump the cargo group in /bridge with 8 updates (#2) (32aaccc)
+- **deps:** Bump thiserror from 1.0.69 to 2.0.18 in /bridge (#3) (11e1732)
 
 ---
 
