@@ -131,7 +131,7 @@ pub fn init(verbose: u8, file_logging: bool) -> Result<Option<WorkerGuard>> {
             }
         ),
         dir = log_dir.display(),
-        ver = env!("CARGO_PKG_VERSION"),
+        ver = crate::VERSION,
     );
     Ok(Some(guard))
 }

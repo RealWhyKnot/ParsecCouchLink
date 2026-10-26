@@ -34,6 +34,13 @@ fn help_lists_command(help: &str, command: &str) -> bool {
 }
 
 #[test]
+fn version_flag_reports_the_build_stamp() {
+    let expected = option_env!("COUCHLINK_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    assert_eq!(Cli::command().get_version(), Some(expected));
+    assert_eq!(VERSION, expected);
+}
+
+#[test]
 fn lab_command_parses_defaults_and_overrides() {
     let cli = Cli::try_parse_from([
         "couchlink",

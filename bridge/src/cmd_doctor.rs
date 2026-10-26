@@ -47,8 +47,8 @@ pub async fn run() -> Result<()> {
 }
 
 async fn run_checks() -> Result<DoctorSummary> {
-    tracing::info!("doctor: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
-    println!("couchlink doctor v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("doctor: starting, bridge v{}", crate::VERSION);
+    println!("couchlink doctor v{}", crate::VERSION);
     println!();
 
     let mut passes = 0;

@@ -27,6 +27,14 @@ target_include_directories(test_boot_mode_policy PRIVATE ${CMAKE_CURRENT_SOURCE_
 
 add_test(NAME boot_mode_policy COMMAND test_boot_mode_policy)
 
+add_executable(test_reply_gate
+    test_reply_gate.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/reply_gate.c
+)
+target_include_directories(test_reply_gate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+
+add_test(NAME reply_gate COMMAND test_reply_gate)
+
 add_executable(test_dinput_report
     test_dinput_report.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/dinput_report.c

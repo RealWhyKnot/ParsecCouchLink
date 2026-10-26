@@ -176,8 +176,8 @@ impl Default for StreamOptions {
 }
 
 pub async fn run(options: RunOptions) -> Result<()> {
-    tracing::info!("run: starting, bridge v{}", env!("CARGO_PKG_VERSION"));
-    journal!("run", "started bridge v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("run: starting, bridge v{}", crate::VERSION);
+    journal!("run", "started bridge v{}", crate::VERSION);
 
     let cfg = config::load().unwrap_or_default();
     if !cfg.setup_complete {

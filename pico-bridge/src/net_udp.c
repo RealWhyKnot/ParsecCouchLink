@@ -16,6 +16,7 @@
 #include "flash_creds.h"
 #include "gamepad_state.h"
 #include "keyboard_state.h"
+#include "reply_gate.h"
 #include "reset_reason.h"
 #include "usb_diag.h"
 #include "usb_packet_debug.h"
@@ -141,6 +142,9 @@ static const char *lwip_err_name(err_t e) {
 // so we always pull the full ring in one snapshot call.
 #define DIAG_SNAPSHOT_CAP DIAG_LOG_RING_SIZE
 
+#define LOG_REPLY_INTERVAL_MS 400u
+#define LOG_REPLY_BURST 3u
+
 static struct udp_pcb *pcb;
 static bool have_peer;
 static ip_addr_t peer_addr;
@@ -156,6 +160,8 @@ static bool set_usb_capture_pending;
 static uint8_t set_usb_capture_persona;
 static bool set_usb_capture_enabled;
 static uint32_t malformed_count;
+static reply_gate_t log_reply_gate;
+static uint32_t log_reply_dropped;
 
 // Blink-to-identify state (TYPE_IDENTIFY). The request handler only
 // records the deadline; the LED itself is driven from net_udp_task() on
@@ -212,6 +218,16 @@ static void note_malformed_packet(const char *reason, uint16_t detail) {
     if (malformed_count <= 5 || (malformed_count % 64u) == 0) {
         diag_log_printf("net_udp: malformed packet reason=%s detail=%u count=%u", reason,
                         (unsigned)detail, (unsigned)malformed_count);
+    }
+}
+
+static void note_log_reply_dropped(const ip_addr_t *addr, u16_t port) {
+    log_reply_dropped++;
+    if (log_reply_dropped <= 5 || (log_reply_dropped % 64u) == 0) {
+        diag_log_printf("net_udp: get_log from %u.%u.%u.%u:%u rate limited count=%u",
+                        ip4_addr1(ip_2_ip4(addr)), ip4_addr2(ip_2_ip4(addr)),
+                        ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port,
+                        (unsigned)log_reply_dropped);
     }
 }
 
@@ -770,7 +786,11 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
         // latched peer -- the host firewall already gates 4242 inbound,
         // and this lets `couchlink bundle` work even when discovery is
         // racing the latch.
-        send_log_chunks(addr, port, seq);
+        if (reply_gate_allow(&log_reply_gate, to_ms_since_boot(get_absolute_time()),
+                             LOG_REPLY_INTERVAL_MS, LOG_REPLY_BURST))
+            send_log_chunks(addr, port, seq);
+        else
+            note_log_reply_dropped(addr, port);
     } else if (type == TYPE_GET_USB_DIAG) {
         send_usb_diag(addr, port, seq);
     } else if (type == TYPE_GET_VERSION) {
@@ -890,6 +910,8 @@ bool net_udp_init(void) {
 
     have_peer = false;
     malformed_count = 0;
+    log_reply_gate.armed = false;
+    log_reply_dropped = 0;
     reboot_to_setup_pending = false;
     set_persona_pending = false;
     set_usb_capture_pending = false;

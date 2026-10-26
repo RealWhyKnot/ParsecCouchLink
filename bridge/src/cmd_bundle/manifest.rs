@@ -133,7 +133,7 @@ pub(super) async fn build_manifest(
     let cfg = config::load().unwrap_or_default();
     Ok(Manifest {
         bundle_schema_version: BUNDLE_SCHEMA_VERSION,
-        bridge_version: env!("CARGO_PKG_VERSION"),
+        bridge_version: crate::VERSION,
         protocol_version: crate::protocol::PROTO_VERSION,
         cdc_protocol_version: crate::cdc::PROTO_VERSION,
         generated_at: Local::now().to_rfc3339(),

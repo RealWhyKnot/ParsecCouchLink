@@ -13,7 +13,7 @@ use super::manifest::windows_version;
 pub(super) async fn build_system_info() -> String {
     let cfg = config::load().unwrap_or_default();
     let mut out = String::new();
-    out.push_str(&format!("couchlink {}\n", env!("CARGO_PKG_VERSION"),));
+    out.push_str(&format!("couchlink {}\n", crate::VERSION,));
     out.push_str(&format!("generated  {}\n", Local::now().to_rfc3339()));
     out.push_str(&format!("os         {}\n", std::env::consts::OS));
     if let Some(v) = windows_version().await {
@@ -82,7 +82,7 @@ pub(super) async fn run_doctor_silently() -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "couchlink doctor (bundled, no terminal styling)\n  bridge v{}\n  time {}\n\n",
-        env!("CARGO_PKG_VERSION"),
+        crate::VERSION,
         chrono::Local::now().to_rfc3339(),
     ));
     for (name, fut) in checks {

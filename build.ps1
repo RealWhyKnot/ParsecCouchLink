@@ -126,8 +126,14 @@ $BridgeExe = Join-Path $RepoRoot "bridge\target\release\couchlink.exe"
 if (-not $SkipBridge) {
     Write-Host ""
     Write-Host "Building Windows bridge..." -ForegroundColor Cyan
-    cargo build --manifest-path (Join-Path $RepoRoot "bridge\Cargo.toml") --release
-    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+    $PreviousBridgeVersion = $env:COUCHLINK_VERSION
+    $env:COUCHLINK_VERSION = $FullVersion
+    try {
+        cargo build --manifest-path (Join-Path $RepoRoot "bridge\Cargo.toml") --release
+        if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+    } finally {
+        $env:COUCHLINK_VERSION = $PreviousBridgeVersion
+    }
 }
 if (-not (Test-Path -LiteralPath $BridgeExe)) {
     throw "Missing bridge executable at $BridgeExe"

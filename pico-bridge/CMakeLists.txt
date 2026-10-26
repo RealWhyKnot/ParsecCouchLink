@@ -98,6 +98,7 @@ add_executable(pico_bridge
     src/heartbeat.c
     src/hid_kbd.c
     src/net_udp.c
+    src/reply_gate.c
     src/reset_reason.c
     src/usb_diag.c
     src/usb_descriptors.c

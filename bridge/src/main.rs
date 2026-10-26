@@ -35,10 +35,15 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+pub(crate) const VERSION: &str = match option_env!("COUCHLINK_VERSION") {
+    Some(stamp) => stamp,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser)]
 #[command(
     name = "couchlink",
-    version,
+    version = VERSION,
     about = "Parsec to retro-console bridge. Run with no arguments for the guided menu. \
              Run `couchlink setup` to walk through first-time setup. \
              Run `couchlink bundle` to gather diagnostics."
@@ -745,7 +750,7 @@ fn write_crash_file(info: &std::panic::PanicHookInfo<'_>) -> std::io::Result<()>
     let path = dir.join(format!("couchlink-{stamp}.txt"));
     let mut f = std::fs::File::create(&path)?;
     writeln!(f, "couchlink panic")?;
-    writeln!(f, "version: {}", env!("CARGO_PKG_VERSION"))?;
+    writeln!(f, "version: {}", VERSION)?;
     writeln!(f, "time (UTC): {}", chrono::Utc::now().to_rfc3339())?;
     if let Some(loc) = info.location() {
         writeln!(
