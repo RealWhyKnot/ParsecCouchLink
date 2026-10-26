@@ -75,6 +75,9 @@ jobs:
   firmware:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      ARM_GNU_VERSION: 13.2.rel1
+      ARM_GNU_SHA256: 6cd1bbc1d9ae57312bcd169ae283153a9572bd6a8e4eeae2fedfbc33b115fdbb
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -90,10 +93,32 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pico-
 
+      - name: Arm toolchain cache
+        id: arm-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/arm-gnu-toolchain
+          key: ${{ runner.os }}-arm-gnu-toolchain-${{ env.ARM_GNU_VERSION }}
+
       - name: Install Pico toolchain
+        env:
+          CACHE_HIT: ${{ steps.arm-cache.outputs.cache-hit }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi clang-format
+          dir="$RUNNER_TEMP/arm-gnu-toolchain"
+          if [ "$CACHE_HIT" != "true" ]; then
+            archive="arm-gnu-toolchain-$ARM_GNU_VERSION-x86_64-arm-none-eabi.tar.xz"
+            curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 -o "$RUNNER_TEMP/$archive" "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/$ARM_GNU_VERSION/binrel/$archive"
+            echo "$ARM_GNU_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+            mkdir -p "$dir"
+            tar -xJf "$RUNNER_TEMP/$archive" -C "$dir" --strip-components=1
+            rm "$RUNNER_TEMP/$archive"
+          fi
+          echo "$dir/bin" >> "$GITHUB_PATH"
+          echo "CLANG_FORMAT=clang-format-18" >> "$GITHUB_ENV"
+          cmake --version | head -1
+          ninja --version
+          clang-format-18 --version
+          "$dir/bin/arm-none-eabi-gcc" --version | head -1
 
       - name: Firmware formatting
         shell: pwsh
