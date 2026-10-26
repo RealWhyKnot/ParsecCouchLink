@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.10.26.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.10.26.0-beta) -- 2026-10-26
+
 ### Fixed
 - Keep the build stamp in the git dir under the shared hook (2026.9.8.0-16ED4) (d98d607)
 - **release:** Pass gh --json field lists as a single argument (156869e)
