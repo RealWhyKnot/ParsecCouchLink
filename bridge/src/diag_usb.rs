@@ -11,12 +11,14 @@
 
 use std::time::Duration;
 
+use nusb::MaybeFuture;
+
 // Constants must match `pico-bridge/src/usb_descriptors.c`.
 const PICO_VID: u16 = 0x2E8A;
 const PICO_PID: u16 = 0xCAF0;
 const DIAG_ITF_NUM: u8 = 2;
 const DIAG_GET_LOG_REQ: u8 = 0x01;
-const MAX_RESPONSE_BYTES: usize = 4 + 16384;
+const MAX_RESPONSE_BYTES: u16 = 4 + 16384;
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Result of a vendor-control diag-log fetch. Translated to
@@ -52,7 +54,7 @@ pub fn capture_diag_blocking() -> VendorDiagOutcome {
         }
     };
 
-    let device = match info.open() {
+    let device = match info.open().wait() {
         Ok(d) => d,
         Err(e) => {
             return VendorDiagOutcome::OpenFailed {
@@ -61,7 +63,7 @@ pub fn capture_diag_blocking() -> VendorDiagOutcome {
         }
     };
 
-    let iface = match device.claim_interface(DIAG_ITF_NUM) {
+    let iface = match device.claim_interface(DIAG_ITF_NUM).wait() {
         Ok(i) => i,
         Err(e) => {
             return VendorDiagOutcome::OpenFailed {
@@ -70,17 +72,17 @@ pub fn capture_diag_blocking() -> VendorDiagOutcome {
         }
     };
 
-    let control = nusb::transfer::Control {
+    let control = nusb::transfer::ControlIn {
         control_type: nusb::transfer::ControlType::Vendor,
         recipient: nusb::transfer::Recipient::Interface,
         request: DIAG_GET_LOG_REQ,
         value: 0,
         index: u16::from(DIAG_ITF_NUM),
+        length: MAX_RESPONSE_BYTES,
     };
 
-    let mut buf = vec![0u8; MAX_RESPONSE_BYTES];
-    let n = match iface.control_in_blocking(control, &mut buf, TRANSFER_TIMEOUT) {
-        Ok(n) => n,
+    let buf = match iface.control_in(control, TRANSFER_TIMEOUT).wait() {
+        Ok(b) => b,
         Err(e) => {
             return VendorDiagOutcome::TransferFailed {
                 step: "control_in",
@@ -89,6 +91,7 @@ pub fn capture_diag_blocking() -> VendorDiagOutcome {
             };
         }
     };
+    let n = buf.len();
 
     if n < 4 {
         return VendorDiagOutcome::TransferFailed {
@@ -109,9 +112,9 @@ pub fn capture_diag_blocking() -> VendorDiagOutcome {
     }
 }
 
-fn find_pico_diag_device() -> Result<Option<nusb::DeviceInfo>, std::io::Error> {
+fn find_pico_diag_device() -> Result<Option<nusb::DeviceInfo>, nusb::Error> {
     let mut found = None;
-    for info in nusb::list_devices()? {
+    for info in nusb::list_devices().wait()? {
         if info.vendor_id() == PICO_VID && info.product_id() == PICO_PID {
             found = Some(info);
             break;
