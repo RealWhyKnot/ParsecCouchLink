@@ -34,7 +34,7 @@ crc = "3"
 hex = "0.4"
 hmac = "0.13"
 sha2 = "0.11"
-getrandom = "0.2"
+getrandom = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 # Filesystem / OS paths
