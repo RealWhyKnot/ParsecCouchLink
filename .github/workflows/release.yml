@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: changelog-append
@@ -25,12 +26,26 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.tag || github.ref }}
           # Full history + all tags so the release-body step can diff
           # commits against the previous version tag for the changelog.
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Resolve version
+        id: version
+        uses: RealWhyKnot/workflows/resolve-tag@v1
+        with:
+          tag: ${{ inputs.tag }}
+          tag-pattern: '^v\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$'
+
+      - name: Wait for CI
+        uses: RealWhyKnot/workflows/wait-for-ci@v1
+        with:
+          sha: ${{ steps.version.outputs.sha }}
+          workflow: ci.yml
 
       - name: Test release base selection
         shell: pwsh
@@ -39,31 +54,18 @@ jobs:
       - name: Test workflow scripts
         shell: pwsh
         run: |
-          ./.github/scripts/Test-WorkflowSyntax.ps1
           ./.github/scripts/Test-UpdateChangelog.ps1
           ./.github/scripts/Test-GenerateReleaseNotes.ps1
           ./.github/scripts/Test-NightlyPrereleasePlan.ps1
 
-      # Keep in step with rust-toolchain.toml at the repo root.
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: RealWhyKnot/workflows/setup-rust@v1
         with:
-          toolchain: "1.98.0"
-          components: rustfmt, clippy
-
-      - name: Rust cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            bridge/target
-          key: ${{ runner.os }}-bridge-${{ hashFiles('bridge/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bridge-
+          working-directory: bridge
+          cache-key: bridge
 
       - name: Pico build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             pico-bridge/build-_pico_sdk
@@ -116,13 +118,6 @@ jobs:
 
       - name: Rust tests
         run: cargo test --manifest-path bridge/Cargo.toml --locked
-
-      - name: Resolve version
-        id: version
-        uses: RealWhyKnot/workflows/resolve-tag@v1
-        with:
-          tag: ${{ inputs.tag }}
-          tag-pattern: '^v\d{4}\.\d+\.\d+\.\d+(-[A-Za-z0-9]{4})?$'
 
       - name: Validate release version sequence
         uses: RealWhyKnot/workflows/version-sequence@v1

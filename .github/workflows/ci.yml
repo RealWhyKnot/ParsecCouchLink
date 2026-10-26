@@ -15,12 +15,19 @@ on:
       - '.editorconfig'
       - '.github/scripts/**'
       - '.github/workflows/**'
+      - '.github/dependabot.yml'
+      - '.githooks/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  checks:
+    permissions:
+      contents: read
+    uses: RealWhyKnot/workflows/.github/workflows/repo-checks.yml@v1
+
   changelog-guard:
     name: Reject changelog edits in pull requests
     if: github.event_name == 'pull_request'
@@ -28,7 +35,7 @@ jobs:
     timeout-minutes: 2
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -50,25 +57,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
-      # Keep in step with rust-toolchain.toml at the repo root.
       - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: RealWhyKnot/workflows/setup-rust@v1
         with:
-          toolchain: "1.98.0"
-          components: rustfmt, clippy
-
-      - name: Rust cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            bridge/target
-          key: ${{ runner.os }}-bridge-${{ hashFiles('bridge/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bridge-
+          working-directory: bridge
+          cache-key: bridge
 
       - name: Lint Rust and scripts
         shell: pwsh
@@ -82,10 +77,10 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Pico build cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             pico-bridge/build-_pico_sdk
