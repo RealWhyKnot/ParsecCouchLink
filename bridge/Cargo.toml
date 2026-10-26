@@ -41,7 +41,7 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 directories = "6"
 
 # Support bundles
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # Setup-mode USB-CDC enumeration (blocking; only used in setup/configure-wifi)
 serialport = "4"
