@@ -12,6 +12,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 - **deps:** Bump thiserror from 1.0.69 to 2.0.18 in /bridge (#3) (11e1732)
 - **deps:** Bump dialoguer from 0.11.0 to 0.12.0 in /bridge (#5) (15d078d)
 
+### Fixed
+- **bridge:** Port USB diag log reads to nusb 0.2 (29e0c78)
+
 ---
 
 ## [v2026.10.26.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.10.26.0-beta) -- 2026-10-26
