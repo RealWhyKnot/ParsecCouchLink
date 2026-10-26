@@ -75,6 +75,8 @@ pub struct Config {
     /// an argv vector: first item is the executable, remaining items are args.
     #[serde(default)]
     pub lab_power: Option<LabPowerConfig>,
+    #[serde(default)]
+    pub auth_keys: Vec<PicoAuthKey>,
 }
 
 impl Config {
@@ -123,6 +125,26 @@ impl Config {
             last.nickname = nickname;
         }
         true
+    }
+
+    pub fn auth_key_for(&self, unique_id_short: u32) -> Option<&str> {
+        self.auth_keys
+            .iter()
+            .find(|k| k.unique_id_short == unique_id_short)
+            .map(|k| k.key.as_str())
+    }
+
+    pub fn set_auth_key(&mut self, unique_id_short: u32, key: String) {
+        self.clear_auth_key(unique_id_short);
+        self.auth_keys.push(PicoAuthKey {
+            unique_id_short,
+            key,
+        });
+    }
+
+    pub fn clear_auth_key(&mut self, unique_id_short: u32) {
+        self.auth_keys
+            .retain(|k| k.unique_id_short != unique_id_short);
     }
 
     pub fn forget_pico(&mut self, unique_id_short: u32) {
@@ -192,6 +214,12 @@ impl PicoIdentity {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PicoAuthKey {
+    pub unique_id_short: u32,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RouteConfig {
     /// XInput slot, zero-based internally. The UI displays this as
     /// controller 1 through 4.
@@ -222,6 +250,12 @@ pub fn save(cfg: &Config) -> Result<()> {
     let path = config_path()?;
     let s = toml::to_string_pretty(cfg).context("serializing config")?;
     fs::write(&path, s).with_context(|| format!("writing {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("restricting {}", path.display()))?;
+    }
     Ok(())
 }
 

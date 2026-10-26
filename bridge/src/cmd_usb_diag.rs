@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use tokio::time::interval;
 
 use crate::tui::{input_text, select};
-use crate::{cmd_run, pico_cache, protocol, support};
+use crate::{cmd_run, pico_cache, protocol, support, udp_auth};
 
 const DISCOVER_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -131,6 +131,7 @@ pub async fn query_usb_diag(
     pico: &cmd_run::PicoTarget,
     timeout: Duration,
 ) -> Result<protocol::UsbDiag> {
+    udp_auth::prepare(pico.peer).await?;
     let socket = crate::net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP USB diagnostic socket")?;
@@ -143,7 +144,7 @@ pub async fn query_usb_diag(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let req = protocol::encode_get_usb_diag(seq);
+                let req = udp_auth::seal(pico.peer, &protocol::encode_get_usb_diag(seq));
                 seq = seq.wrapping_add(1);
                 socket
                     .send_to(&req, pico.peer)

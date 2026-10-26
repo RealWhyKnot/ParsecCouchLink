@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "pico/cyw43_arch.h"
+#include "pico/rand.h"
 #include "pico/stdlib.h"
 #include "pico/unique_id.h"
 #include "hardware/watchdog.h"
@@ -18,6 +19,7 @@
 #include "keyboard_state.h"
 #include "reply_gate.h"
 #include "reset_reason.h"
+#include "udp_auth.h"
 #include "usb_diag.h"
 #include "usb_packet_debug.h"
 #include "version.h"
@@ -144,6 +146,9 @@ static const char *lwip_err_name(err_t e) {
 
 #define LOG_REPLY_INTERVAL_MS 400u
 #define LOG_REPLY_BURST 3u
+#define AUTH_DROP_LOG_INTERVAL_MS 1000u
+#define AUTH_DROP_LOG_BURST 3u
+#define AUTH_RECOVERY_WINDOW_MS 120000u
 
 static struct udp_pcb *pcb;
 static bool have_peer;
@@ -162,6 +167,10 @@ static bool set_usb_capture_enabled;
 static uint32_t malformed_count;
 static reply_gate_t log_reply_gate;
 static uint32_t log_reply_dropped;
+static udp_auth_t udp_auth;
+static reply_gate_t auth_drop_gate;
+static uint32_t auth_drop_count;
+static bool auth_recovery_boot;
 
 // Blink-to-identify state (TYPE_IDENTIFY). The request handler only
 // records the deadline; the LED itself is driven from net_udp_task() on
@@ -231,6 +240,21 @@ static void note_log_reply_dropped(const ip_addr_t *addr, u16_t port) {
     }
 }
 
+static void note_auth_drop(udp_auth_result_t r, uint8_t type, const ip_addr_t *addr, u16_t port) {
+    auth_drop_count++;
+    if (reply_gate_allow(&auth_drop_gate, to_ms_since_boot(get_absolute_time()),
+                         AUTH_DROP_LOG_INTERVAL_MS, AUTH_DROP_LOG_BURST)) {
+        diag_log_printf("net_udp: dropped type=0x%02X from %u.%u.%u.%u:%u reason=%s count=%u",
+                        (unsigned)type, ip4_addr1(ip_2_ip4(addr)), ip4_addr2(ip_2_ip4(addr)),
+                        ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port,
+                        udp_auth_result_name(r), (unsigned)auth_drop_count);
+    }
+}
+
+static uint8_t current_proto_version(void) {
+    return udp_auth.keyed ? PICO_BRIDGE_UDP_PROTO_VERSION : PICO_BRIDGE_UDP_PROTO_VERSION_OPEN;
+}
+
 static void build_state_fields(uint8_t *buf, uint8_t type, uint8_t seq) {
     buf[0] = MAGIC;
     buf[1] = type;
@@ -240,9 +264,10 @@ static void build_state_fields(uint8_t *buf, uint8_t type, uint8_t seq) {
     memset(&buf[4], 0, 12);
 }
 
-static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
+static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq,
+                     const uint8_t *challenge) {
     static uint8_t out_seq = 0;
-    uint8_t buf[WIRE_PKT_SIZE];
+    uint8_t buf[UDP_AUTH_ACK_EXT_LEN];
     memset(buf, 0, sizeof(buf));
     buf[0] = MAGIC;
     buf[1] = TYPE_ACK;
@@ -275,7 +300,7 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
                      ACK_FLAG_ALT_PERSONA;
     buf[3] = ack_flags;
     // body[0..11]
-    buf[4] = PICO_BRIDGE_UDP_PROTO_VERSION;
+    buf[4] = current_proto_version();
     buf[5] = PICO_BRIDGE_FW_WIRE_MAJOR;
     buf[6] = PICO_BRIDGE_FW_WIRE_MINOR;
     buf[7] = PICO_BRIDGE_FW_WIRE_PATCH;
@@ -290,13 +315,23 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     buf[14] = (uint8_t)((uid_short >> 16) & 0xFF);
     buf[15] = (uint8_t)((uid_short >> 24) & 0xFF);
     buf[16] = crc8(buf, 16);
+    u16_t len = WIRE_PKT_SIZE;
+    if (challenge) {
+        uint8_t ack[WIRE_PKT_SIZE];
+        memcpy(ack, buf, WIRE_PKT_SIZE);
+        if (!udp_auth_sign_ack(&udp_auth, ack, challenge, buf)) {
+            diag_log_msg("net_udp: ack sign failed");
+            return;
+        }
+        len = UDP_AUTH_ACK_EXT_LEN;
+    }
 
-    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, WIRE_PKT_SIZE, PBUF_RAM);
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, len, PBUF_RAM);
     if (!p) {
         diag_log_msg("net_udp: ack pbuf_alloc failed (ERR_MEM)");
         return;
     }
-    memcpy(p->payload, buf, WIRE_PKT_SIZE);
+    memcpy(p->payload, buf, len);
     err_t e = udp_sendto(pcb, p, to_addr, to_port);
     pbuf_free(p);
     if (e != ERR_OK) {
@@ -523,7 +558,7 @@ static void send_pico_state(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_
     buf[2] = in_seq;
     buf[3] = 0;
     buf[4] = PICO_STATE_VERSION;
-    buf[5] = PICO_BRIDGE_UDP_PROTO_VERSION;
+    buf[5] = current_proto_version();
     buf[6] = PICO_BRIDGE_BOARD_TYPE;
     buf[7] = current_persona_byte();
     put_u32_le(buf, 8, uid_short);
@@ -750,16 +785,17 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
     // Use tot_len, not len: a chained pbuf has len < tot_len. Copy into a
     // contiguous local buffer rather than reading p->payload directly so we
     // never read past the first segment of a chain.
-    if (p->tot_len != WIRE_PKT_SIZE) {
-        note_malformed_packet("size", p->tot_len);
+    u16_t len = p->tot_len;
+    if (len != WIRE_PKT_SIZE && len != UDP_AUTH_SIGNED_LEN) {
+        note_malformed_packet("size", len);
         pbuf_free(p);
         return;
     }
-    uint8_t buf[WIRE_PKT_SIZE];
-    u16_t copied = pbuf_copy_partial(p, buf, WIRE_PKT_SIZE, 0);
+    uint8_t buf[UDP_AUTH_SIGNED_LEN];
+    u16_t copied = pbuf_copy_partial(p, buf, len, 0);
     pbuf_free(p);
     p = NULL;
-    if (copied != WIRE_PKT_SIZE) {
+    if (copied != len) {
         note_malformed_packet("copy", copied);
         return;
     }
@@ -776,8 +812,17 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
     uint8_t seq = buf[2];
     uint8_t flags = buf[3];
 
+    udp_auth_result_t auth = udp_auth_check(&udp_auth, buf, len);
+    if (auth != UDP_AUTH_OK && auth != UDP_AUTH_OPEN) {
+        note_auth_drop(auth, type, addr, port);
+        return;
+    }
+
     if (type == TYPE_DISCOVER) {
-        send_ack(addr, port, seq);
+        const uint8_t *challenge = NULL;
+        if (!udp_auth.keyed || !udp_auth_discover_challenge(buf, &challenge))
+            challenge = NULL;
+        send_ack(addr, port, seq, challenge);
         // Don't latch the peer yet -- wait for the first STATE or
         // HEARTBEAT, which proves end-to-end works.
     } else if (type == TYPE_GET_LOG) {
@@ -798,13 +843,14 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
     } else if (type == TYPE_GET_PICO_STATE) {
         send_pico_state(addr, port, seq);
     } else if (type == TYPE_REBOOT_TO_SETUP) {
-        send_ack(addr, port, seq);
+        send_ack(addr, port, seq, NULL);
         reboot_to_setup_pending = true;
-        diag_log_printf("net_udp: reboot_to_setup requested by %u.%u.%u.%u:%u",
+        diag_log_printf("net_udp: reboot_to_setup requested by %u.%u.%u.%u:%u%s",
                         ip4_addr1(ip_2_ip4(addr)), ip4_addr2(ip_2_ip4(addr)),
-                        ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
+                        ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port,
+                        (udp_auth.keyed && auth == UDP_AUTH_OPEN) ? " unsigned" : "");
     } else if (type == TYPE_SET_PERSONA) {
-        send_ack(addr, port, seq);
+        send_ack(addr, port, seq, NULL);
         set_persona_value = buf[4]; // body[0] = desired FLASH_PERSONA_*
         set_persona_pending = true;
         diag_log_printf("net_udp: set_persona=%u requested by %u.%u.%u.%u:%u",
@@ -812,7 +858,7 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
                         ip4_addr2(ip_2_ip4(addr)), ip4_addr3(ip_2_ip4(addr)),
                         ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
     } else if (type == TYPE_IDENTIFY) {
-        send_ack(addr, port, seq);
+        send_ack(addr, port, seq, NULL);
         uint8_t secs = buf[4]; // body[0] = blink seconds, 0 = stop
         if (secs > IDENTIFY_MAX_SECONDS)
             secs = IDENTIFY_MAX_SECONDS;
@@ -828,7 +874,7 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
                         ip4_addr1(ip_2_ip4(addr)), ip4_addr2(ip_2_ip4(addr)),
                         ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
     } else if (type == TYPE_SET_USB_CAPTURE) {
-        send_ack(addr, port, seq);
+        send_ack(addr, port, seq, NULL);
         set_usb_capture_persona = buf[4]; // body[0] = desired FLASH_PERSONA_*
         set_usb_capture_enabled = (buf[5] != 0);
         set_usb_capture_pending = true;
@@ -908,6 +954,23 @@ bool net_udp_init(void) {
     uid_short = (uint32_t)id.id[0] | ((uint32_t)id.id[1] << 8) | ((uint32_t)id.id[2] << 16) |
                 ((uint32_t)id.id[3] << 24);
 
+    flash_creds_t rec;
+    bool keyed = flash_creds_load(&rec) && rec.auth_key_set;
+    uint64_t nonce_value = get_rand_64();
+    uint8_t nonce[UDP_AUTH_NONCE_LEN];
+    for (int i = 0; i < UDP_AUTH_NONCE_LEN; i++)
+        nonce[i] = (uint8_t)(nonce_value >> (8 * i));
+    if (!udp_auth_init(&udp_auth, keyed ? rec.auth_key : NULL, nonce))
+        diag_log_msg("net_udp: auth init failed; signed packets will be dropped");
+    bool recovery = keyed && auth_recovery_boot &&
+                    to_ms_since_boot(get_absolute_time()) < AUTH_RECOVERY_WINDOW_MS;
+    udp_auth_set_recovery(&udp_auth, recovery);
+    memset(&rec, 0, sizeof(rec));
+    auth_drop_gate.armed = false;
+    auth_drop_count = 0;
+    diag_log_printf("net_udp: auth %s%s", keyed ? "required" : "off",
+                    recovery ? ", unsigned reboot_to_setup allowed for now" : "");
+
     have_peer = false;
     malformed_count = 0;
     log_reply_gate.armed = false;
@@ -922,7 +985,16 @@ bool net_udp_init(void) {
     return true;
 }
 
+void net_udp_set_recovery_boot(bool physical_boot) {
+    auth_recovery_boot = physical_boot;
+}
+
 void net_udp_task(void) {
+    if (udp_auth.recovery_open &&
+        to_ms_since_boot(get_absolute_time()) >= AUTH_RECOVERY_WINDOW_MS) {
+        udp_auth_set_recovery(&udp_auth, false);
+        diag_log_msg("net_udp: unsigned reboot_to_setup window closed");
+    }
     if (reboot_to_setup_pending) {
         diag_log_msg("net_udp: rebooting to setup mode");
         reset_reason_request_setup_after_reboot();

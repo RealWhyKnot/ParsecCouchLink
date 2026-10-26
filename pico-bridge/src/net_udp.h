@@ -9,6 +9,7 @@
 //         bound to a peer.
 
 bool net_udp_init(void);
+void net_udp_set_recovery_boot(bool physical_boot);
 void net_udp_task(void);
 
 // Read-only accessors used by the firmware heartbeat. Counters wrap on

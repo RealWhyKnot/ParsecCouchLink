@@ -29,7 +29,8 @@ use debug_harvest::{
 
 use crate::protocol::{self, GamepadState, Packet, PacketKind, Persona, FLAG_PARSEC_CONNECTED};
 use crate::{
-    cdc, cmd_flash, cmd_lab, config, discovery, journal, keyboard, net, pico_cache, support, xinput,
+    cdc, cmd_flash, cmd_lab, config, discovery, journal, keyboard, net, pico_cache, support,
+    udp_auth, xinput,
 };
 
 pub use bluetooth::print_bluetooth_pairing_help;
@@ -317,7 +318,7 @@ pub async fn probe_pico_ip(ip: IpAddr, timeout: Duration) -> Result<PicoTarget> 
             timeout.as_secs()
         );
     };
-    if reply.info.proto_version != protocol::PROTO_VERSION {
+    if !protocol::proto_supported(reply.info.proto_version) {
         bail!(
             "Pico at {} speaks protocol v{}, bridge speaks v{}. Update whichever side is older.",
             reply.peer,
@@ -779,6 +780,9 @@ pub async fn stream_routes(routes: Vec<StreamRoute>, options: StreamOptions) -> 
     validate_routes(&routes)?;
     let routes = prepare_bluetooth_routes(routes, options.quiet).await?;
     validate_routes(&routes)?;
+    for route in routes.iter().filter(|r| !r.pico.persona.is_bluetooth()) {
+        udp_auth::prepare(route.pico.peer).await?;
+    }
     let mut bluetooth_usb_links = open_bluetooth_usb_links(&routes, options.quiet)?;
     if options.save_routes {
         save_routes(&routes)?;
@@ -1029,9 +1033,8 @@ impl RouteRuntime {
             }
         };
         self.seq = self.seq.wrapping_add(1);
-        socket
-            .send_to(&packet.encode(), self.route.pico.peer)
-            .await?;
+        let bytes = udp_auth::seal(self.route.pico.peer, &packet.encode());
+        socket.send_to(&bytes, self.route.pico.peer).await?;
         self.sent_total += 1;
         Ok(())
     }
@@ -1470,7 +1473,7 @@ async fn run_legacy_single() -> Result<()> {
         pico.info.unique_id_short,
     );
 
-    if pico.info.proto_version != protocol::PROTO_VERSION {
+    if !protocol::proto_supported(pico.info.proto_version) {
         bail!(
             "wire protocol mismatch: Pico speaks v{}, bridge speaks v{}. Update whichever is older.",
             pico.info.proto_version,

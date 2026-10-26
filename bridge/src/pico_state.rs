@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use tokio::time::{interval, MissedTickBehavior};
 
-use crate::{cmd_run, net, pico_cache, protocol};
+use crate::{cmd_run, net, pico_cache, protocol, udp_auth};
 
 const PROBE_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -13,6 +13,7 @@ pub async fn query_pico_state(
     pico: &cmd_run::PicoTarget,
     timeout: Duration,
 ) -> Result<protocol::PicoStateDiag> {
+    udp_auth::prepare(pico.peer).await?;
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP Pico state socket")?;
@@ -32,7 +33,7 @@ pub async fn query_pico_state(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let req = protocol::encode_get_pico_state(seq);
+                let req = udp_auth::seal(pico.peer, &protocol::encode_get_pico_state(seq));
                 seq = seq.wrapping_add(1);
                 socket
                     .send_to(&req, pico.peer)

@@ -4,19 +4,23 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::{cdc, cmd_run, net, protocol};
+use crate::{cdc, cmd_run, net, protocol, udp_auth};
 
 pub async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
     tracing::info!(
         "pico-mode: request reboot-to-setup for {}",
         pico.short_label()
     );
+    if let Err(e) = udp_auth::prepare(pico.peer).await {
+        tracing::info!("pico-mode: {e:#}");
+        println!("{}", udp_auth::RECOVERY_HINT);
+    }
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP reboot-to-setup socket")?;
     let mut seq = 0xE0u8;
     for _ in 0..8 {
-        let req = protocol::encode_reboot_to_setup(seq);
+        let req = udp_auth::seal(pico.peer, &protocol::encode_reboot_to_setup(seq));
         tracing::debug!(
             "pico-mode: send reboot-to-setup seq=0x{:02X} to {}",
             seq,
@@ -46,12 +50,13 @@ pub async fn request_set_persona(
         persona.label(),
         pico.short_label(),
     );
+    udp_auth::prepare(pico.peer).await?;
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP set-persona socket")?;
     let mut seq = 0xD0u8;
     for _ in 0..6 {
-        let req = protocol::encode_set_persona(seq, persona);
+        let req = udp_auth::seal(pico.peer, &protocol::encode_set_persona(seq, persona));
         tracing::debug!(
             "pico-mode: send set-persona seq=0x{:02X} persona={} to {}",
             seq,
@@ -88,12 +93,16 @@ pub async fn request_set_usb_capture_persona(
         persona.label(),
         pico.short_label(),
     );
+    udp_auth::prepare(pico.peer).await?;
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP usb-capture socket")?;
     let mut seq = 0xC0u8;
     for _ in 0..6 {
-        let req = protocol::encode_set_usb_capture(seq, persona, true);
+        let req = udp_auth::seal(
+            pico.peer,
+            &protocol::encode_set_usb_capture(seq, persona, true),
+        );
         tracing::debug!(
             "pico-mode: send usb-capture seq=0x{:02X} persona={} to {}",
             seq,
@@ -126,12 +135,16 @@ pub async fn request_clear_usb_capture(pico: &cmd_run::PicoTarget) -> Result<()>
         "pico-mode: request clear usb-capture for {}",
         pico.short_label()
     );
+    udp_auth::prepare(pico.peer).await?;
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP clear usb-capture socket")?;
     let mut seq = 0xB0u8;
     for _ in 0..4 {
-        let req = protocol::encode_set_usb_capture(seq, pico.persona, false);
+        let req = udp_auth::seal(
+            pico.peer,
+            &protocol::encode_set_usb_capture(seq, pico.persona, false),
+        );
         tracing::debug!(
             "pico-mode: send clear usb-capture seq=0x{:02X} to {}",
             seq,
@@ -165,13 +178,14 @@ pub async fn request_identify(pico: &cmd_run::PicoTarget, blink_seconds: u8) -> 
         blink_seconds,
         pico.short_label(),
     );
+    udp_auth::prepare(pico.peer).await?;
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP identify socket")?;
     let mut seq = 0xA0u8;
     let mut buf = [0u8; 64];
     for _ in 0..6 {
-        let req = protocol::encode_identify(seq, blink_seconds);
+        let req = udp_auth::seal(pico.peer, &protocol::encode_identify(seq, blink_seconds));
         seq = seq.wrapping_add(1);
         socket
             .send_to(&req, pico.peer)

@@ -85,6 +85,7 @@ static void send_nack(uint8_t seq, uint8_t code, uint8_t detail) {
 static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
     flash_creds_t cur;
     bool have = flash_creds_load(&cur);
+    bool keyed = have && cur.auth_key_set;
     // Wipe the on-stack copy: it contains the cleartext password from
     // flash, and we only needed the presence bit here.
     memset(&cur, 0, sizeof(cur));
@@ -95,6 +96,8 @@ static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
     payload[3] = PICO_BRIDGE_FW_WIRE_PATCH;
     payload[4] = PICO_BRIDGE_BOARD_TYPE;
     payload[5] = (have ? CDC_HELLO_FLAG_CREDS_PRESENT : 0) | CDC_HELLO_FLAG_RUN_MODE_OK;
+    if (keyed)
+        payload[5] |= CDC_HELLO_FLAG_AUTH_KEY;
     if (boot_mode_current() == BOOT_MODE_RUN) {
         payload[5] |= CDC_HELLO_FLAG_RUN_MODE_ACTIVE;
     }
@@ -139,9 +142,8 @@ static size_t handle_set_wifi(const cdc_frame_view_t *req, uint8_t *reply, size_
     // re-provisioning if there was a prior record.
     flash_creds_t prev;
     if (flash_creds_load(&prev)) {
-        rec.name_len = prev.name_len;
-        memcpy(rec.device_name, prev.device_name, FLASH_CREDS_NAME_MAX);
-        rec.usb_persona = prev.usb_persona;
+        flash_creds_keep_settings(&rec, &prev);
+        memset(&prev, 0, sizeof(prev));
     }
 
     int rc = flash_creds_store(&rec);
@@ -402,6 +404,28 @@ static size_t handle_device_name_set(const cdc_frame_view_t *req, uint8_t *reply
     return cdc_encode(CDC_RSP_SET_DEVICE_NAME, req->seq, NULL, 0, reply, cap);
 }
 
+static size_t handle_set_auth_key(const cdc_frame_view_t *req, uint8_t *reply, size_t cap) {
+    if (req->payload_len != FLASH_CREDS_AUTH_KEY_LEN) {
+        uint8_t err[2] = {CDC_ERR_BAD_LENGTH, 0};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    flash_creds_t rec;
+    if (!flash_creds_load(&rec)) {
+        uint8_t err[2] = {CDC_ERR_INTERNAL, 1};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    rec.auth_key_set = 1;
+    memcpy(rec.auth_key, req->payload, FLASH_CREDS_AUTH_KEY_LEN);
+    int rc = flash_creds_store(&rec);
+    memset(&rec, 0, sizeof(rec));
+    if (rc != 0) {
+        uint8_t err[2] = {CDC_ERR_FLASH_WRITE_FAIL, 0};
+        return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
+    }
+    diag_log_msg("cdc: udp auth key stored");
+    return cdc_encode(CDC_RSP_SET_AUTH_KEY, req->seq, NULL, 0, reply, cap);
+}
+
 static size_t handle_log_buffer(uint8_t seq, uint8_t *reply, size_t cap) {
     // Wire format: 4-byte little-endian `lost_bytes` count, followed
     // by the most-recent log bytes. The host gates parsing of the
@@ -467,6 +491,8 @@ size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_ca
         return handle_bt_state(req, reply, reply_cap);
     case CDC_CMD_BT_GET_STATUS:
         return handle_bt_get_status(req, reply, reply_cap);
+    case CDC_CMD_SET_AUTH_KEY:
+        return handle_set_auth_key(req, reply, reply_cap);
     default: {
         uint8_t err[2] = {CDC_ERR_UNKNOWN_COMMAND, req->command};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, reply_cap);

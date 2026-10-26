@@ -33,7 +33,8 @@
 // cache directly to the product release suffix.
 
 // On-wire protocol versions.
-#define PICO_BRIDGE_UDP_PROTO_VERSION 1
+#define PICO_BRIDGE_UDP_PROTO_VERSION 2
+#define PICO_BRIDGE_UDP_PROTO_VERSION_OPEN 1
 #define PICO_BRIDGE_CDC_PROTO_VERSION 1
 
 // Board type byte reported in the UDP ack body and CDC HELLO_ACK.

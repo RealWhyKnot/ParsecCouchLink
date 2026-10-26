@@ -20,6 +20,7 @@ pub const CMD_REBOOT_TO_BOOTSEL: u8 = 0x0B;
 pub const CMD_BT_STATE: u8 = 0x0C;
 pub const CMD_BT_HEARTBEAT: u8 = 0x0D;
 pub const CMD_BT_GET_STATUS: u8 = 0x0E;
+pub const CMD_SET_AUTH_KEY: u8 = 0x0F;
 
 // Response opcodes
 pub const RSP_HELLO: u8 = 0x81;
@@ -35,6 +36,7 @@ pub const RSP_REBOOT_TO_BOOTSEL: u8 = 0x8B;
 pub const RSP_BT_STATE: u8 = 0x8C;
 pub const RSP_BT_HEARTBEAT: u8 = 0x8D;
 pub const RSP_BT_STATUS: u8 = 0x8E;
+pub const RSP_SET_AUTH_KEY: u8 = 0x8F;
 pub const RSP_NACK: u8 = 0xFE;
 
 /// Short human label for a response opcode, used in the rare "unexpected
@@ -55,6 +57,7 @@ pub(crate) fn response_name(command: u8) -> &'static str {
         RSP_BT_STATE => "BT_STATE_ACK",
         RSP_BT_HEARTBEAT => "BT_HEARTBEAT_ACK",
         RSP_BT_STATUS => "BT_STATUS",
+        RSP_SET_AUTH_KEY => "SET_AUTH_KEY_ACK",
         RSP_NACK => "NACK",
         _ => "unknown",
     }
@@ -76,6 +79,7 @@ pub const HELLO_FLAG_CREDS_PRESENT: u8 = 0x01;
 pub const HELLO_FLAG_WIFI_JOINED: u8 = 0x02;
 pub const HELLO_FLAG_RUN_MODE_OK: u8 = 0x04;
 pub const HELLO_FLAG_RUN_MODE_ACTIVE: u8 = 0x08;
+pub const HELLO_FLAG_AUTH_KEY: u8 = 0x10;
 
 pub const BT_STATUS_VERSION: u8 = 5;
 pub const BT_STATUS_V1_VERSION: u8 = 1;

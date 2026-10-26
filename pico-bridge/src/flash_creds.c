@@ -172,3 +172,11 @@ void flash_creds_clear(void) {
         diag_log_msg("flash_creds: both slots erased");
     }
 }
+
+void flash_creds_keep_settings(flash_creds_t *rec, const flash_creds_t *prev) {
+    rec->name_len = prev->name_len;
+    memcpy(rec->device_name, prev->device_name, FLASH_CREDS_NAME_MAX);
+    rec->usb_persona = prev->usb_persona;
+    rec->auth_key_set = prev->auth_key_set;
+    memcpy(rec->auth_key, prev->auth_key, FLASH_CREDS_AUTH_KEY_LEN);
+}

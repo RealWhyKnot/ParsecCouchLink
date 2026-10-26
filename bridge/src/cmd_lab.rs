@@ -14,7 +14,9 @@ use clap::ValueEnum;
 use serde::Serialize;
 use zeroize::Zeroize;
 
-use crate::{cdc, cmd_flash, cmd_run, cmd_usb_diag, config, net, pico_mode, protocol, xinput};
+use crate::{
+    cdc, cmd_flash, cmd_run, cmd_usb_diag, config, net, pico_mode, protocol, udp_auth, xinput,
+};
 
 use pnp::{
     pnp_disable_enable_with_elevation, pnp_instance_ids, pnp_instances_for_uids,
@@ -1149,9 +1151,9 @@ async fn send_state_once(
     state: protocol::GamepadState,
     flags: u8,
 ) -> Result<()> {
-    let packet = protocol::Packet::state(seq, flags, state);
+    let packet = udp_auth::seal(target, &protocol::Packet::state(seq, flags, state).encode());
     socket
-        .send_to(&packet.encode(), target)
+        .send_to(&packet, target)
         .await
         .with_context(|| format!("sending synthetic state to {target}"))?;
     Ok(())

@@ -19,6 +19,7 @@
 
 #define FLASH_CREDS_RECORD_SIZE 256
 #define FLASH_CREDS_NAME_MAX 32
+#define FLASH_CREDS_AUTH_KEY_LEN 32
 
 // Run-mode output persona stored alongside the credentials. The byte sits
 // where the pad used to be all-zero, so a record written before this
@@ -42,13 +43,15 @@ typedef struct __attribute__((packed)) {
     uint8_t ssid_len;
     uint8_t pass_len;
     uint8_t name_len;
-    uint32_t generation;                                      // monotonic; newer slot wins
-    uint8_t ssid[FLASH_CREDS_SSID_MAX];                       // 32
-    uint8_t password[FLASH_CREDS_PASS_MAX + 1];               // 64 with NUL room
-    uint8_t device_name[FLASH_CREDS_NAME_MAX];                // 32
-    uint8_t usb_persona;                                      // output FLASH_PERSONA_*; 0 = XInput
-    uint8_t reserved[256 - 4 - 4 - 4 - 32 - 64 - 32 - 1 - 4]; // pad
-    uint32_t crc32;                                           // over the first 252 bytes
+    uint32_t generation;                        // monotonic; newer slot wins
+    uint8_t ssid[FLASH_CREDS_SSID_MAX];         // 32
+    uint8_t password[FLASH_CREDS_PASS_MAX + 1]; // 64 with NUL room
+    uint8_t device_name[FLASH_CREDS_NAME_MAX];  // 32
+    uint8_t usb_persona;                        // output FLASH_PERSONA_*; 0 = XInput
+    uint8_t auth_key_set;
+    uint8_t auth_key[FLASH_CREDS_AUTH_KEY_LEN];
+    uint8_t reserved[256 - 4 - 4 - 4 - 32 - 64 - 32 - 1 - 1 - FLASH_CREDS_AUTH_KEY_LEN - 4];
+    uint32_t crc32; // over the first 252 bytes
 } flash_creds_t;
 
 _Static_assert(sizeof(flash_creds_t) == FLASH_CREDS_RECORD_SIZE,
@@ -68,3 +71,5 @@ int flash_creds_store(const flash_creds_t *rec);
 // Erase both slots. Kept for explicit recovery commands or future
 // maintenance paths; normal BOOTSEL setup recovery retains credentials.
 void flash_creds_clear(void);
+
+void flash_creds_keep_settings(flash_creds_t *rec, const flash_creds_t *prev);

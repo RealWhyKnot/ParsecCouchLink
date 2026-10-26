@@ -100,3 +100,55 @@ add_executable(test_xgip_constants
 target_include_directories(test_xgip_constants PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 
 add_test(NAME xgip_constants COMMAND test_xgip_constants)
+
+set(COUCHLINK_MBEDTLS_DIR "" CACHE PATH "Mbed TLS source tree for the auth tests")
+if(NOT COUCHLINK_MBEDTLS_DIR)
+    if(DEFINED ENV{PICO_SDK_PATH} AND EXISTS "$ENV{PICO_SDK_PATH}/lib/mbedtls/library/md.c")
+        set(COUCHLINK_MBEDTLS_DIR "$ENV{PICO_SDK_PATH}/lib/mbedtls")
+    elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../build-_pico_sdk/pico_sdk-src/lib/mbedtls/library/md.c")
+        set(COUCHLINK_MBEDTLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../build-_pico_sdk/pico_sdk-src/lib/mbedtls")
+    else()
+        include(FetchContent)
+        FetchContent_Declare(couchlink_mbedtls
+            URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
+            URL_HASH SHA256=8b54fb9bcf4d5a7078028e0520acddefb7900b3e66fec7f7175bb5b7d85ccdca
+            SOURCE_SUBDIR unused
+        )
+        FetchContent_MakeAvailable(couchlink_mbedtls)
+        set(COUCHLINK_MBEDTLS_DIR "${couchlink_mbedtls_SOURCE_DIR}")
+    endif()
+endif()
+
+add_library(couchlink_mbedtls STATIC
+    ${COUCHLINK_MBEDTLS_DIR}/library/constant_time.c
+    ${COUCHLINK_MBEDTLS_DIR}/library/md.c
+    ${COUCHLINK_MBEDTLS_DIR}/library/platform.c
+    ${COUCHLINK_MBEDTLS_DIR}/library/platform_util.c
+    ${COUCHLINK_MBEDTLS_DIR}/library/sha256.c
+)
+target_include_directories(couchlink_mbedtls PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${COUCHLINK_MBEDTLS_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_compile_definitions(couchlink_mbedtls PUBLIC MBEDTLS_CONFIG_FILE="pico_mbedtls_config.h")
+
+add_executable(test_udp_auth
+    test_udp_auth.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/udp_auth.c
+)
+target_link_libraries(test_udp_auth PRIVATE couchlink_mbedtls)
+
+add_test(NAME udp_auth COMMAND test_udp_auth)
+
+add_executable(test_flash_creds
+    test_flash_creds.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/flash_creds.c
+)
+target_include_directories(test_flash_creds PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_compile_definitions(test_flash_creds PRIVATE PICO_FLASH_SIZE_BYTES=16384u)
+
+add_test(NAME flash_creds COMMAND test_flash_creds)

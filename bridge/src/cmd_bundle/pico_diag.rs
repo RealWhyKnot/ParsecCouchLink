@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use crate::protocol::{self, LogChunk, Packet, PacketKind, ACK_FLAG_LOG_CHUNK_SUPPORTED};
-use crate::{cdc, cmd_run, config};
+use crate::{cdc, cmd_run, config, udp_auth};
 use tokio::net::UdpSocket;
 
 use super::usb_enum::{setup_probe_failed_diagnosis, stub_failure};
@@ -664,7 +664,16 @@ async fn try_capture_run_udp() -> DiagOutcome {
 async fn capture_log_chunks(socket: &UdpSocket, peer_addr: SocketAddr) -> DiagOutcome {
     // Send GET_LOG, collect chunks until LAST_CHUNK or timeout.
     let started = Instant::now();
-    let req = protocol::encode_get_log(0);
+    if let Err(e) = udp_auth::check_access(peer_addr) {
+        return DiagOutcome::UdpProbeFailed {
+            peer: peer_addr,
+            step: "auth",
+            elapsed_ms: 0,
+            chunks_received: 0,
+            error: format!("{e:#}"),
+        };
+    }
+    let req = udp_auth::seal(peer_addr, &protocol::encode_get_log(0));
     if let Err(e) = socket.send_to(&req, peer_addr).await {
         return DiagOutcome::UdpProbeFailed {
             peer: peer_addr,
@@ -758,7 +767,7 @@ async fn unicast_for_ack(
     peer: SocketAddr,
     timeout: Duration,
 ) -> Result<Packet, String> {
-    let req = Packet::discover(0).encode();
+    let req = udp_auth::discover_frame(0);
     socket
         .send_to(&req, peer)
         .await
@@ -775,7 +784,7 @@ async fn unicast_for_ack(
                 if from != peer {
                     continue;
                 }
-                match Packet::decode(&buf[..n]) {
+                match udp_auth::decode_reply(from, &buf[..n]) {
                     Ok(pkt) if matches!(pkt.kind, PacketKind::Ack(_)) => return Ok(pkt),
                     Ok(_) => continue,
                     Err(e) => {
@@ -797,7 +806,7 @@ async fn broadcast_for_ack(socket: &UdpSocket, timeout: Duration) -> Result<Sock
     let broadcast_addr: SocketAddr = format!("255.255.255.255:{}", protocol::PORT)
         .parse()
         .expect("broadcast addr is constant");
-    let req = Packet::discover(0).encode();
+    let req = udp_auth::discover_frame(0);
     socket
         .send_to(&req, broadcast_addr)
         .await
@@ -810,7 +819,7 @@ async fn broadcast_for_ack(socket: &UdpSocket, timeout: Duration) -> Result<Sock
             .filter(|d| !d.is_zero())
             .ok_or_else(|| format!("no ack within {} ms", timeout.as_millis()))?;
         match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
-            Ok(Ok((n, from))) => match Packet::decode(&buf[..n]) {
+            Ok(Ok((n, from))) => match udp_auth::decode_reply(from, &buf[..n]) {
                 Ok(pkt) if matches!(pkt.kind, PacketKind::Ack(_)) => return Ok(from),
                 Ok(_) => continue,
                 Err(e) => {

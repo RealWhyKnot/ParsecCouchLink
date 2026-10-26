@@ -29,6 +29,7 @@ mod pico_state;
 mod protocol;
 mod support;
 mod tui;
+mod udp_auth;
 mod xinput;
 
 use std::path::PathBuf;

@@ -404,6 +404,18 @@ impl PicoSetup {
         Ok(())
     }
 
+    pub fn set_auth_key(&mut self, key: &[u8; 32]) -> Result<()> {
+        let resp = self.exchange_named("SET_AUTH_KEY", CMD_SET_AUTH_KEY, key)?;
+        if resp.command != RSP_SET_AUTH_KEY {
+            bail!(
+                "unexpected response 0x{:02X} ({}) to SET_AUTH_KEY",
+                resp.command,
+                response_name(resp.command)
+            );
+        }
+        Ok(())
+    }
+
     pub fn reboot_to_run(&mut self) -> Result<()> {
         self.reboot_with_ack(CMD_REBOOT_TO_RUN, RSP_REBOOT, "REBOOT_TO_RUN")
     }
@@ -599,6 +611,10 @@ impl HelloAck {
 
     pub fn run_mode_active(&self) -> bool {
         self.flags & HELLO_FLAG_RUN_MODE_ACTIVE != 0
+    }
+
+    pub fn auth_key_present(&self) -> bool {
+        self.flags & HELLO_FLAG_AUTH_KEY != 0
     }
 
     pub fn firmware_version(&self) -> FirmwareVersion {

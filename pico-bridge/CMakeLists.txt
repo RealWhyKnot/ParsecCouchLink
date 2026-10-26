@@ -100,6 +100,7 @@ add_executable(pico_bridge
     src/net_udp.c
     src/reply_gate.c
     src/reset_reason.c
+    src/udp_auth.c
     src/usb_diag.c
     src/usb_descriptors.c
     src/usb_packet_debug.c
@@ -129,6 +130,8 @@ target_link_libraries(pico_bridge
     pico_stdlib
     pico_unique_id
     pico_flash          # flash_safe_execute (coordinates core 1 + IRQs)
+    pico_mbedtls
+    pico_rand
     hardware_flash
     hardware_sync
     tinyusb_device

@@ -14,7 +14,7 @@ use dialoguer::{theme::ColorfulTheme, Input, Password};
 use zeroize::Zeroize;
 
 use crate::tui::select;
-use crate::{cdc, cmd_run, pico_mode};
+use crate::{cdc, cmd_run, pico_mode, udp_auth};
 
 pub async fn run() -> Result<()> {
     println!("couchlink configure-wifi");
@@ -72,6 +72,8 @@ async fn configure_setup_port(port: String) -> Result<()> {
     password.zeroize();
     drop(password);
     result.context("SET_WIFI failed")?;
+    let paired = udp_auth::provision(&mut pico)?;
+    println!("  -> {}", udp_auth::pairing_summary(paired));
     println!("  -> stored. Asking Pico to reboot into run mode.");
 
     pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;

@@ -161,10 +161,13 @@ pub enum UsbConfigurationState {
     Configured,
 }
 
-/// Current wire-protocol version for the streaming/discovery path. Stays
-/// at 1 across optional diagnostics; new behaviour is gated on ACK
-/// capability bits instead.
-pub const PROTO_VERSION: u8 = 1;
+/// Current wire-protocol version for the streaming/discovery path.
+pub const PROTO_VERSION: u8 = 2;
+pub const PROTO_VERSION_OPEN: u8 = 1;
+
+pub fn proto_supported(version: u8) -> bool {
+    version == PROTO_VERSION || version == PROTO_VERSION_OPEN
+}
 
 pub const BOARD_PICO_2_W: u8 = 0x01;
 pub const BOARD_PICO_W_RP2040: u8 = 0x02;

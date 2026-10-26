@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use chrono::Local;
 use serde_json::json;
 
-use crate::{config, net, protocol};
+use crate::{config, net, protocol, udp_auth};
 
 pub(crate) const DEBUG_PACKET_FILE_RETENTION: usize = 5;
 
@@ -229,8 +229,9 @@ pub(crate) async fn capture_run_diag_log(
     let socket = net::bind_udp("0.0.0.0:0")
         .await
         .context("binding UDP debug packet harvest socket")?;
+    udp_auth::prepare(peer).await?;
     let started = Instant::now();
-    let req = protocol::encode_get_log(0);
+    let req = udp_auth::seal(peer, &protocol::encode_get_log(0));
     socket
         .send_to(&req, peer)
         .await

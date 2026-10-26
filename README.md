@@ -79,6 +79,8 @@ Other commands:
 
 If `configure-wifi` finds a Pico that's already on Wi-Fi, it can reboot it into setup-mode USB before asking for new credentials. After a firmware update, keep the current Wi-Fi if it hasn't changed and start streaming.
 
+Setup and `configure-wifi` also pair the Pico with this PC over USB. The PC saves a key for each Pico, protected by your Windows account, and from then on the Pico ignores Wi-Fi commands that aren't signed with that key. To use the Pico from a different PC, or after reinstalling Windows, plug it into that PC and run `couchlink.exe configure-wifi` within two minutes of plugging it in. Older firmware can't store a key and keeps accepting unsigned commands.
+
 `couchlink lab` is for development benches with the Pico plugged into the Windows host. `--power pnp-remove` has Windows remove and rescan the CouchLink Pico devices, the run-mode XInput device included, which tests reconnect handling. It doesn't pull the cable or cut USB power. For that you need an external power backend.
 
 ## Reporting bugs

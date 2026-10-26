@@ -395,6 +395,8 @@ int main(void) {
     // outcome -- bundles after a hang will self-narrate.
     reset_reason_info_t rr = reset_reason_classify();
     log_reset_reason(&rr);
+    net_udp_set_recovery_boot(rr.reason == RESET_REASON_COLD_OR_PIN ||
+                              rr.reason == RESET_REASON_FLASH_UPDATE);
     log_board_identity();
 
     // Decide mode BEFORE tusb_init() so D+ is never asserted while the

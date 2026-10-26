@@ -18,7 +18,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep, MissedTickBehavior};
 
-use crate::protocol::{self, AckInfo, Packet, PacketKind, Persona};
+use crate::protocol::{self, AckInfo, PacketKind, Persona};
+use crate::udp_auth;
 
 const BROADCAST_INTERVAL: Duration = Duration::from_secs(1);
 const UNICAST_INTERVAL: Duration = Duration::from_millis(500);
@@ -73,9 +74,8 @@ pub async fn collect(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let pkt = Packet::discover(seq);
+                let bytes = udp_auth::discover_frame(seq);
                 seq = seq.wrapping_add(1);
-                let bytes = pkt.encode();
                 let _ = socket.send_to(&bytes, broadcast_addr).await;
                 for target in &extra_sockets {
                     let _ = target.socket.send_to(&bytes, target.broadcast_addr).await;
@@ -164,9 +164,9 @@ pub async fn probe_ip(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let pkt = Packet::discover(seq);
+                let bytes = udp_auth::discover_frame(seq);
                 seq = seq.wrapping_add(1);
-                socket.send_to(&pkt.encode(), target).await?;
+                socket.send_to(&bytes, target).await?;
             }
             r = socket.recv_from(&mut buf) => {
                 let Some((peer, mut info, persona, flags)) = handle_recv("manual-ip", r, &buf) else {
@@ -203,7 +203,7 @@ fn handle_recv(
     buf: &[u8; 64],
 ) -> Option<(SocketAddr, AckInfo, Persona, u8)> {
     match r {
-        Ok((n, peer)) => match Packet::decode(&buf[..n]) {
+        Ok((n, peer)) => match udp_auth::decode_reply(peer, &buf[..n]) {
             Ok(pkt) => {
                 if let PacketKind::Ack(info) = pkt.kind {
                     tracing::trace!("discovery: ack received via {src_label} from {peer}");
@@ -483,6 +483,7 @@ mod tests {
     use tracing_subscriber::Layer;
 
     use super::*;
+    use crate::protocol::Packet;
 
     #[test]
     fn ack_receive_trace_is_hidden_at_default_info_level() {

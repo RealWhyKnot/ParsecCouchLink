@@ -35,6 +35,7 @@
 #define CDC_CMD_BT_STATE 0x0C
 #define CDC_CMD_BT_HEARTBEAT 0x0D
 #define CDC_CMD_BT_GET_STATUS 0x0E
+#define CDC_CMD_SET_AUTH_KEY 0x0F
 
 // Response opcodes (high bit set).
 #define CDC_RSP_HELLO 0x81
@@ -50,6 +51,7 @@
 #define CDC_RSP_BT_STATE 0x8C
 #define CDC_RSP_BT_HEARTBEAT 0x8D
 #define CDC_RSP_BT_STATUS 0x8E
+#define CDC_RSP_SET_AUTH_KEY 0x8F
 #define CDC_RSP_NACK 0xFE
 
 // Error codes carried in a NACK payload (first byte; second byte is detail).
@@ -69,6 +71,7 @@
 #define CDC_HELLO_FLAG_WIFI_JOINED 0x02
 #define CDC_HELLO_FLAG_RUN_MODE_OK 0x04
 #define CDC_HELLO_FLAG_RUN_MODE_ACTIVE 0x08
+#define CDC_HELLO_FLAG_AUTH_KEY 0x10
 
 #define CDC_BT_STATUS_VERSION 5
 #define CDC_BT_STATUS_V1_VERSION 1

@@ -16,7 +16,7 @@ use anyhow::{bail, Context, Result};
 use dialoguer::{theme::ColorfulTheme, Input, Password};
 use zeroize::Zeroize;
 
-use crate::{cdc, cmd_run, config, diag_usb, journal, pico_mode, protocol};
+use crate::{cdc, cmd_run, config, diag_usb, journal, pico_mode, protocol, udp_auth};
 
 const SETUP_STAGE_NAMES: [&str; 6] = [
     "Pre-flight",
@@ -218,6 +218,7 @@ async fn stage_wifi_provisioning(pre_flash_run_uids: Option<&HashSet<u32>>) -> R
         .await?;
         if !overwrite {
             println!("  Keeping existing credentials. Skipping ahead to discovery.");
+            pair_over_usb(&mut pico)?;
             tracing::info!("setup: keeping existing creds, rebooting to run mode");
             pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;
             return Ok(());
@@ -241,9 +242,17 @@ async fn stage_wifi_provisioning(pre_flash_run_uids: Option<&HashSet<u32>>) -> R
     let result = pico.set_wifi(&ssid, &mut password);
     password.zeroize();
     result.context("SET_WIFI failed")?;
+    pair_over_usb(&mut pico)?;
     println!("  Stored. Rebooting Pico into run mode.");
     tracing::info!("setup: SET_WIFI ack received, rebooting to run mode");
     pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;
+    Ok(())
+}
+
+fn pair_over_usb(pico: &mut cdc::PicoSetup) -> Result<()> {
+    let paired = udp_auth::provision(pico)?;
+    tracing::info!("setup: udp auth key provisioned={paired}");
+    println!("  {}", udp_auth::pairing_summary(paired));
     Ok(())
 }
 
@@ -278,11 +287,11 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
                 timeout.as_secs(),
             );
         }
-        let pkt = protocol::Packet::discover(seq).encode();
+        let pkt = udp_auth::discover_frame(seq);
         seq = seq.wrapping_add(1);
         let _ = socket.send_to(&pkt, discover_addr).await;
         match tokio::time::timeout(Duration::from_secs(1), socket.recv_from(&mut buf)).await {
-            Ok(Ok((n, from))) => match protocol::Packet::decode(&buf[..n]) {
+            Ok(Ok((n, from))) => match udp_auth::decode_reply(from, &buf[..n]) {
                 Ok(p) => {
                     if let protocol::PacketKind::Ack(info) = p.kind {
                         println!(
@@ -299,6 +308,9 @@ async fn stage_lan_discovery() -> Result<(String, protocol::AckInfo)> {
                             info.uptime_seconds,
                             seq,
                         );
+                        if let Err(e) = udp_auth::check_access(from) {
+                            println!("  Warning: {e}");
+                        }
                         return Ok((from.ip().to_string(), info));
                     }
                 }
