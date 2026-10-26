@@ -11,6 +11,7 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 - **deps:** Bump the cargo group in /bridge with 8 updates (#2) (32aaccc)
 - **deps:** Bump thiserror from 1.0.69 to 2.0.18 in /bridge (#3) (11e1732)
 - **deps:** Bump dialoguer from 0.11.0 to 0.12.0 in /bridge (#5) (15d078d)
+- **deps:** Bump directories from 5.0.1 to 6.0.0 in /bridge (#6) (6a56c44)
 
 ### Fixed
 - **bridge:** Port USB diag log reads to nusb 0.2 (29e0c78)
