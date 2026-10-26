@@ -7,6 +7,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 ### Added
 - **udp:** Pair the Pico and sign its UDP commands (f659208)
 
+### Changed
+- **deps:** Bump the cargo group in /bridge with 8 updates (#2) (32aaccc)
+
 ---
 
 ## [v2026.10.26.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.10.26.0-beta) -- 2026-10-26
