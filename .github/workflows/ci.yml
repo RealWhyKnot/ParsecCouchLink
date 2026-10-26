@@ -89,9 +89,9 @@ jobs:
             pico-bridge/build-_pico_sdk
             pico-bridge/build-pico2w
             pico-bridge/build-picow
-          key: ${{ runner.os }}-pico-${{ hashFiles('pico-bridge/CMakeLists.txt', 'pico-bridge/pico_sdk_import.cmake', 'pico-bridge/scripts/build.ps1', 'pico-bridge/src/**') }}
+          key: ${{ runner.os }}-pico-${{ env.ARM_GNU_VERSION }}-${{ hashFiles('pico-bridge/CMakeLists.txt', 'pico-bridge/pico_sdk_import.cmake', 'pico-bridge/scripts/build.ps1', 'pico-bridge/src/**') }}
           restore-keys: |
-            ${{ runner.os }}-pico-
+            ${{ runner.os }}-pico-${{ env.ARM_GNU_VERSION }}-
 
       - name: Arm toolchain cache
         id: arm-cache
