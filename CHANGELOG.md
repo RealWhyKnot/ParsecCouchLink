@@ -4,6 +4,12 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.10.27.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.10.27.0-beta) -- 2026-10-27
+
 ### Added
 - **udp:** Pair the Pico and sign its UDP commands (f659208)
 
