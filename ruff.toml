@@ -1,0 +1,16 @@
+line-length = 120
+
+[lint]
+preview = true
+explicit-preview-rules = true
+select = [
+  "ASYNC", "B", "C4", "DTZ", "E", "ERA", "F", "FURB", "G", "I", "LOG", "N", "PERF", "PGH",
+  "PIE", "PLE", "PLW", "PLW1514", "RUF", "S", "SIM", "TRY", "UP", "W",
+]
+ignore = [
+  "E501", "N806", "S310", "S311", "S404", "S603", "S607", "TRY003", "TRY300", "TRY301",
+]
+
+[lint.per-file-ignores]
+"**/tests/**" = ["S101", "S105", "S106", "S107", "S108"]
+"**/test_*.py" = ["S101", "S105", "S106", "S107", "S108"]

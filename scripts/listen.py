@@ -38,10 +38,22 @@ TYPE_NAMES = {
 }
 
 BUTTON_NAMES = [
-    "DUP", "DDN", "DLF", "DRT",
-    "STR", "BCK", "LTH", "RTH",
-    "LB", "RB", "rsv10", "rsv11",
-    "A", "B", "X", "Y",
+    "DUP",
+    "DDN",
+    "DLF",
+    "DRT",
+    "STR",
+    "BCK",
+    "LTH",
+    "RTH",
+    "LB",
+    "RB",
+    "rsv10",
+    "rsv11",
+    "A",
+    "B",
+    "X",
+    "Y",
 ]
 
 
@@ -72,8 +84,12 @@ def decode(buf: bytes):
         "seq": seq,
         "flags": flags,
         "buttons": buttons,
-        "lt": lt, "rt": rt,
-        "lx": lx, "ly": ly, "rx": rx, "ry": ry,
+        "lt": lt,
+        "rt": rt,
+        "lx": lx,
+        "ly": ly,
+        "rx": rx,
+        "ry": ry,
     }, None
 
 
@@ -81,9 +97,15 @@ PROTO_VERSION = 1
 BOARD_PICO_2_W = 0x01
 
 
-def encode_ack(seq: int, fw_major: int, fw_minor: int, fw_patch: int,
-               board_type: int, uptime_seconds: int = 0,
-               unique_id_short: int = 0) -> bytes:
+def encode_ack(
+    seq: int,
+    fw_major: int,
+    fw_minor: int,
+    fw_patch: int,
+    board_type: int,
+    uptime_seconds: int = 0,
+    unique_id_short: int = 0,
+) -> bytes:
     body = bytearray(12)
     body[0] = PROTO_VERSION
     body[1] = fw_major
@@ -107,12 +129,9 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=4242)
     p.add_argument("--fw", default="0.1.0", help="firmware version M.m.p")
-    p.add_argument("--board", type=int, default=BOARD_PICO_2_W,
-                   help="board_type byte (1=Pico 2 W, 2=Pico W)")
-    p.add_argument("--uid", type=lambda x: int(x, 0), default=0xDEADBEEF,
-                   help="unique_id_short, hex or decimal")
-    p.add_argument("--quiet-heartbeats", action="store_true",
-                   help="print only non-heartbeat packets")
+    p.add_argument("--board", type=int, default=BOARD_PICO_2_W, help="board_type byte (1=Pico 2 W, 2=Pico W)")
+    p.add_argument("--uid", type=lambda x: int(x, 0), default=0xDEADBEEF, help="unique_id_short, hex or decimal")
+    p.add_argument("--quiet-heartbeats", action="store_true", help="print only non-heartbeat packets")
     args = p.parse_args()
 
     fw_parts = args.fw.split(".")
@@ -122,8 +141,10 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("0.0.0.0", args.port))
-    print("listen.py bound on 0.0.0.0:%d, fw=%d.%d.%d board=0x%02X uid=0x%08X"
-          % (args.port, fw_major, fw_minor, fw_patch, args.board, args.uid))
+    print(
+        "listen.py bound on 0.0.0.0:%d, fw=%d.%d.%d board=0x%02X uid=0x%08X"
+        % (args.port, fw_major, fw_minor, fw_patch, args.board, args.uid)
+    )
     print("press Ctrl-C to quit")
 
     counts = {k: 0 for k in TYPE_NAMES}
@@ -145,30 +166,46 @@ def main():
             if pkt["type"] == TYPE_DISCOVER:
                 uptime = int(time.monotonic() - start_time)
                 reply = encode_ack(
-                    ack_seq, fw_major, fw_minor, fw_patch,
-                    args.board, uptime, args.uid,
+                    ack_seq,
+                    fw_major,
+                    fw_minor,
+                    fw_patch,
+                    args.board,
+                    uptime,
+                    args.uid,
                 )
                 ack_seq = (ack_seq + 1) & 0xFF
                 sock.sendto(reply, peer)
-                print("[%s] discover seq=%d -> ack (uptime=%ds)"
-                      % (peer[0], pkt["seq"], uptime))
+                print("[%s] discover seq=%d -> ack (uptime=%ds)" % (peer[0], pkt["seq"], uptime))
                 continue
 
             if args.quiet_heartbeats and pkt["type"] == TYPE_HEARTBEAT:
                 pass
             else:
-                print("[%s] %-9s seq=%03d flags=0x%02X buttons={%s} "
-                      "LT=%3d RT=%3d L=(%6d,%6d) R=(%6d,%6d)"
-                      % (peer[0], pkt["type_name"], pkt["seq"], pkt["flags"],
-                         buttons_str(pkt["buttons"]),
-                         pkt["lt"], pkt["rt"],
-                         pkt["lx"], pkt["ly"], pkt["rx"], pkt["ry"]))
+                print(
+                    "[%s] %-9s seq=%03d flags=0x%02X buttons={%s} "
+                    "LT=%3d RT=%3d L=(%6d,%6d) R=(%6d,%6d)"
+                    % (
+                        peer[0],
+                        pkt["type_name"],
+                        pkt["seq"],
+                        pkt["flags"],
+                        buttons_str(pkt["buttons"]),
+                        pkt["lt"],
+                        pkt["rt"],
+                        pkt["lx"],
+                        pkt["ly"],
+                        pkt["rx"],
+                        pkt["ry"],
+                    )
+                )
 
             now = time.monotonic()
             if now - last_report >= 5.0:
                 last_report = now
-                summary = ", ".join("%s=%d" % (TYPE_NAMES[k], counts[k])
-                                    for k in (TYPE_STATE, TYPE_HEARTBEAT, TYPE_DISCOVER))
+                summary = ", ".join(
+                    "%s=%d" % (TYPE_NAMES[k], counts[k]) for k in (TYPE_STATE, TYPE_HEARTBEAT, TYPE_DISCOVER)
+                )
                 print("--- 5s summary: %s ---" % summary)
                 counts = {k: 0 for k in TYPE_NAMES}
 
