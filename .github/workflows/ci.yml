@@ -114,10 +114,10 @@ jobs:
             rm "$RUNNER_TEMP/$archive"
           fi
           echo "$dir/bin" >> "$GITHUB_PATH"
-          echo "CLANG_FORMAT=clang-format-18" >> "$GITHUB_ENV"
+          echo "CLANG_FORMAT=clang-format-22" >> "$GITHUB_ENV"
           cmake --version | head -1
           ninja --version
-          clang-format-18 --version
+          clang-format-22 --version
           "$dir/bin/arm-none-eabi-gcc" --version | head -1
 
       - name: Firmware formatting
