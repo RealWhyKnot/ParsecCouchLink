@@ -4,7 +4,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
-_No notable changes since the last release._
+### Changed
+- **deps:** Update bridge dependencies (94244b2)
+- Add a ruff config and format listen.py (3ff07ff)
 
 ---
 
