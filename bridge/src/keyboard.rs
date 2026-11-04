@@ -261,7 +261,7 @@ mod capture {
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, HC_ACTION, HHOOK,
+        CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, HC_ACTION,
         KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
         WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
@@ -338,13 +338,13 @@ mod capture {
                 }
             }
         }
-        CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+        CallNextHookEx(None, code, wparam, lparam)
     }
 
     fn hook_thread() {
         unsafe {
             let hmod = GetModuleHandleW(None).unwrap_or_default();
-            match SetWindowsHookExW(WH_KEYBOARD_LL, Some(ll_proc), HINSTANCE(hmod.0), 0) {
+            match SetWindowsHookExW(WH_KEYBOARD_LL, Some(ll_proc), Some(HINSTANCE(hmod.0)), 0) {
                 Ok(_) => {
                     // Low-level hook callbacks are delivered on this thread
                     // while it pumps messages; block here for the process

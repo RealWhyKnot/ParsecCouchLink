@@ -237,7 +237,7 @@ pub fn next_counter() -> u64 {
 
 fn random_bytes<const N: usize>() -> [u8; N] {
     let mut out = [0u8; N];
-    getrandom::getrandom(&mut out).expect("OS random source unavailable");
+    getrandom::fill(&mut out).expect("OS random source unavailable");
     out
 }
 
@@ -404,7 +404,7 @@ mod dpapi {
         let copy = Zeroizing::new(out.to_vec());
         out.zeroize();
         unsafe {
-            LocalFree(HLOCAL(blob.pbData.cast()));
+            LocalFree(Some(HLOCAL(blob.pbData.cast())));
         }
         copy
     }
