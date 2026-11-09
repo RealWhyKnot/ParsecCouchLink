@@ -1,10 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
-# Default to Pico 2 W (RP2350 + Wi-Fi). Override with -DPICO_BOARD=pico_w
-# for the older RP2040 + Wi-Fi board if needed.
 set(PICO_BOARD pico2_w CACHE STRING "Target Pico board (pico2_w or pico_w)")
 
-# Locate or fetch the pico-sdk before declaring the project.
 include(pico_sdk_import.cmake)
 
 project(pico_bridge C CXX ASM)
@@ -110,10 +107,6 @@ add_executable(pico_bridge
     src/xinput.c
 )
 
-# Wi-Fi country code. WORLDWIDE is the safest pre-built default; EU/UK
-# builders who need channels 12 / 13 can override at configure time:
-#   cmake -S pico-bridge -B build -DPICO_BRIDGE_WIFI_COUNTRY=CYW43_COUNTRY_UK
-# Use any of the CYW43_COUNTRY_* macros from pico-sdk's cyw43_arch.h.
 set(PICO_BRIDGE_WIFI_COUNTRY "CYW43_COUNTRY_WORLDWIDE"
     CACHE STRING "CYW43 country code (cyw43_arch_init_with_country)")
 target_compile_definitions(pico_bridge PRIVATE
@@ -129,7 +122,7 @@ target_include_directories(pico_bridge PRIVATE
 target_link_libraries(pico_bridge
     pico_stdlib
     pico_unique_id
-    pico_flash          # flash_safe_execute (coordinates core 1 + IRQs)
+    pico_flash
     pico_mbedtls
     pico_rand
     hardware_flash
@@ -141,8 +134,6 @@ target_link_libraries(pico_bridge
     pico_cyw43_arch_lwip_threadsafe_background
 )
 
-# Use UART for any stdio (e.g. for early-boot prints); USB stdio is
-# avoided because we own the USB device.
 pico_enable_stdio_usb(pico_bridge 0)
 pico_enable_stdio_uart(pico_bridge 1)
 

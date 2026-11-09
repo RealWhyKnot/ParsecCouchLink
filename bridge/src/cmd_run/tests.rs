@@ -1,4 +1,18 @@
 use super::*;
+use crate::cdc;
+use crate::cmd_run::bluetooth::bluetooth_cdc_frame_from_packet;
+use crate::cmd_run::bluetooth::format_bluetooth_peer_state;
+use crate::cmd_run::bluetooth::should_print_bluetooth_pairing_hint;
+use crate::cmd_run::bluetooth_source::MissingBluetoothSource;
+use crate::cmd_run::bluetooth_source::bluetooth_source_preflight_error;
+use crate::cmd_run::debug_harvest::debug_packet_harvest_targets;
+use crate::cmd_run::debug_harvest::has_debug_packet_routes;
+use crate::cmd_run::recovery::SetupUsbMode;
+use crate::cmd_run::recovery::classify_setup_usb_hello;
+use crate::cmd_run::routing::validate_routes;
+use crate::cmd_run::stream::schedule_recovery_if_needed;
+use crate::protocol::Packet;
+use std::time::Instant;
 
 fn pico(uid: u32, ip: &str, board: u8) -> PicoTarget {
     PicoTarget {
@@ -29,36 +43,36 @@ fn parse_user_slot_is_one_based() {
 #[test]
 fn match_pico_by_uid_ip_and_board() {
     let picos = vec![
-        pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
-        pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
+        pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
+        pico(0x5238_61E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
     ];
     assert_eq!(
         match_pico_selector("07D37EB6", &picos)
             .unwrap()
             .info
             .unique_id_short,
-        0x07D37EB6
+        0x07D3_7EB6
     );
     assert_eq!(
         match_pico_selector("192.168.50.4", &picos)
             .unwrap()
             .info
             .unique_id_short,
-        0x523861E6
+        0x5238_61E6
     );
     assert_eq!(
         match_pico_selector("192.168.50.4:4242", &picos)
             .unwrap()
             .info
             .unique_id_short,
-        0x523861E6
+        0x5238_61E6
     );
     assert_eq!(
         match_pico_selector("rp2040", &picos)
             .unwrap()
             .info
             .unique_id_short,
-        0x523861E6
+        0x5238_61E6
     );
 }
 
@@ -96,25 +110,29 @@ fn manual_ips_include_pico_and_route_targets() {
 
 #[test]
 fn merge_unique_picos_updates_existing_and_adds_new() {
-    let mut picos = vec![pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W)];
+    let mut picos = vec![pico(
+        0x07D3_7EB6,
+        "192.168.50.226",
+        protocol::BOARD_PICO_2_W,
+    )];
     let incoming = vec![
-        pico(0x07D37EB6, "192.168.50.227", protocol::BOARD_PICO_2_W),
-        pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
+        pico(0x07D3_7EB6, "192.168.50.227", protocol::BOARD_PICO_2_W),
+        pico(0x5238_61E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
     ];
 
     merge_unique_picos(&mut picos, incoming);
 
     assert_eq!(picos.len(), 2);
     assert_eq!(picos[0].peer.ip().to_string(), "192.168.50.227");
-    assert_eq!(picos[1].info.unique_id_short, 0x523861E6);
+    assert_eq!(picos[1].info.unique_id_short, 0x5238_61E6);
 }
 
 #[test]
 fn recovered_target_count_ignores_already_online_picos() {
-    let baseline_ids = HashSet::from([0x523861E6]);
+    let baseline_ids = HashSet::from([0x5238_61E6]);
     let picos = vec![
-        pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
-        pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
+        pico(0x5238_61E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
+        pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
     ];
 
     assert_eq!(recovered_target_count(&picos, &baseline_ids), 1);
@@ -123,20 +141,20 @@ fn recovered_target_count_ignores_already_online_picos() {
 #[test]
 fn parse_route_specs_maps_sources_to_targets() {
     let picos = vec![
-        pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
-        pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
+        pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
+        pico(0x5238_61E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
     ];
     let specs = vec!["1=07D37EB6".to_string(), "2=192.168.50.4".to_string()];
     let routes = parse_route_specs(&specs, &picos).unwrap();
     assert_eq!(routes[0].source_slot, 0);
-    assert_eq!(routes[0].pico.info.unique_id_short, 0x07D37EB6);
+    assert_eq!(routes[0].pico.info.unique_id_short, 0x07D3_7EB6);
     assert_eq!(routes[1].source_slot, 1);
-    assert_eq!(routes[1].pico.info.unique_id_short, 0x523861E6);
+    assert_eq!(routes[1].pico.info.unique_id_short, 0x5238_61E6);
 }
 
 #[test]
 fn validate_routes_rejects_same_pico_twice() {
-    let target = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    let target = pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
     let routes = vec![
         StreamRoute {
             source_slot: 0,
@@ -188,9 +206,9 @@ fn bluetooth_source_slot_decision_refuses_ambiguous_or_absent_source() {
 
 #[test]
 fn bluetooth_source_auto_switch_only_allows_single_bluetooth_route() {
-    let mut bluetooth = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    let mut bluetooth = pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
     bluetooth.persona = Persona::BluetoothHid;
-    let xinput = pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040);
+    let xinput = pico(0x5238_61E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040);
 
     assert!(should_auto_switch_bluetooth_source(&[StreamRoute {
         source_slot: 1,
@@ -223,9 +241,9 @@ fn bluetooth_source_preflight_error_lists_live_slots() {
 
 #[test]
 fn debug_packet_harvest_targets_only_include_enabled_debug_routes() {
-    let mut debug = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    let mut debug = pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
     debug.persona = Persona::Debug;
-    let xinput = pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040);
+    let xinput = pico(0x5238_61E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040);
     let routes = vec![
         RouteRuntime::new(
             StreamRoute {
@@ -252,20 +270,23 @@ fn debug_packet_harvest_targets_only_include_enabled_debug_routes() {
             .iter()
             .map(|p| p.info.unique_id_short)
             .collect::<Vec<_>>(),
-        vec![0x07D37EB6]
+        vec![0x07D3_7EB6]
     );
 
-    let disabled = HashSet::from([0x07D37EB6]);
+    let disabled = HashSet::from([0x07D3_7EB6]);
     assert!(!has_debug_packet_routes(&routes, &disabled));
-    assert!(debug_packet_harvest_targets(&routes, &disabled).is_empty());
+    assert_eq!(
+        debug_packet_harvest_targets(&routes, &disabled),
+        <[crate::cmd_run::PicoTarget; 0]>::default()
+    );
 }
 
 fn xinput_slot(slot: u32) -> xinput::SlotSnapshot {
     xinput::SlotSnapshot {
         slot,
         state: protocol::GamepadState {
-            buttons: slot as u16,
-            left_trigger: slot as u8,
+            buttons: u16::try_from(slot).unwrap(),
+            left_trigger: u8::try_from(slot).unwrap(),
             right_trigger: 0,
             left_x: 0,
             left_y: 0,
@@ -303,7 +324,7 @@ fn bluetooth_cdc_frame_preserves_controller_payload() {
 
 #[test]
 fn bluetooth_routes_do_not_schedule_udp_recovery() {
-    let mut bt = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    let mut bt = pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
     bt.persona = Persona::BluetoothHid;
     let mut routes = vec![RouteRuntime::new(
         StreamRoute {
@@ -313,7 +334,9 @@ fn bluetooth_routes_do_not_schedule_udp_recovery() {
         None,
         true,
     )];
-    routes[0].last_inbound = Instant::now() - (PEER_STALE_AFTER + Duration::from_secs(1));
+    routes[0].last_inbound = Instant::now()
+        .checked_sub(PEER_STALE_AFTER + Duration::from_secs(1))
+        .unwrap();
 
     assert!(!schedule_recovery_if_needed(&mut routes));
     assert!(routes[0].last_recovery_attempt.is_none());
@@ -464,11 +487,7 @@ fn bt_status(flags: u8, report_send_count: u32, close_count: u32) -> cdc::BtStat
         cid: 0,
         init_count: 1,
         ready_count: 1,
-        open_count: if flags & cdc::BT_STATUS_FLAG_CONNECTED != 0 {
-            1
-        } else {
-            0
-        },
+        open_count: u32::from(flags & cdc::BT_STATUS_FLAG_CONNECTED != 0),
         close_count,
         can_send_count: report_send_count,
         report_build_count: report_send_count,

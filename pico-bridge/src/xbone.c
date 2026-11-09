@@ -113,17 +113,17 @@ static void build_input_report(xbone_input_report_t *out) {
 
     uint16_t buttons = g_gamepad_state.buttons;
     if (buttons & 0x0010u)
-        out->buttons0 |= 1u << 2; // Menu / Start
+        out->buttons0 |= 1u << 2;
     if (buttons & 0x0020u)
-        out->buttons0 |= 1u << 3; // View / Back
+        out->buttons0 |= 1u << 3;
     if (buttons & 0x1000u)
-        out->buttons0 |= 1u << 4; // A
+        out->buttons0 |= 1u << 4;
     if (buttons & 0x2000u)
-        out->buttons0 |= 1u << 5; // B
+        out->buttons0 |= 1u << 5;
     if (buttons & 0x4000u)
-        out->buttons0 |= 1u << 6; // X
+        out->buttons0 |= 1u << 6;
     if (buttons & 0x8000u)
-        out->buttons0 |= 1u << 7; // Y
+        out->buttons0 |= 1u << 7;
 
     if (buttons & 0x0001u)
         out->buttons1 |= 1u << 0;

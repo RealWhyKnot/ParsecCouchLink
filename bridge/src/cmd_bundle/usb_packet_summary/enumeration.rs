@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
 use super::{
+    UsbPacketSummarySource,
     decode::{
         decode_control_payload_fields, decode_hid_report_metadata, decode_setup_fields, hex_bytes,
         hex_u16, le_u16,
     },
-    support::{bump, fields, format_count_map, HARVEST_PREFIX},
-    UsbPacketSummarySource,
+    support::{HARVEST_PREFIX, bump, fields, format_count_map},
 };
 
 pub(in crate::cmd_bundle) fn enumeration_analysis_text_for_text(
@@ -185,16 +185,16 @@ impl UsbEnumerationAnalysis {
         match payload.descriptor_type {
             Some("device") => {
                 self.device_descriptor_replies += 1;
-                if self.first_device_vid_pid.is_none() {
-                    if let Some(facts) = device_descriptor_facts(fields) {
-                        self.first_device_vid_pid = Some(facts.vid_pid);
-                        self.first_device_identity = Some(facts.identity);
-                        self.first_device_class = Some(facts.class);
-                        self.first_device_bcd_usb = Some(facts.bcd_usb);
-                        self.first_device_bcd_device = Some(facts.bcd_device);
-                        self.first_device_max_packet = Some(facts.max_packet);
-                        self.first_device_configurations = Some(facts.configurations);
-                    }
+                if self.first_device_vid_pid.is_none()
+                    && let Some(facts) = device_descriptor_facts(fields)
+                {
+                    self.first_device_vid_pid = Some(facts.vid_pid);
+                    self.first_device_identity = Some(facts.identity);
+                    self.first_device_class = Some(facts.class);
+                    self.first_device_bcd_usb = Some(facts.bcd_usb);
+                    self.first_device_bcd_device = Some(facts.bcd_device);
+                    self.first_device_max_packet = Some(facts.max_packet);
+                    self.first_device_configurations = Some(facts.configurations);
                 }
             }
             Some("configuration") => {
@@ -244,10 +244,7 @@ fn device_descriptor_facts(fields: &BTreeMap<&str, &str>) -> Option<DeviceDescri
     Some(DeviceDescriptorFacts {
         vid_pid: format!("{}:{}", hex_u16(vid), hex_u16(pid)),
         identity: known_device_identity(vid, pid, class, subclass, protocol).to_string(),
-        class: format!(
-            "class=0x{:02X},subclass=0x{:02X},protocol=0x{:02X}",
-            class, subclass, protocol
-        ),
+        class: format!("class=0x{class:02X},subclass=0x{subclass:02X},protocol=0x{protocol:02X}"),
         bcd_usb: hex_u16(le_u16(&bytes, 2)),
         bcd_device: hex_u16(le_u16(&bytes, 12)),
         max_packet: u64::from(bytes[7]),
@@ -325,6 +322,11 @@ fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysi
         out,
         format_args!("events={}\n", format_count_map(&analysis.events)),
     );
+    write_device_descriptor_fields(out, analysis);
+    write_configuration_and_hid_fields(out, analysis);
+}
+
+fn write_device_descriptor_fields(out: &mut String, analysis: &UsbEnumerationAnalysis) {
     let _ = std::fmt::Write::write_fmt(out, format_args!("setup_lines={}\n", analysis.setup_lines));
     let _ = std::fmt::Write::write_fmt(
         out,
@@ -389,8 +391,7 @@ fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysi
             "device_max_packet={}\n",
             analysis
                 .first_device_max_packet
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string())
+                .map_or_else(|| "-".to_string(), |value| value.to_string())
         ),
     );
     let _ = std::fmt::Write::write_fmt(
@@ -399,10 +400,12 @@ fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysi
             "device_configurations={}\n",
             analysis
                 .first_device_configurations
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string())
+                .map_or_else(|| "-".to_string(), |value| value.to_string())
         ),
     );
+}
+
+fn write_configuration_and_hid_fields(out: &mut String, analysis: &UsbEnumerationAnalysis) {
     write_bool(
         out,
         "configuration_descriptor_request",
@@ -419,8 +422,7 @@ fn write_enumeration_analysis(out: &mut String, analysis: &UsbEnumerationAnalysi
             "configuration_interfaces={}\n",
             analysis
                 .first_configuration_interfaces
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string())
+                .map_or_else(|| "-".to_string(), |value| value.to_string())
         ),
     );
     write_bool(

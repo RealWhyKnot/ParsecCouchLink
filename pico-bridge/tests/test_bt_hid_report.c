@@ -143,14 +143,14 @@ static void generic_report_maps_core_controls(void) {
     bt_hid_build_report(BT_HID_TARGET_GENERIC, &state, &report);
 
     uint32_t buttons = report_buttons(&report);
-    CHECK((buttons & (1u << 0)) != 0);  // A
-    CHECK((buttons & (1u << 1)) != 0);  // B
-    CHECK((buttons & (1u << 6)) != 0);  // Back
-    CHECK((buttons & (1u << 7)) != 0);  // Start
-    CHECK((buttons & (1u << 10)) != 0); // LT digital
-    CHECK((buttons & (1u << 11)) == 0); // RT below threshold
-    CHECK((buttons & (1u << 13)) != 0); // D-pad up as button
-    CHECK((buttons & (1u << 16)) != 0); // D-pad right as button
+    CHECK((buttons & (1u << 0)) != 0);
+    CHECK((buttons & (1u << 1)) != 0);
+    CHECK((buttons & (1u << 6)) != 0);
+    CHECK((buttons & (1u << 7)) != 0);
+    CHECK((buttons & (1u << 10)) != 0);
+    CHECK((buttons & (1u << 11)) == 0);
+    CHECK((buttons & (1u << 13)) != 0);
+    CHECK((buttons & (1u << 16)) != 0);
     CHECK(report_hat(&report) == DINPUT_HAT_UP_RIGHT);
     CHECK(report.bytes[4] == 0x00);
     CHECK(report.bytes[5] == 0x00);
@@ -211,13 +211,13 @@ static void xbox_wireless_profile_matches_expected_identity_and_shape(void) {
     CHECK(read_le16(&report.bytes[7]) == 0xFFFFu);
     CHECK((read_le16(&report.bytes[9]) & 0x03FFu) == 0x03FFu);
     CHECK((report.bytes[13] & 0x0Fu) == 0x02u);
-    CHECK((read_le24(&report.bytes[14]) & (1u << 0)) != 0);  // A
-    CHECK((read_le24(&report.bytes[14]) & (1u << 3)) != 0);  // X
-    CHECK((read_le24(&report.bytes[14]) & (1u << 10)) != 0); // View
-    CHECK((read_le24(&report.bytes[14]) & (1u << 11)) != 0); // Menu
-    CHECK((read_le24(&report.bytes[14]) & (1u << 12)) != 0); // Xbox
-    CHECK((read_le24(&report.bytes[14]) & (1u << 13)) != 0); // Left stick
-    CHECK((read_le24(&report.bytes[14]) & (1u << 14)) != 0); // Right stick
+    CHECK((read_le24(&report.bytes[14]) & (1u << 0)) != 0);
+    CHECK((read_le24(&report.bytes[14]) & (1u << 3)) != 0);
+    CHECK((read_le24(&report.bytes[14]) & (1u << 10)) != 0);
+    CHECK((read_le24(&report.bytes[14]) & (1u << 11)) != 0);
+    CHECK((read_le24(&report.bytes[14]) & (1u << 12)) != 0);
+    CHECK((read_le24(&report.bytes[14]) & (1u << 13)) != 0);
+    CHECK((read_le24(&report.bytes[14]) & (1u << 14)) != 0);
 }
 
 static void ds4_profile_matches_expected_identity_and_shape(void) {
@@ -260,10 +260,10 @@ static void ds4_profile_matches_expected_identity_and_shape(void) {
     state.right_trigger = 255;
     bt_hid_build_report(BT_HID_TARGET_PLAYSTATION, &state, &report);
     CHECK((report.bytes[7] & 0x0Fu) == DINPUT_HAT_DOWN_LEFT);
-    CHECK((report.bytes[7] & (1u << 4)) != 0); // Square
-    CHECK((report.bytes[7] & (1u << 5)) != 0); // Cross
-    CHECK((report.bytes[8] & (1u << 0)) != 0); // L1
-    CHECK((report.bytes[8] & (1u << 3)) != 0); // R2 digital
+    CHECK((report.bytes[7] & (1u << 4)) != 0);
+    CHECK((report.bytes[7] & (1u << 5)) != 0);
+    CHECK((report.bytes[8] & (1u << 0)) != 0);
+    CHECK((report.bytes[8] & (1u << 3)) != 0);
     CHECK(report.bytes[11] == 255);
     CHECK(read_le32(&report.bytes[74]) ==
           expected_ds4_input_crc(report.bytes, BT_HID_PS4_WIRE_REPORT_LEN - 4u));

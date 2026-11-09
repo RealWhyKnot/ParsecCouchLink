@@ -1,5 +1,3 @@
-//! `couchlink logs` -- print where logs live, or tail the latest one.
-
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -8,13 +6,13 @@ use tokio::io::AsyncBufReadExt;
 
 use crate::config;
 
-pub async fn run(tail: bool) -> Result<()> {
+pub(crate) async fn run(tail: bool) -> Result<()> {
     let dir = config::log_dir()?;
-    println!("log directory: {}", dir.display());
+    outln!("log directory: {}", dir.display());
 
     let mut entries: Vec<PathBuf> = match std::fs::read_dir(&dir) {
         Ok(rd) => rd
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.file_name().to_string_lossy().starts_with("couchlink"))
             .map(|e| e.path())
             .collect(),
@@ -23,21 +21,23 @@ pub async fn run(tail: bool) -> Result<()> {
     entries.sort();
 
     if entries.is_empty() {
-        println!("(no log files yet)");
+        outln!("(no log files yet)");
         return Ok(());
     }
 
     for e in &entries {
         if let Some(name) = e.file_name() {
-            println!("  {}", name.to_string_lossy());
+            outln!("  {}", name.to_string_lossy());
         }
     }
 
     if tail {
-        let active = entries.last().unwrap().clone();
-        println!();
-        println!("tailing {} (Ctrl-C to stop)", active.display());
-        println!();
+        let Some(active) = entries.last().cloned() else {
+            return Ok(());
+        };
+        outln!();
+        outln!("tailing {} (Ctrl-C to stop)", active.display());
+        outln!();
         tail_file(&active).await?;
     }
     Ok(())
@@ -54,6 +54,6 @@ async fn tail_file(path: &PathBuf) -> Result<()> {
             tokio::time::sleep(Duration::from_millis(500)).await;
             continue;
         }
-        print!("{}", line);
+        out!("{}", line);
     }
 }

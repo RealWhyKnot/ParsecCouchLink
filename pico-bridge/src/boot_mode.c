@@ -12,9 +12,6 @@
 #include "diag_log.h"
 #include "reset_reason.h"
 
-// The persona byte stored in flash is the run_persona_t value directly;
-// boot_mode_persona_from_flash() relies on this so it can stay free of a
-// flash_creds.h dependency (and thus host-compilable for unit tests).
 _Static_assert((int)FLASH_PERSONA_XINPUT == (int)RUN_PERSONA_XINPUT &&
                    (int)FLASH_PERSONA_KEYBOARD == (int)RUN_PERSONA_KEYBOARD &&
                    (int)FLASH_PERSONA_MAPLE == (int)RUN_PERSONA_MAPLE &&
@@ -30,21 +27,12 @@ _Static_assert((int)FLASH_PERSONA_XINPUT == (int)RUN_PERSONA_XINPUT &&
 
 static boot_mode_t current = BOOT_MODE_SETUP;
 
-// Output persona for run mode, latched alongside `current` when a RUN
-// decision is made. Setup mode leaves it at the XInput default.
 static run_persona_t run_persona = RUN_PERSONA_XINPUT;
 
-// t=0 BOOTSEL state, latched by boot_mode_decide().
 static bool bootsel_at_boot = false;
 
-// Absolute time when boot_mode_decide() returned. Used by the post-
-// enum poll to settle a BOOTSEL recovery hold after USB is visible.
 static absolute_time_t decide_time;
 
-// Read the BOOTSEL button at runtime by temporarily flipping QSPI CS to
-// Hi-Z and reading its pin state. Adapted from the pico-examples
-// `picoboard/button` sample. Disables interrupts and must NOT call
-// flash-resident code while CS is muxed.
 static bool __no_inline_not_in_flash_func(read_bootsel_button)(void) {
     const uint CS_PIN_INDEX = 1;
     uint32_t flags = save_and_disable_interrupts();
@@ -65,8 +53,6 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
     bootsel_at_boot = false;
     decide_time = get_absolute_time();
 
-    // Previous boot explicitly requested a setup-mode bounce (e.g. the
-    // Wi-Fi association watchdog fired). Honor it regardless of creds.
     if (rr->force_setup_after_reboot) {
         diag_log_msg(
             "boot: previous boot requested setup-mode bounce; honoring with creds retained");
@@ -108,11 +94,6 @@ boot_mode_t boot_mode_decide(const reset_reason_info_t *rr) {
     flash_creds_t rec;
     bool have_creds = flash_creds_load(&rec);
 
-    // Single instantaneous BOOTSEL sample -- no blocking delay. This
-    // intentionally runs after reset-reason handling so a
-    // firmware-driven reboot cannot be mistaken for a
-    // physical BOOTSEL hold. A provisioned cold boot still enters run
-    // mode; saved credentials are the stable XInput path.
     bootsel_at_boot = read_bootsel_button();
 
     if (bootsel_at_boot) {
@@ -155,8 +136,6 @@ bool boot_mode_bootsel_at_boot(void) {
 }
 
 void boot_mode_post_enum_bootsel_poll(void) {
-    // Fast-exit: if BOOTSEL was not pressed at boot, there is no
-    // post-enumeration recovery gesture to settle.
     if (!bootsel_at_boot)
         return;
 

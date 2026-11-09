@@ -5,8 +5,6 @@
 
 #include "gamepad_state.h"
 
-// Maple frame response codes. Negative Maple responses are represented by
-// their single-byte two's-complement wire values.
 #define MAPLE_CMD_DEVICE_INFO 0x01
 #define MAPLE_CMD_EXT_DEVICE_INFO 0x02
 #define MAPLE_CMD_RESET 0x03
@@ -49,8 +47,6 @@
 #define MAPLE_DC_BTN_LEFT2 0x4000u
 #define MAPLE_DC_BTN_RIGHT2 0x8000u
 
-// XINPUT_GAMEPAD.wButtons masks, duplicated here so the firmware protocol
-// layer stays SDK-free and can be compiled in host tests.
 #define MAPLE_XINPUT_DPAD_UP 0x0001u
 #define MAPLE_XINPUT_DPAD_DOWN 0x0002u
 #define MAPLE_XINPUT_DPAD_LEFT 0x0004u
@@ -80,7 +76,7 @@ typedef enum {
 } maple_map_mode_t;
 
 typedef struct {
-    uint16_t buttons; // Active-low on the Maple wire: 0 = pressed.
+    uint16_t buttons;
     uint8_t rtrigger;
     uint8_t ltrigger;
     uint8_t joyx;
@@ -108,7 +104,5 @@ maple_controller_condition_t maple_translate_xinput(const gamepad_state_t *state
 void maple_encode_condition(const maple_controller_condition_t *condition, uint8_t out[8]);
 uint8_t maple_frame_checksum(const uint8_t *frame, size_t frame_len);
 
-// Builds a complete Maple response packet: frame header, payload words, and
-// trailing XOR checksum byte. Returns 0 if the output buffer is too small.
 size_t maple_build_response(const maple_request_t *request, const gamepad_state_t *state,
                             maple_map_mode_t mode, uint8_t *out, size_t out_cap);

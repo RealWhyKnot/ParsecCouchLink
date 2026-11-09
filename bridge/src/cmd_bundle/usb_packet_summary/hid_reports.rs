@@ -1,7 +1,7 @@
 use super::{
+    UsbPacketSummarySource,
     decode::{decode_hid_report_metadata, hex_u8},
     support::{display_field, fields},
-    UsbPacketSummarySource,
 };
 
 pub(in crate::cmd_bundle) fn hid_reports_text_for_text(
@@ -59,8 +59,8 @@ pub(in crate::cmd_bundle) fn hid_reports_text_for_sources(
 
 fn hid_report_rows(text: &str) -> Vec<String> {
     text.lines()
-        .enumerate()
-        .filter_map(|(index, line)| hid_report_row((index + 1) as u64, line))
+        .zip(1u64..)
+        .filter_map(|(line, line_number)| hid_report_row(line_number, line))
         .collect()
 }
 
@@ -78,14 +78,10 @@ fn hid_report_row(line_number: u64, line: &str) -> Option<String> {
         display_field(fields.get("dir")),
         display_field(fields.get("src")),
         report.request_name.unwrap_or("-"),
-        report
-            .report_id
-            .map(hex_u8)
-            .unwrap_or_else(|| "-".to_string()),
+        report.report_id.map_or_else(|| "-".to_string(), hex_u8),
         report
             .report_type
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "-".to_string()),
+            .map_or_else(|| "-".to_string(), |value| value.to_string()),
         report.report_type_name.unwrap_or("-"),
         display_field(fields.get("len")),
         display_field(fields.get("captured")),

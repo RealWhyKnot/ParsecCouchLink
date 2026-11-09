@@ -1,7 +1,3 @@
-//! Bundle text redaction. Keep diagnostic structure, counters, lengths,
-//! timings, and failure codes while stripping values that identify the
-//! operator, local network, Wi-Fi network, or credentials.
-
 use std::net::Ipv4Addr;
 
 const SENSITIVE_KEYS: &[&str] = &[
@@ -29,15 +25,12 @@ const USERPROFILE: &str = "%USERPROFILE%";
 pub(super) fn redact_bundle_text(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for segment in input.split_inclusive('\n') {
-        let (line, suffix) = segment
-            .strip_suffix('\n')
-            .map(|s| {
-                (
-                    s.strip_suffix('\r').unwrap_or(s),
-                    if s.ends_with('\r') { "\r\n" } else { "\n" },
-                )
-            })
-            .unwrap_or((segment, ""));
+        let (line, suffix) = segment.strip_suffix('\n').map_or((segment, ""), |s| {
+            (
+                s.strip_suffix('\r').unwrap_or(s),
+                if s.ends_with('\r') { "\r\n" } else { "\n" },
+            )
+        });
         out.push_str(&redact_line(line));
         out.push_str(suffix);
     }
@@ -146,7 +139,7 @@ fn is_private_ipv4_token(line: &str, start: usize, end: usize) -> bool {
         return false;
     }
     let candidate = &line[start..end];
-    if candidate.as_bytes().iter().filter(|b| **b == b'.').count() != 3 {
+    if candidate.matches('.').count() != 3 {
         return false;
     }
     let Ok(ip) = candidate.parse::<Ipv4Addr>() else {
@@ -299,10 +292,7 @@ fn find_sensitive_value(line: &str, offset: usize) -> Option<(usize, usize)> {
             while sep < line.len() && line.as_bytes()[sep].is_ascii_whitespace() {
                 sep += 1;
             }
-            if best
-                .map(|(best_start, _)| key_start < best_start)
-                .unwrap_or(true)
-            {
+            if best.is_none_or(|(best_start, _)| key_start < best_start) {
                 best = Some((key_start, sep));
             }
             break;
@@ -424,6 +414,6 @@ mod tests {
         let redacted = redact_bundle_text(input);
 
         assert!(redacted.contains(r#""config_path": "%USERPROFILE%\\AppData\\Roaming"#));
-        assert!(!redacted.contains(r#"C:\\Users\\Landen"#));
+        assert!(!redacted.contains(r"C:\\Users\\Landen"));
     }
 }

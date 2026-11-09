@@ -20,24 +20,14 @@
 #error "PICO_BRIDGE_FW_SUFFIX_LEN must be 0 or 4"
 #endif
 
-// Compact legacy fields kept for the fixed-size UDP ACK and older hosts.
-// Host-side code recognizes 20..99 as a 20xx release year offset and
-// displays YYYY.M.D.0 instead of a legacy triplet.
 #define PICO_BRIDGE_FW_WIRE_MAJOR ((uint8_t)(PICO_BRIDGE_FW_YEAR - 2000))
 #define PICO_BRIDGE_FW_WIRE_MINOR ((uint8_t)PICO_BRIDGE_FW_MONTH)
 #define PICO_BRIDGE_FW_WIRE_PATCH ((uint8_t)PICO_BRIDGE_FW_DAY)
 
-// Windows keys USB driver binding caches on bcdDevice. The generated
-// value follows the firmware build date as BCD MM.DD so a new daily build
-// invalidates stale setup-mode USB bindings without tying the descriptor
-// cache directly to the product release suffix.
-
-// On-wire protocol versions.
 #define PICO_BRIDGE_UDP_PROTO_VERSION 2
 #define PICO_BRIDGE_UDP_PROTO_VERSION_OPEN 1
 #define PICO_BRIDGE_CDC_PROTO_VERSION 1
 
-// Board type byte reported in the UDP ack body and CDC HELLO_ACK.
 #define PICO_BRIDGE_BOARD_PICO_2_W 0x01
 #define PICO_BRIDGE_BOARD_PICO_W_RP2040 0x02
 

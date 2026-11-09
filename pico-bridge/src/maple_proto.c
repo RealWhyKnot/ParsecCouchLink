@@ -149,8 +149,8 @@ static void encode_device_info(uint8_t out[MAPLE_DEVICE_INFO_BYTES], maple_map_m
     memset(out, 0, MAPLE_DEVICE_INFO_BYTES);
     put_be32(&out[0], MAPLE_FUNCTION_CONTROLLER);
     put_be32(&out[4], maple_controller_capabilities(mode));
-    out[16] = 0xFF; // all regions
-    out[17] = 0x00; // connector exits upward
+    out[16] = 0xFF;
+    out[17] = 0x00;
     put_fixed_string(&out[18], 30, "CouchLink Maple Pad");
     put_fixed_string(&out[48], 60, "Parsec CouchLink");
     put_le16(&out[108], 0);

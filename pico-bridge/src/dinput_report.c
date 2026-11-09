@@ -105,7 +105,7 @@ void dinput_build_ps3_report(const gamepad_state_t *state, dinput_report_t *out)
 
     uint16_t buttons = state->buttons;
     if (buttons & DINPUT_XINPUT_BACK)
-        out->bytes[2] |= 1u << 0; // Select
+        out->bytes[2] |= 1u << 0;
     if (buttons & DINPUT_XINPUT_LEFT_THUMB)
         out->bytes[2] |= 1u << 1;
     if (buttons & DINPUT_XINPUT_RIGHT_THUMB)
@@ -122,23 +122,23 @@ void dinput_build_ps3_report(const gamepad_state_t *state, dinput_report_t *out)
         out->bytes[2] |= 1u << 7;
 
     if (state->left_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD)
-        out->bytes[3] |= 1u << 0; // L2
+        out->bytes[3] |= 1u << 0;
     if (state->right_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD)
-        out->bytes[3] |= 1u << 1; // R2
+        out->bytes[3] |= 1u << 1;
     if (buttons & DINPUT_XINPUT_LEFT_SHOULDER)
-        out->bytes[3] |= 1u << 2; // L1
+        out->bytes[3] |= 1u << 2;
     if (buttons & DINPUT_XINPUT_RIGHT_SHOULDER)
-        out->bytes[3] |= 1u << 3; // R1
+        out->bytes[3] |= 1u << 3;
     if (buttons & DINPUT_XINPUT_Y)
-        out->bytes[3] |= 1u << 4; // Triangle
+        out->bytes[3] |= 1u << 4;
     if (buttons & DINPUT_XINPUT_B)
-        out->bytes[3] |= 1u << 5; // Circle
+        out->bytes[3] |= 1u << 5;
     if (buttons & DINPUT_XINPUT_A)
-        out->bytes[3] |= 1u << 6; // Cross
+        out->bytes[3] |= 1u << 6;
     if (buttons & DINPUT_XINPUT_X)
-        out->bytes[3] |= 1u << 7; // Square
+        out->bytes[3] |= 1u << 7;
     if (buttons & DINPUT_XINPUT_GUIDE)
-        out->bytes[4] |= 1u << 0; // PS
+        out->bytes[4] |= 1u << 0;
 
     out->bytes[6] = centered_axis_x_to_hid(state->left_x);
     out->bytes[7] = centered_axis_y_to_hid(state->left_y);
@@ -156,9 +156,9 @@ void dinput_build_ps3_report(const gamepad_state_t *state, dinput_report_t *out)
     out->bytes[23] = (buttons & DINPUT_XINPUT_B) ? 0xFF : 0x00;
     out->bytes[24] = (buttons & DINPUT_XINPUT_A) ? 0xFF : 0x00;
     out->bytes[25] = (buttons & DINPUT_XINPUT_X) ? 0xFF : 0x00;
-    out->bytes[29] = 0x02; // plugged in over USB
-    out->bytes[30] = 0x05; // battery full
-    out->bytes[31] = 0x10; // wired rumble-capable state
+    out->bytes[29] = 0x02;
+    out->bytes[30] = 0x05;
+    out->bytes[31] = 0x10;
     for (int i = 41; i <= 47; i += 2) {
         out->bytes[i] = 0x01;
         out->bytes[i + 1] = 0xFF;
@@ -181,13 +181,13 @@ void dinput_build_ps4_report(const gamepad_state_t *state, uint8_t report_counte
     if (out->bytes[5] == DINPUT_HAT_NEUTRAL)
         out->bytes[5] = 0x08;
     if (buttons & DINPUT_XINPUT_X)
-        out->bytes[5] |= 1u << 4; // Square
+        out->bytes[5] |= 1u << 4;
     if (buttons & DINPUT_XINPUT_A)
-        out->bytes[5] |= 1u << 5; // Cross
+        out->bytes[5] |= 1u << 5;
     if (buttons & DINPUT_XINPUT_B)
-        out->bytes[5] |= 1u << 6; // Circle
+        out->bytes[5] |= 1u << 6;
     if (buttons & DINPUT_XINPUT_Y)
-        out->bytes[5] |= 1u << 7; // Triangle
+        out->bytes[5] |= 1u << 7;
 
     if (buttons & DINPUT_XINPUT_LEFT_SHOULDER)
         out->bytes[6] |= 1u << 0;
@@ -198,25 +198,25 @@ void dinput_build_ps4_report(const gamepad_state_t *state, uint8_t report_counte
     if (state->right_trigger >= DINPUT_TRIGGER_BUTTON_THRESHOLD)
         out->bytes[6] |= 1u << 3;
     if (buttons & DINPUT_XINPUT_BACK)
-        out->bytes[6] |= 1u << 4; // Share
+        out->bytes[6] |= 1u << 4;
     if (buttons & DINPUT_XINPUT_START)
-        out->bytes[6] |= 1u << 5; // Options
+        out->bytes[6] |= 1u << 5;
     if (buttons & DINPUT_XINPUT_LEFT_THUMB)
         out->bytes[6] |= 1u << 6;
     if (buttons & DINPUT_XINPUT_RIGHT_THUMB)
         out->bytes[6] |= 1u << 7;
 
     if (buttons & DINPUT_XINPUT_GUIDE)
-        out->bytes[7] |= 1u << 0; // PS button
+        out->bytes[7] |= 1u << 0;
     out->bytes[7] |= (uint8_t)((report_counter & 0x3Fu) << 2);
     out->bytes[8] = state->left_trigger;
     out->bytes[9] = state->right_trigger;
 
     uint16_t axis_timing = ((uint16_t)report_counter) * 4u;
     put_le16(&out->bytes[10], axis_timing);
-    put_le16(&out->bytes[12], 0x0000); // battery / timing baseline
-    out->bytes[30] = 0x1B;             // full battery, charging over USB
-    out->bytes[33] = 0x01;             // no extension data
+    put_le16(&out->bytes[12], 0x0000);
+    out->bytes[30] = 0x1B;
+    out->bytes[33] = 0x01;
 }
 
 void dinput_build_generic_hid_report(const gamepad_state_t *state, dinput_report_t *out) {

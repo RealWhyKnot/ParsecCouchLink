@@ -36,8 +36,6 @@ static void flash_update_matches_cold_boot_credential_policy(void) {
 }
 
 static void persona_defaults_to_xinput_without_credentials(void) {
-    // No credentials -> always XInput, whatever byte happens to be there.
-    // The stored byte equals the run_persona_t value (asserted in boot_mode.c).
     assert(boot_mode_persona_from_flash(false, RUN_PERSONA_KEYBOARD) == RUN_PERSONA_XINPUT);
     assert(boot_mode_persona_from_flash(false, RUN_PERSONA_PS3) == RUN_PERSONA_XINPUT);
     assert(boot_mode_persona_from_flash(false, RUN_PERSONA_PS4) == RUN_PERSONA_XINPUT);
@@ -51,7 +49,6 @@ static void persona_defaults_to_xinput_without_credentials(void) {
 }
 
 static void persona_reads_stored_byte_with_credentials(void) {
-    // Byte 0 is the XInput default a pre-persona record reads back as.
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_XINPUT) == RUN_PERSONA_XINPUT);
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_KEYBOARD) == RUN_PERSONA_KEYBOARD);
     assert(boot_mode_persona_from_flash(true, RUN_PERSONA_MAPLE) == RUN_PERSONA_MAPLE);
@@ -66,7 +63,6 @@ static void persona_reads_stored_byte_with_credentials(void) {
 }
 
 static void persona_unknown_byte_falls_back_to_xinput(void) {
-    // A corrupt/garbage byte must never strand the device in a non-XInput mode.
     assert(boot_mode_persona_from_flash(true, 0x5A) == RUN_PERSONA_XINPUT);
     assert(boot_mode_persona_from_flash(true, 0xFF) == RUN_PERSONA_XINPUT);
 }

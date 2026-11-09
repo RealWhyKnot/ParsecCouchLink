@@ -21,12 +21,10 @@ pub(super) fn decode_setup_fields(fields: &BTreeMap<&str, &str>) -> Option<Setup
     let index = parsed_u64(fields.get("index")).unwrap_or(0) & 0xFFFF;
     let request_type = setup_request_type(bm);
     let known_request = known_vendor_setup_request(bm, request, index);
-    let request_name = known_request
-        .map(str::to_string)
-        .unwrap_or_else(|| setup_request_name(request_type, request));
+    let request_name =
+        known_request.map_or_else(|| setup_request_name(request_type, request), str::to_string);
     let decodes_descriptor = request_type == "standard" && matches!(request, 0x06 | 0x07);
-    let descriptor_type =
-        decodes_descriptor.then(|| descriptor_type_name(((value >> 8) & 0xFF) as u8));
+    let descriptor_type = decodes_descriptor.then(|| descriptor_type_name(value.to_le_bytes()[1]));
     let descriptor_index = decodes_descriptor.then_some(value & 0xFF);
     let language_id = (descriptor_type == Some("string")).then_some(index);
 
@@ -55,12 +53,8 @@ pub(super) fn setup_decode_text(fields: &BTreeMap<&str, &str>) -> String {
         decoded.descriptor_type.unwrap_or("-"),
         decoded
             .descriptor_index
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "-".to_string()),
-        decoded
-            .language_id
-            .map(hex_u16)
-            .unwrap_or_else(|| "-".to_string()),
+            .map_or_else(|| "-".to_string(), |value| value.to_string()),
+        decoded.language_id.map_or_else(|| "-".to_string(), hex_u16),
         decoded.known_request.unwrap_or("-"),
     )
 }
@@ -169,11 +163,9 @@ fn setup_request_name(request_type: &str, request: u8) -> String {
             0x0B => Some("hid_set_protocol"),
             _ => None,
         },
-        "vendor" => None,
         _ => None,
     };
-    name.map(str::to_string)
-        .unwrap_or_else(|| format!("{request_type}_{request:#04X}"))
+    name.map_or_else(|| format!("{request_type}_{request:#04X}"), str::to_string)
 }
 
 fn descriptor_type_name(descriptor_type: u8) -> &'static str {

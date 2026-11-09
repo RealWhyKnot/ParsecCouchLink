@@ -78,15 +78,15 @@ fn summary_counts_harvest_health() {
 #[test]
 fn bundle_summary_keeps_per_source_sequence_accounting() {
     let per_pico = [UsbPacketSummarySource {
-            label: "02E22DA9".to_string(),
-            path: "picos/02E22DA9/usb-packets.txt".to_string(),
-            text: "usb-packet seq=1 dir=out src=vendor reason=host-out\nusb-packet seq=3 dir=out src=vendor reason=host-out\n",
-        }];
+        label: "02E22DA9".to_string(),
+        path: "picos/02E22DA9/usb-packets.txt".to_string(),
+        text: "usb-packet seq=1 dir=out src=vendor reason=host-out\nusb-packet seq=3 dir=out src=vendor reason=host-out\n",
+    }];
     let retained = [UsbPacketSummarySource {
-            label: "usb-packets.log".to_string(),
-            path: "debug-packets/usb-packets.log".to_string(),
-            text: "usb-event t=22 event=mount\nusb-packet-stats total=64 out=2 truncated_bytes=0 truncated_packets=0 idle_in_suppressed=0\n",
-        }];
+        label: "usb-packets.log".to_string(),
+        path: "debug-packets/usb-packets.log".to_string(),
+        text: "usb-event t=22 event=mount\nusb-packet-stats total=64 out=2 truncated_bytes=0 truncated_packets=0 idle_in_suppressed=0\n",
+    }];
     let summary = summarize_sources(&per_pico, &retained);
     assert_eq!(summary.artifact_schema_version, 8);
     assert_eq!(summary.aggregate.packet_lines, 2);
@@ -326,10 +326,10 @@ fn control_transfer_sources_omit_empty_sources() {
         text: "usb-packet seq=1 dir=out src=vendor reason=host-out\n",
     }];
     let retained = [UsbPacketSummarySource {
-            label: "usb-packets.log".to_string(),
-            path: "debug-packets/usb-packets.log".to_string(),
-            text: "usb-packet seq=8 t=11 dir=setup src=vendor-control bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 len=8 captured=8 data=C020020104030040\n",
-        }];
+        label: "usb-packets.log".to_string(),
+        path: "debug-packets/usb-packets.log".to_string(),
+        text: "usb-packet seq=8 t=11 dir=setup src=vendor-control bm=0xC0 req=0x20 value=0x0102 index=0x0304 wlen=16384 len=8 captured=8 data=C020020104030040\n",
+    }];
     let out = control_transfers_text_for_sources(&per_pico, &retained);
     assert!(!out.contains("picos/02E22DA9/usb-packets.txt"));
     assert!(out.contains("## usb-packets.log (debug-packets/usb-packets.log)"));
@@ -353,8 +353,11 @@ usb-packet seq=4 t=13 dir=out src=hid-feature len=2 captured=2 dropped=0 suppres
 
     let out = hid_reports_text_for_text("02E22DA9", "picos/02E22DA9/usb-packets.txt", text);
     assert!(out.contains("# USB HID report transcript"));
-    assert!(out
-        .contains("request=hid_get_report report_id=0xEF report_type=3 report_type_name=feature"));
+    assert!(
+        out.contains(
+            "request=hid_get_report report_id=0xEF report_type=3 report_type_name=feature"
+        )
+    );
     assert!(
         out.contains("request=hid_set_report report_id=0x01 report_type=2 report_type_name=output")
     );

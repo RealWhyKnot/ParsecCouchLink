@@ -1,28 +1,21 @@
-//! Shared helpers for end-user error/exit messaging.
-
-/// GitHub issues URL for this binary. Pulled from Cargo.toml's
-/// `repository` field at compile time.
-pub fn issue_url() -> String {
+pub(crate) fn issue_url() -> String {
     let repo = env!("CARGO_PKG_REPOSITORY");
     format!("{}/issues", repo.trim_end_matches('/'))
 }
 
-/// Print the standard "things went wrong, here's what to do" footer
-/// to stderr. Three lines: log dir, bundle command, issue URL.
-pub fn print_help_footer() {
-    let log_dir = crate::config::log_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| {
-            "(unknown -- check %LOCALAPPDATA%\\ParsecCouchLink\\data\\logs)".to_string()
-        });
-    eprintln!();
-    eprintln!("If this looks wrong:");
-    eprintln!("  logs:   {}", log_dir);
-    eprintln!("  bundle: couchlink bundle");
-    eprintln!("  report: {}", issue_url());
+pub(crate) fn print_help_footer() {
+    let log_dir = crate::config::log_dir().map_or_else(
+        |_| "(unknown -- check %LOCALAPPDATA%\\ParsecCouchLink\\data\\logs)".to_string(),
+        |p| p.display().to_string(),
+    );
+    errln!();
+    errln!("If this looks wrong:");
+    errln!("  logs:   {}", log_dir);
+    errln!("  bundle: couchlink bundle");
+    errln!("  report: {}", issue_url());
 }
 
-pub fn no_pico_wifi_help(timeout_seconds: u64) -> String {
+pub(crate) fn no_pico_wifi_help(timeout_seconds: u64) -> String {
     format!(
         "No Pico replied on Wi-Fi within {timeout_seconds} s.\n\
          This is a Pico/network discovery problem, not a controller problem.\n\
@@ -34,11 +27,11 @@ pub fn no_pico_wifi_help(timeout_seconds: u64) -> String {
     )
 }
 
-pub fn print_no_pico_wifi_help(timeout_seconds: u64) {
-    println!("{}", no_pico_wifi_help(timeout_seconds));
+pub(crate) fn print_no_pico_wifi_help(timeout_seconds: u64) {
+    outln!("{}", no_pico_wifi_help(timeout_seconds));
 }
 
-pub fn no_pico_wifi_short_hint() -> &'static str {
+pub(crate) fn no_pico_wifi_short_hint() -> &'static str {
     "Run `couchlink` and choose `Start streaming` again so CouchLink can check setup-mode USB Picos with saved Wi-Fi. If the router shows its IP, choose `Enter Pico IP manually`. If Wi-Fi changed, run `couchlink configure-wifi`. If it still fails, run `couchlink bundle`."
 }
 

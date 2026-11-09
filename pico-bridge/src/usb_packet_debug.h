@@ -3,10 +3,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// Log raw USB packets while the debug input persona is active. Normal
-// personas always retain a bounded boot-time setup/control snapshot and emit
-// continuous raw packet dumps only during a bundle-requested one-shot capture
-// boot.
 void usb_packet_debug_set_capture_enabled(bool enabled);
 bool usb_packet_debug_capture_enabled(void);
 void usb_packet_debug_note_out(const char *source, uint8_t const *buffer, uint16_t len);

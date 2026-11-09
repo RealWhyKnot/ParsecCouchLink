@@ -36,7 +36,10 @@ pub(super) fn harvest_value(line: &str) -> Option<Value> {
 }
 
 pub(super) fn json_string(value: &Value, key: &str) -> Option<String> {
-    value.get(key)?.as_str().map(|value| value.to_string())
+    value
+        .get(key)?
+        .as_str()
+        .map(std::string::ToString::to_string)
 }
 
 pub(super) fn json_u64(value: &Value, key: &str) -> Option<u64> {
@@ -79,17 +82,17 @@ pub(super) fn format_count_map(map: &BTreeMap<String, u64>) -> String {
 }
 
 pub(super) fn min_assign(target: &mut Option<u64>, value: Option<u64>) {
-    if let Some(value) = value {
-        if target.map(|current| value < current).unwrap_or(true) {
-            *target = Some(value);
-        }
+    if let Some(value) = value
+        && target.is_none_or(|current| value < current)
+    {
+        *target = Some(value);
     }
 }
 
 pub(super) fn max_assign(target: &mut Option<u64>, value: Option<u64>) {
-    if let Some(value) = value {
-        if target.map(|current| value > current).unwrap_or(true) {
-            *target = Some(value);
-        }
+    if let Some(value) = value
+        && target.is_none_or(|current| value > current)
+    {
+        *target = Some(value);
     }
 }

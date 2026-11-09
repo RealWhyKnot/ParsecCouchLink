@@ -12,8 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 concurrency:
   group: changelog-append
@@ -24,13 +23,15 @@ jobs:
     if: github.repository == 'RealWhyKnot/ParsecCouchLink'
     runs-on: windows-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
+      actions: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ inputs.tag || github.ref }}
-          # Full history + all tags so the release-body step can diff
-          # commits against the previous version tag for the changelog.
           fetch-depth: 0
           fetch-tags: true
 
@@ -63,17 +64,6 @@ jobs:
         with:
           working-directory: bridge
           cache-key: bridge
-
-      - name: Pico build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            pico-bridge/build-_pico_sdk
-            pico-bridge/build-pico2w
-            pico-bridge/build-picow
-          key: ${{ runner.os }}-pico-${{ hashFiles('pico-bridge/CMakeLists.txt', 'pico-bridge/pico_sdk_import.cmake', 'pico-bridge/scripts/build.ps1', 'pico-bridge/src/**') }}
-          restore-keys: |
-            ${{ runner.os }}-pico-
 
       - name: Install Pico toolchain
         shell: pwsh
@@ -129,8 +119,9 @@ jobs:
         shell: pwsh
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ steps.version.outputs.tag }}
         run: |
-          $tag = '${{ steps.version.outputs.tag }}'
+          $tag = $env:TAG_NAME
           $prevTag = & ./.github/scripts/Resolve-ReleaseBaseTag.ps1 -Tag $tag
           if ($prevTag) {
               Write-Host "Preloading changelog entries from $prevTag..$tag before promotion."
@@ -150,9 +141,11 @@ jobs:
 
       - name: Build release zip
         shell: pwsh
+        env:
+          BUILD_VERSION: ${{ steps.version.outputs.version }}
         run: |
           Remove-Item -LiteralPath pico-bridge/build-pico2w,pico-bridge/build-picow -Recurse -Force -ErrorAction SilentlyContinue
-          ./build.ps1 -Version '${{ steps.version.outputs.version }}' -Package
+          ./build.ps1 -Version $env:BUILD_VERSION -Package
 
       - name: Locate artifacts
         id: artifact
@@ -181,7 +174,7 @@ jobs:
           "sha256=$sha" >> $env:GITHUB_OUTPUT
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ParsecCouchLink-release
           path: |
@@ -201,6 +194,7 @@ jobs:
           INTEGRITY_PATH: ${{ steps.artifact.outputs.integrity }}
           INTEGRITY_NAME: ${{ steps.artifact.outputs.integrity_name }}
           MANIFEST_PATH: ${{ steps.artifact.outputs.manifest }}
+          IS_PRERELEASE: ${{ steps.version.outputs.prerelease }}
         shell: pwsh
         run: |
           $notesOutput = & ./.github/scripts/Generate-ReleaseNotes.ps1 `
@@ -218,20 +212,11 @@ jobs:
           [System.IO.File]::WriteAllText($notesPath, $notes, (New-Object System.Text.UTF8Encoding($false)))
           "notes_path=$notesPath" >> $env:GITHUB_OUTPUT
 
-          # Draft-first: create as draft, upload all assets, only then
-          # promote to a published release. If any step between create
-          # and promote fails, the release stays as a draft and the
-          # workflow's failure is visible -- preferable to publishing a
-          # release that's missing assets.
           $extra = @('--draft')
-          if ('${{ steps.version.outputs.prerelease }}' -eq 'true') { $extra += @('--prerelease','--latest=false') }
+          if ($env:IS_PRERELEASE -eq 'true') { $extra += @('--prerelease','--latest=false') }
           gh release create $env:TAG_NAME $env:ZIP_PATH $env:INTEGRITY_PATH $env:MANIFEST_PATH --title $env:TAG_NAME --notes-file $notesPath @extra
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed (exit $LASTEXITCODE)" }
 
-          # Verify the assets actually attached (gh release create
-          # can succeed with the metadata but fail mid-upload on the
-          # asset stage; the release is then live as a draft with
-          # missing files). View the release as JSON and check.
           $json = gh release view $env:TAG_NAME --json assets,isDraft
           if ($LASTEXITCODE -ne 0) { throw "gh release view failed (exit $LASTEXITCODE)" }
           $info = $json | ConvertFrom-Json
@@ -364,9 +349,6 @@ jobs:
           fi
           echo "Committed changelog promotion: $new_oid"
 
-  # A nightly tag is pushed by nightly-prerelease.yml before this workflow is
-  # dispatched, so a failure here would otherwise leave the tag behind with no
-  # release attached. Eleven accumulated that way before this job existed.
   cleanup-failed-tag:
     needs: release
     if: always() && needs.release.result == 'failure' && github.event_name == 'workflow_dispatch'
@@ -382,14 +364,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Only nightly betas. A stable tag is deliberate and stays put so the
-          # failure can be inspected and the run retried against the same ref.
           case "$TAG_NAME" in
             *-beta) ;;
             *) echo "$TAG_NAME is not a nightly beta tag; leaving it in place."; exit 0 ;;
           esac
 
-          # Load-bearing: deleting a tag that has a release breaks the release.
           if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "$TAG_NAME has a release attached; leaving it in place."
             exit 0

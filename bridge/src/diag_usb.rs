@@ -1,19 +1,7 @@
-//! WinUSB vendor-control transfer for retrieving the firmware diag log.
-//!
-//! The Pico's setup-mode composite carries a vendor-class interface
-//! (DIAG_ITF_NUM = 2) that Windows binds to WinUSB via MS OS 2.0
-//! descriptors. The diag log ring is exposed via a vendor IN control
-//! transfer on EP0, independent of the CDC bulk endpoint state -- so
-//! this path works even when the CDC FIFO is wedged.
-//!
-//! Response payload matches the CDC CMD_GET_LOG_BUFFER wire format:
-//! `[lost_le32][raw_log_bytes]`.
-
 use std::time::Duration;
 
 use nusb::MaybeFuture;
 
-// Constants must match `pico-bridge/src/usb_descriptors.c`.
 const PICO_VID: u16 = 0x2E8A;
 const PICO_PID: u16 = 0xCAF0;
 const DIAG_ITF_NUM: u8 = 2;
@@ -21,10 +9,8 @@ const DIAG_GET_LOG_REQ: u8 = 0x01;
 const MAX_RESPONSE_BYTES: u16 = 4 + 16384;
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Result of a vendor-control diag-log fetch. Translated to
-/// `DiagOutcome` by the caller in `cmd_bundle.rs`.
 #[derive(Debug)]
-pub enum VendorDiagOutcome {
+pub(crate) enum VendorDiagOutcome {
     Captured {
         text: String,
         lost: u32,
@@ -41,9 +27,7 @@ pub enum VendorDiagOutcome {
     },
 }
 
-/// Blocking implementation; intended to be called inside
-/// `tokio::task::spawn_blocking`.
-pub fn capture_diag_blocking() -> VendorDiagOutcome {
+pub(crate) fn capture_diag_blocking() -> VendorDiagOutcome {
     let info = match find_pico_diag_device() {
         Ok(Some(i)) => i,
         Ok(None) => return VendorDiagOutcome::NotFound,

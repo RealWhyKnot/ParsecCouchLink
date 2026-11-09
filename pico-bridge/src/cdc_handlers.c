@@ -86,8 +86,6 @@ static size_t handle_hello(uint8_t seq, uint8_t *reply, size_t cap) {
     flash_creds_t cur;
     bool have = flash_creds_load(&cur);
     bool keyed = have && cur.auth_key_set;
-    // Wipe the on-stack copy: it contains the cleartext password from
-    // flash, and we only needed the presence bit here.
     memset(&cur, 0, sizeof(cur));
     uint8_t payload[12 + PICO_BRIDGE_FW_SUFFIX_LEN];
     payload[0] = CDC_PROTO_VERSION;
@@ -138,8 +136,6 @@ static size_t handle_set_wifi(const cdc_frame_view_t *req, uint8_t *reply, size_
     memcpy(rec.ssid, &req->payload[1], ssid_len);
     memcpy(rec.password, &req->payload[1 + ssid_len + 1], pass_len);
 
-    // Preserve device_name and the chosen output persona across
-    // re-provisioning if there was a prior record.
     flash_creds_t prev;
     if (flash_creds_load(&prev)) {
         flash_creds_keep_settings(&rec, &prev);
@@ -147,7 +143,6 @@ static size_t handle_set_wifi(const cdc_frame_view_t *req, uint8_t *reply, size_
     }
 
     int rc = flash_creds_store(&rec);
-    // Zero the local copy of the password ASAP.
     memset(&rec, 0, sizeof(rec));
 
     if (rc == -2) {
@@ -387,7 +382,6 @@ static size_t handle_device_name_set(const cdc_frame_view_t *req, uint8_t *reply
     }
     flash_creds_t rec;
     if (!flash_creds_load(&rec)) {
-        // No creds yet; can't store a name on its own.
         uint8_t err[2] = {CDC_ERR_INTERNAL, 1};
         return cdc_encode(CDC_RSP_NACK, req->seq, err, 2, reply, cap);
     }
@@ -427,11 +421,6 @@ static size_t handle_set_auth_key(const cdc_frame_view_t *req, uint8_t *reply, s
 }
 
 static size_t handle_log_buffer(uint8_t seq, uint8_t *reply, size_t cap) {
-    // Wire format: 4-byte little-endian `lost_bytes` count, followed
-    // by the most-recent log bytes. The host gates parsing of the
-    // prefix on `payload_len >= 4`, so older firmware (no prefix) and
-    // older hosts (no understanding of the prefix) interoperate as
-    // long as one or the other is patched.
     if (sizeof(log_payload) < 4)
         return 0;
     uint32_t lost = 0;
@@ -445,7 +434,6 @@ static size_t handle_log_buffer(uint8_t seq, uint8_t *reply, size_t cap) {
 }
 
 static size_t handle_self_test(uint8_t seq, uint8_t *reply, size_t cap) {
-    // Lightweight; runs entirely in software, no Wi-Fi.
     char buf[160];
     bool flash_ok = true;
     bool ok = true;
@@ -469,7 +457,7 @@ size_t cdc_dispatch(const cdc_frame_view_t *req, uint8_t *reply, size_t reply_ca
     case CDC_CMD_HELLO:
         return handle_hello(req->seq, reply, reply_cap);
     case CDC_CMD_GET_STATUS:
-        return handle_hello(req->seq, reply, reply_cap); // for now, same body
+        return handle_hello(req->seq, reply, reply_cap);
     case CDC_CMD_SET_WIFI:
         return handle_set_wifi(req, reply, reply_cap);
     case CDC_CMD_REBOOT_TO_RUN:
@@ -520,10 +508,6 @@ void cdc_handlers_init(void) {
 }
 
 bool cdc_handlers_reboot_pending(void) {
-    // Reboot only once the TX FIFO is fully drained -- meaning the ACK
-    // frame we just queued has actually left the device. tud_cdc_write_available()
-    // returns the number of FREE bytes, so the FIFO is empty when it
-    // equals the configured TX bufsize.
     return reboot_pending && (tud_cdc_write_available() == CFG_TUD_CDC_TX_BUFSIZE);
 }
 
@@ -532,12 +516,6 @@ bool cdc_handlers_bootsel_pending(void) {
 }
 
 void cdc_handlers_poll(void) {
-    // Log DTR transitions so a bundle clearly shows whether the host
-    // ever opened the port. DTR is informational only -- bytes are
-    // processed whenever they arrive, regardless of DTR state. The
-    // previous behaviour was to drop incoming bytes whenever DTR was
-    // low, which silently ate HELLO from hosts that send before they
-    // assert DTR (or that never assert it on `open`).
     static bool last_connected = false;
     bool connected = tud_cdc_connected();
     if (connected != last_connected) {
@@ -546,9 +524,6 @@ void cdc_handlers_poll(void) {
         last_connected = connected;
     }
 
-    // Drain incoming bytes into rx_buf regardless of DTR state. Bytes
-    // are queued in TinyUSB's CDC FIFO until we read them; if the host
-    // never opens the line they stay there until reboot, which is fine.
     while (tud_cdc_available() && rx_len < sizeof(rx_buf)) {
         size_t want = sizeof(rx_buf) - rx_len;
         if (want > 64)
@@ -556,7 +531,6 @@ void cdc_handlers_poll(void) {
         rx_len += tud_cdc_read(&rx_buf[rx_len], want);
     }
 
-    // Try to decode as many complete frames as possible.
     while (rx_len > 0) {
         cdc_frame_view_t view;
         size_t consumed = 0;
@@ -573,11 +547,9 @@ void cdc_handlers_poll(void) {
             size_t n = cdc_dispatch(&view, tx_frame, sizeof(tx_frame));
             if (n > 0)
                 write_cdc_frame(tx_frame, n);
-            // Shift remaining bytes down.
             memmove(rx_buf, &rx_buf[consumed], rx_len - consumed);
             rx_len -= consumed;
         } else {
-            // Resync: drop one byte and retry.
             if (st == CDC_DECODE_BAD_CRC) {
                 diag_log_msg("cdc: BAD_CRC, resyncing one byte");
                 send_nack(rx_buf[6], CDC_ERR_BAD_CRC, 0);
@@ -595,7 +567,6 @@ void cdc_handlers_poll(void) {
         }
     }
 
-    // Safety: if rx_buf fills with junk and never decodes, reset it.
     if (rx_len >= sizeof(rx_buf)) {
         rx_len = 0;
         diag_log_msg("cdc: RX buffer reset (overflow with no valid frame)");

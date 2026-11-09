@@ -58,7 +58,7 @@ fn ensure_debug_packet_sink_for_target(
                 sink.path().display()
             );
             if !quiet {
-                println!(
+                outln!(
                     "Debug USB packet capture: {} -> {}",
                     target.short_label(),
                     sink.path().display()
@@ -73,7 +73,7 @@ fn ensure_debug_packet_sink_for_target(
                 target.short_label()
             );
             if !quiet {
-                println!(
+                outln!(
                     "Debug USB packet capture could not open a retained log for {}: {e:#}",
                     target.short_label()
                 );
@@ -185,7 +185,7 @@ pub(in crate::cmd_run) fn apply_debug_packet_harvests(
                 let chunk_count = harvest_record.snapshot.chunk_count;
                 let missing_chunk_count = harvest_record.snapshot.missing_chunks.len();
                 let duplicate_chunk_count = harvest_record.snapshot.duplicate_chunk_count;
-                if let Err(e) = sink.append_harvest_ok(harvest_record) {
+                if let Err(e) = sink.append_harvest_ok(&harvest_record) {
                     tracing::warn!(
                         "debug-packets: harvest metadata write failed for {}: {e:#}",
                         result.target.short_label()
@@ -213,7 +213,7 @@ pub(in crate::cmd_run) fn apply_debug_packet_harvests(
                 }
                 if written > 0 || lost_bytes > 0 || missing_chunk_count > 0 {
                     pico_cache::record(
-                        pico_cache::PicoStateSnapshot::from_target(
+                        &pico_cache::PicoStateSnapshot::from_target(
                             "debug-packet-harvest",
                             &result.target,
                         )

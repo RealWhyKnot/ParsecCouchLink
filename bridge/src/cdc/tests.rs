@@ -2,7 +2,6 @@ use super::*;
 
 #[test]
 fn crc16_known_value() {
-    // CRC-16/CCITT-FALSE check over "123456789" is 0x29B1.
     assert_eq!(crc16(b"123456789"), 0x29B1);
 }
 
@@ -28,12 +27,11 @@ fn frame_bad_crc() {
 #[test]
 fn short_unique_id_uses_first_four_bytes_little_endian() {
     let payload = [0xB6, 0x7E, 0xD3, 0x07, 0xAA, 0xBB, 0xCC, 0xDD];
-    assert_eq!(short_unique_id_from_payload(&payload).unwrap(), 0x07D37EB6);
+    assert_eq!(short_unique_id_from_payload(&payload).unwrap(), 0x07D3_7EB6);
     assert!(short_unique_id_from_payload(&payload[..3]).is_err());
 }
 
-#[test]
-fn bt_status_payload_decodes_wire_shape() {
+fn full_bt_status_payload() -> Vec<u8> {
     let name = b"CouchLink BT HID";
     let mut payload = vec![0u8; BT_STATUS_FIXED_LEN + name.len()];
     payload[0] = BT_STATUS_VERSION;
@@ -50,8 +48,8 @@ fn bt_status_payload_decodes_wire_shape() {
     payload[28..32].copy_from_slice(&6u32.to_le_bytes());
     payload[32..36].copy_from_slice(&7u32.to_le_bytes());
     payload[36..40].copy_from_slice(&8u32.to_le_bytes());
-    payload[40..44].copy_from_slice(&0x11223344u32.to_le_bytes());
-    payload[44..48].copy_from_slice(&0x55667788u32.to_le_bytes());
+    payload[40..44].copy_from_slice(&0x1122_3344_u32.to_le_bytes());
+    payload[44..48].copy_from_slice(&0x5566_7788_u32.to_le_bytes());
     payload[48..52].copy_from_slice(&9u32.to_le_bytes());
     payload[52..56].copy_from_slice(&10u32.to_le_bytes());
     payload[56..60].copy_from_slice(&11u32.to_le_bytes());
@@ -70,6 +68,13 @@ fn bt_status_payload_decodes_wire_shape() {
     payload[92..94].copy_from_slice(&36u16.to_le_bytes());
     payload[94..96].copy_from_slice(&77u16.to_le_bytes());
     payload[96..98].copy_from_slice(&8u16.to_le_bytes());
+    fill_security_reconnect_and_cdc_fields(&mut payload);
+    payload[244] = u8::try_from(name.len()).unwrap();
+    payload[245..].copy_from_slice(name);
+    payload
+}
+
+fn fill_security_reconnect_and_cdc_fields(payload: &mut [u8]) {
     payload[98..102].copy_from_slice(&18u32.to_le_bytes());
     payload[102..106].copy_from_slice(&19u32.to_le_bytes());
     payload[106..110].copy_from_slice(&20u32.to_le_bytes());
@@ -117,11 +122,9 @@ fn bt_status_payload_decodes_wire_shape() {
     payload[240] = 0x51;
     payload[241] = CMD_BT_STATE;
     payload[242] = 1;
-    payload[244] = name.len() as u8;
-    payload[245..].copy_from_slice(name);
+}
 
-    let status = decode_bt_status_payload(&payload).unwrap();
-
+fn assert_base_and_report_fields(status: &BtStatus) {
     assert!(status.started());
     assert!(status.connected());
     assert!(!status.send_requested());
@@ -137,8 +140,8 @@ fn bt_status_payload_decodes_wire_shape() {
     assert_eq!(status.report_build_count, 6);
     assert_eq!(status.report_send_count, 7);
     assert_eq!(status.send_request_count, 8);
-    assert_eq!(status.last_event_ms, 0x11223344);
-    assert_eq!(status.last_send_ms, 0x55667788);
+    assert_eq!(status.last_event_ms, 0x1122_3344);
+    assert_eq!(status.last_send_ms, 0x5566_7788);
     assert_eq!(status.get_report_count, 9);
     assert_eq!(status.get_report_success_count, 10);
     assert_eq!(status.get_report_unsupported_count, 11);
@@ -157,6 +160,9 @@ fn bt_status_payload_decodes_wire_shape() {
     assert_eq!(status.last_get_report_len, 36);
     assert_eq!(status.last_set_report_len, 77);
     assert_eq!(status.last_out_report_len, 8);
+}
+
+fn assert_security_and_reconnect_fields(status: &BtStatus) {
     assert_eq!(status.pin_code_request_count, 18);
     assert_eq!(status.pin_code_response_count, 19);
     assert_eq!(status.user_confirmation_request_count, 20);
@@ -187,32 +193,44 @@ fn bt_status_payload_decodes_wire_shape() {
     assert_eq!(status.reconnect_success_count, 30);
     assert_eq!(status.reconnect_failed_count, 31);
     assert_eq!(status.reconnect_blocked_count, 32);
-    assert_eq!(status.last_reconnect_ms, 0x10203040);
+    assert_eq!(status.last_reconnect_ms, 0x1020_3040);
     assert!(status.reconnect_activity_seen());
     assert_eq!(status.connection_complete_count, 33);
     assert_eq!(status.last_connection_complete_status, 0x35);
     assert_eq!(status.last_connection_complete_link_type, 1);
-    assert_eq!(status.last_connection_complete_ms, 0x40506070);
+    assert_eq!(status.last_connection_complete_ms, 0x4050_6070);
     assert_eq!(status.incoming_l2cap_connection_count, 34);
     assert_eq!(status.incoming_l2cap_hid_control_count, 35);
     assert_eq!(status.incoming_l2cap_hid_interrupt_count, 36);
     assert_eq!(status.last_incoming_l2cap_psm, 0x0013);
     assert_eq!(status.last_incoming_l2cap_local_cid, 0x0041);
-    assert_eq!(status.last_incoming_l2cap_ms, 0x50607080);
+    assert_eq!(status.last_incoming_l2cap_ms, 0x5060_7080);
     assert!(status.incoming_hid_l2cap_seen());
+}
+
+fn assert_cdc_fields_and_name(status: &BtStatus) {
     assert_eq!(status.bt_cdc_state_count, 37);
     assert_eq!(status.bt_cdc_heartbeat_count, 38);
     assert_eq!(status.bt_cdc_bad_length_count, 39);
     assert_eq!(status.bt_cdc_rejected_count, 40);
-    assert_eq!(status.bt_cdc_last_frame_ms, 0x60708090);
-    assert_eq!(status.bt_cdc_last_state_ms, 0x708090A0);
-    assert_eq!(status.bt_cdc_last_heartbeat_ms, 0x8090A0B0);
+    assert_eq!(status.bt_cdc_last_frame_ms, 0x6070_8090);
+    assert_eq!(status.bt_cdc_last_state_ms, 0x7080_90A0);
+    assert_eq!(status.bt_cdc_last_heartbeat_ms, 0x8090_A0B0);
     assert_eq!(status.bt_cdc_last_seq, 0x51);
     assert_eq!(status.bt_cdc_last_command, CMD_BT_STATE);
     assert_eq!(status.bt_cdc_last_flags, 1);
     assert!(status.bt_cdc_input_seen());
     assert!(status.pairing_security_contact_seen());
     assert_eq!(status.local_name, "CouchLink BT HID");
+}
+
+#[test]
+fn bt_status_payload_decodes_wire_shape() {
+    let status = decode_bt_status_payload(&full_bt_status_payload()).unwrap();
+
+    assert_base_and_report_fields(&status);
+    assert_security_and_reconnect_fields(&status);
+    assert_cdc_fields_and_name(&status);
 }
 
 #[test]
@@ -226,7 +244,7 @@ fn bt_status_payload_decodes_v4_wire_shape() {
     payload[156..160].copy_from_slice(&2u32.to_le_bytes());
     payload[180..184].copy_from_slice(&3u32.to_le_bytes());
     payload[192..196].copy_from_slice(&4u32.to_le_bytes());
-    payload[212] = name.len() as u8;
+    payload[212] = u8::try_from(name.len()).unwrap();
     payload[213..].copy_from_slice(name);
 
     let status = decode_bt_status_payload(&payload).unwrap();
@@ -255,7 +273,7 @@ fn bt_status_payload_decodes_v3_wire_shape() {
     payload[110..114].copy_from_slice(&4u32.to_le_bytes());
     payload[122..126].copy_from_slice(&1u32.to_le_bytes());
     payload[146] = 0x16;
-    payload[152] = name.len() as u8;
+    payload[152] = u8::try_from(name.len()).unwrap();
     payload[153..].copy_from_slice(name);
 
     let status = decode_bt_status_payload(&payload).unwrap();
@@ -284,7 +302,7 @@ fn bt_status_payload_decodes_v2_wire_shape() {
     payload[1] = BT_STATUS_FLAG_STARTED;
     payload[2] = 1;
     payload[48..52].copy_from_slice(&9u32.to_le_bytes());
-    payload[98] = name.len() as u8;
+    payload[98] = u8::try_from(name.len()).unwrap();
     payload[99..].copy_from_slice(name);
 
     let status = decode_bt_status_payload(&payload).unwrap();
@@ -312,7 +330,7 @@ fn bt_status_payload_decodes_v1_wire_shape() {
     payload[1] = BT_STATUS_FLAG_STARTED;
     payload[2] = 1;
     payload[32..36].copy_from_slice(&7u32.to_le_bytes());
-    payload[48] = name.len() as u8;
+    payload[48] = u8::try_from(name.len()).unwrap();
     payload[49..].copy_from_slice(name);
 
     let status = decode_bt_status_payload(&payload).unwrap();

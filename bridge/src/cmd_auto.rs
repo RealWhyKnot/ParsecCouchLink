@@ -1,9 +1,8 @@
-//! `couchlink auto` -- find a gamepad USB persona the console adapter accepts.
-
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
+use crate::modes::{AfterSwitch, PicoScope};
 use crate::protocol::{Persona, UsbDiag};
 use crate::{cmd_persona, cmd_run, cmd_usb_diag, pico_mode, support};
 
@@ -24,6 +23,20 @@ pub(crate) enum AutoScore {
     PollingWithOut = 6,
 }
 
+impl AutoScore {
+    pub(crate) const fn rank(self) -> u8 {
+        match self {
+            Self::NoUsbTraffic => 0,
+            Self::EnumerationStarted => 1,
+            Self::ConfiguredThenUnmounted => 2,
+            Self::Suspended => 3,
+            Self::Configured => 4,
+            Self::Polling => 5,
+            Self::PollingWithOut => 6,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct AutoAttempt {
     persona: Persona,
@@ -38,25 +51,29 @@ struct AutoResult {
     score: AutoScore,
 }
 
-pub async fn run(selectors: Vec<String>, all: bool, stream: bool) -> Result<()> {
-    run_with_candidates(selectors, all, stream, None).await
+pub(crate) async fn run(
+    selectors: Vec<String>,
+    scope: PicoScope,
+    after: AfterSwitch,
+) -> Result<()> {
+    run_with_candidates(selectors, scope, after, None).await
 }
 
-pub async fn run_family(
+pub(crate) async fn run_family(
     selectors: Vec<String>,
-    all: bool,
-    stream: bool,
+    scope: PicoScope,
+    after: AfterSwitch,
     candidates: &'static [Persona],
     family_label: &'static str,
 ) -> Result<()> {
-    println!("{family_label}: cycling {}", labels(candidates).join(", "));
-    run_with_candidates(selectors, all, stream, Some(candidates)).await
+    outln!("{family_label}: cycling {}", labels(candidates).join(", "));
+    run_with_candidates(selectors, scope, after, Some(candidates)).await
 }
 
 async fn run_with_candidates(
     selectors: Vec<String>,
-    all: bool,
-    stream: bool,
+    scope: PicoScope,
+    after: AfterSwitch,
     candidates: Option<&'static [Persona]>,
 ) -> Result<()> {
     let picos = cmd_run::discover_picos_with_auto_recovery(cmd_persona::DISCOVER, false).await?;
@@ -67,14 +84,14 @@ async fn run_with_candidates(
         );
     }
 
-    let targets = cmd_persona::select_targets(&picos, &selectors, all)?;
+    let targets = cmd_persona::select_targets(&picos, &selectors, scope)?;
     let results = select_targets(targets, candidates).await?;
 
-    println!();
-    println!("Auto mode results:");
+    outln!();
+    outln!("Auto mode results:");
     for result in &results {
         let mark = if result.success { "ok" } else { "best" };
-        println!(
+        outln!(
             "  [{mark}] {} selected {} ({})",
             result.target.short_label(),
             result.target.persona.label(),
@@ -82,8 +99,8 @@ async fn run_with_candidates(
         );
     }
 
-    if !stream {
-        println!("Run `couchlink run` to start streaming.");
+    if !after.streams() {
+        outln!("Run `couchlink run` to start streaming.");
         return Ok(());
     }
 
@@ -152,19 +169,19 @@ async fn select_for_target(
         None => auto_candidates(current.persona),
     };
     let names: Vec<&str> = candidates.iter().map(|p| p.label()).collect();
-    println!();
-    println!(
+    outln!();
+    outln!(
         "Auto mode for {}: trying {}",
         current.short_label(),
         names.join(", ")
     );
-    println!(
+    outln!(
         "  Keep the console adapter connected and powered; Auto scores USB enumeration and polling from that adapter."
     );
 
     let mut best: Option<AutoAttempt> = None;
     for candidate in candidates {
-        println!("  Trying {}...", candidate.label());
+        outln!("  Trying {}...", candidate.label());
         let Some(active) = switch_to_candidate(current.clone(), candidate).await? else {
             continue;
         };
@@ -174,30 +191,26 @@ async fn select_for_target(
         let diag = match cmd_usb_diag::query_usb_diag(&active, USB_PROBE).await {
             Ok(diag) => diag,
             Err(e) => {
-                println!("    USB diagnostic did not reply: {e:#}");
+                outln!("    USB diagnostic did not reply: {e:#}");
                 continue;
             }
         };
         let score = score_usb_diag(&diag);
-        println!("    {}", score_label(score));
+        outln!("    {}", score_label(score));
         let attempt = AutoAttempt {
             persona: candidate,
             target: active.clone(),
             score,
         };
         if is_success_score(score) {
-            println!("    Selected {}.", candidate.label());
+            outln!("    Selected {}.", candidate.label());
             return Ok(AutoResult {
                 target: active,
                 success: true,
                 score,
             });
         }
-        if best
-            .as_ref()
-            .map(|existing| score > existing.score)
-            .unwrap_or(true)
-        {
+        if best.as_ref().is_none_or(|existing| score > existing.score) {
             best = Some(attempt);
         }
     }
@@ -206,7 +219,7 @@ async fn select_for_target(
         bail!("{uid:08X} did not produce USB diagnostic data for any gamepad persona");
     };
     if best.target.persona != best.persona {
-        println!(
+        outln!(
             "  Leaving {} in {} mode.",
             best.target.short_label(),
             best.target.persona.label()
@@ -228,7 +241,7 @@ async fn switch_to_candidate(
     }
 
     pico_mode::request_set_persona(&current, candidate).await?;
-    println!(
+    outln!(
         "    Waiting up to {}s for {} mode...",
         cmd_persona::REBOOT_WAIT.as_secs(),
         candidate.label()
@@ -245,7 +258,7 @@ async fn switch_to_candidate(
     match found {
         Some(pico) if pico.persona == candidate => Ok(Some(pico)),
         Some(pico) => {
-            println!(
+            outln!(
                 "    {} rejoined in {} mode, not {}.",
                 pico.short_label(),
                 pico.persona.label(),
@@ -254,7 +267,7 @@ async fn switch_to_candidate(
             Ok(None)
         }
         None => {
-            println!("    Pico did not rejoin Wi-Fi for this attempt.");
+            outln!("    Pico did not rejoin Wi-Fi for this attempt.");
             Ok(None)
         }
     }
@@ -355,56 +368,7 @@ pub(crate) fn score_label(score: AutoScore) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol;
-
-    fn diag(mounted: bool, sent: bool, out: bool, desc: bool) -> UsbDiag {
-        UsbDiag {
-            seq: 1,
-            flags: 0,
-            version: protocol::USB_DIAG_VERSION,
-            usb_flags: if mounted {
-                protocol::USB_DIAG_FLAG_MOUNTED
-            } else {
-                0
-            },
-            activity_flags: (if sent {
-                protocol::USB_DIAG_ACTIVITY_SENT
-            } else {
-                0
-            }) | (if out {
-                protocol::USB_DIAG_ACTIVITY_OUT
-            } else {
-                0
-            }),
-            last_out_len: 0,
-            now_ms: 10_000,
-            last_bridge_packet_ms: 0,
-            mount_count: if mounted { 1 } else { 0 },
-            umount_count: 0,
-            suspend_count: 0,
-            resume_count: 0,
-            device_desc_count: if desc { 1 } else { 0 },
-            config_desc_count: if desc { 1 } else { 0 },
-            xinput_in_queued_count: if sent { 1 } else { 0 },
-            xinput_in_sent_count: if sent { 1 } else { 0 },
-            xinput_out_count: if out { 1 } else { 0 },
-            xinput_in_blocked_not_mounted_count: 0,
-            xinput_in_blocked_not_ready_count: 0,
-            xinput_in_blocked_short_write_count: 0,
-            xinput_in_idle_suppressed_count: 0,
-            last_mount_ms: 9000,
-            last_umount_ms: 0,
-            last_in_queued_ms: 0,
-            last_in_sent_ms: if sent { 9500 } else { 0 },
-            last_out_ms: if out { 9600 } else { 0 },
-            last_in_blocked_ms: 0,
-            last_in_blocked_reason: 0,
-            last_in_blocked_want: 0,
-            last_in_blocked_got: 0,
-            last_out_byte0: 0,
-            last_out_byte1: 0,
-        }
-    }
+    use crate::test_diag::{DiagStage, usb_diag};
 
     #[test]
     fn candidates_try_current_gamepad_first_without_keyboard() {
@@ -461,29 +425,29 @@ mod tests {
     #[test]
     fn usb_diag_scoring_orders_adapter_progress() {
         assert_eq!(
-            score_usb_diag(&diag(false, false, false, false)),
+            score_usb_diag(&usb_diag(DiagStage::Silent)),
             AutoScore::NoUsbTraffic
         );
         assert_eq!(
-            score_usb_diag(&diag(false, false, false, true)),
+            score_usb_diag(&usb_diag(DiagStage::DescriptorsOnly)),
             AutoScore::EnumerationStarted
         );
-        let mut unmounted = diag(false, false, false, true);
+        let mut unmounted = usb_diag(DiagStage::DescriptorsOnly);
         unmounted.mount_count = 1;
         assert_eq!(
             score_usb_diag(&unmounted),
             AutoScore::ConfiguredThenUnmounted
         );
         assert_eq!(
-            score_usb_diag(&diag(true, false, false, true)),
+            score_usb_diag(&usb_diag(DiagStage::Mounted)),
             AutoScore::Configured
         );
         assert_eq!(
-            score_usb_diag(&diag(true, true, false, true)),
+            score_usb_diag(&usb_diag(DiagStage::Polling)),
             AutoScore::Polling
         );
         assert_eq!(
-            score_usb_diag(&diag(true, true, true, true)),
+            score_usb_diag(&usb_diag(DiagStage::PollingWithOut)),
             AutoScore::PollingWithOut
         );
     }

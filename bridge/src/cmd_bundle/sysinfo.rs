@@ -1,60 +1,55 @@
-//! system-info.txt and the bundled (plain-text) doctor re-run.
-
 use chrono::Local;
+use std::fmt::Write as _;
 
 use crate::config;
 
 use super::manifest::windows_version;
 
-/// Always-present body for `bundle/system-info.txt`. Captures things
-/// that can be checked without opening the Pico, so an issue reporter
-/// has provenance even when the Pico is gone (lost cable, dead
-/// firmware, hardware swap).
 pub(super) async fn build_system_info() -> String {
     let cfg = config::load().unwrap_or_default();
     let mut out = String::new();
-    out.push_str(&format!("couchlink {}\n", crate::VERSION,));
-    out.push_str(&format!("generated  {}\n", Local::now().to_rfc3339()));
-    out.push_str(&format!("os         {}\n", std::env::consts::OS));
+    let _ = writeln!(out, "couchlink {}", crate::VERSION);
+    let _ = writeln!(out, "generated  {}", Local::now().to_rfc3339());
+    let _ = writeln!(out, "os         {}", std::env::consts::OS);
     if let Some(v) = windows_version().await {
-        out.push_str(&format!("windows    {v}\n"));
+        let _ = writeln!(out, "windows    {v}");
     }
-    out.push_str(&format!(
-        "hostname   {}\n",
+    let _ = writeln!(
+        out,
+        "hostname   {}",
         hostname_short().unwrap_or_else(|| "(unknown)".into())
-    ));
-    out.push_str(&format!("setup-done {}\n", cfg.setup_complete));
+    );
+    let _ = writeln!(out, "setup-done {}", cfg.setup_complete);
     match &cfg.last_pico {
         Some(p) => {
-            out.push_str(&format!(
-                "last-pico  fw={} board=0x{:02X} unique-id-short=0x{:08X}\n",
+            let _ = writeln!(
+                out,
+                "last-pico  fw={} board=0x{:02X} unique-id-short=0x{:08X}",
                 crate::firmware_version::FirmwareVersion::from_triplet(
                     p.fw_major, p.fw_minor, p.fw_patch,
                 ),
                 p.board_type,
-                p.unique_id_short,
-            ));
+                p.unique_id_short
+            );
             if let Some(ip) = p.last_ip.as_deref() {
-                out.push_str(&format!("           last-ip={ip}\n"));
+                let _ = writeln!(out, "           last-ip={ip}");
             }
             if let Some(n) = p.device_name.as_deref() {
-                out.push_str(&format!("           device-name={n}\n"));
+                let _ = writeln!(out, "           device-name={n}");
             }
         }
         None => out.push_str("last-pico  (none)\n"),
     }
-    out.push_str(&format!(
-        "config     {}\n",
-        config::config_path()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "(unknown)".into())
-    ));
-    out.push_str(&format!(
-        "logs       {}\n",
-        config::log_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "(unknown)".into())
-    ));
+    let _ = writeln!(
+        out,
+        "config     {}",
+        config::config_path().map_or_else(|_| "(unknown)".into(), |p| p.display().to_string())
+    );
+    let _ = writeln!(
+        out,
+        "logs       {}",
+        config::log_dir().map_or_else(|_| "(unknown)".into(), |p| p.display().to_string())
+    );
     out
 }
 
@@ -66,10 +61,10 @@ fn hostname_short() -> Option<String> {
 }
 
 pub(super) async fn run_doctor_silently() -> String {
-    // Doctor prints to stdout via println!; we don't capture that here.
-    // For the bundle we instead run each check and format the result
-    // ourselves into a plain-text report.
-    use crate::cmd_doctor::*;
+    use crate::cmd_doctor::{
+        BoxedCheck, check_24ghz_warning, check_cdc, check_discover, check_firewall, check_paths,
+        check_startup_shortcut, check_xinput,
+    };
     let checks: Vec<(&str, BoxedCheck)> = vec![
         ("paths", Box::pin(check_paths())),
         ("xinput", Box::pin(check_xinput())),
@@ -80,20 +75,21 @@ pub(super) async fn run_doctor_silently() -> String {
         ("discover", Box::pin(check_discover())),
     ];
     let mut out = String::new();
-    out.push_str(&format!(
+    let _ = write!(
+        out,
         "couchlink doctor (bundled, no terminal styling)\n  bridge v{}\n  time {}\n\n",
         crate::VERSION,
-        chrono::Local::now().to_rfc3339(),
-    ));
+        chrono::Local::now().to_rfc3339()
+    );
     for (name, fut) in checks {
         let res = fut.await;
-        out.push_str(&format!("  [{:<10}] {}\n", name, format_result(&res)));
+        let _ = writeln!(out, "  [{:<10}] {}", name, format_result(&res));
     }
     out
 }
 
 fn format_result(r: &crate::cmd_doctor::CheckResult) -> String {
-    use crate::cmd_doctor::CheckResult::*;
+    use crate::cmd_doctor::CheckResult::{Fail, Pass, Skip, Warn};
     match r {
         Pass(m) => format!("PASS  {m}"),
         Warn(m) => format!("WARN  {m}"),

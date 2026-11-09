@@ -1,5 +1,3 @@
-//! USB packet extraction, counters, and aggregate packet evidence.
-
 use std::fmt::Write as _;
 use std::time::Duration;
 

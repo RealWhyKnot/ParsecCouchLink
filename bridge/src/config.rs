@@ -1,8 +1,3 @@
-//! Per-user config and data directories, via `directories::ProjectDirs`.
-//! Wi-Fi credentials are never persisted here -- they live only in the
-//! Pico's flash. This file tracks the last-seen Pico identity and
-//! housekeeping state.
-
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -17,33 +12,32 @@ const QUALIFIER: &str = "";
 const ORGANIZATION: &str = "";
 const APPLICATION: &str = "ParsecCouchLink";
 
-pub fn dirs() -> Result<ProjectDirs> {
+pub(crate) fn dirs() -> Result<ProjectDirs> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .context("could not resolve per-user application directories")
 }
 
-pub fn config_path() -> Result<PathBuf> {
+pub(crate) fn config_path() -> Result<PathBuf> {
     Ok(dirs()?.config_dir().join("config.toml"))
 }
 
-pub fn config_dir() -> Result<PathBuf> {
+pub(crate) fn config_dir() -> Result<PathBuf> {
     Ok(dirs()?.config_dir().to_path_buf())
 }
 
-pub fn log_dir() -> Result<PathBuf> {
+pub(crate) fn log_dir() -> Result<PathBuf> {
     Ok(dirs()?.data_local_dir().join("logs"))
 }
 
-pub fn data_dir() -> Result<PathBuf> {
+pub(crate) fn data_dir() -> Result<PathBuf> {
     Ok(dirs()?.data_local_dir().to_path_buf())
 }
 
-pub fn diag_cache_dir() -> Result<PathBuf> {
+pub(crate) fn diag_cache_dir() -> Result<PathBuf> {
     Ok(data_dir()?.join("diagnostics"))
 }
 
-/// Directory for panic crash files. Sibling of `log_dir()`.
-pub fn crash_dir() -> Result<PathBuf> {
+pub(crate) fn crash_dir() -> Result<PathBuf> {
     Ok(log_dir()?
         .parent()
         .ok_or_else(|| anyhow::anyhow!("log_dir has no parent"))?
@@ -51,28 +45,14 @@ pub fn crash_dir() -> Result<PathBuf> {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Config {
-    /// Last known Pico identity. Used to warn when a different Pico
-    /// appears and to remember the last LAN address as a fast-path
-    /// hint (still re-verified via discovery on every start).
+pub(crate) struct Config {
     pub last_pico: Option<PicoIdentity>,
-    /// Path to the .uf2 used during the most recent flash, if known.
     pub last_uf2: Option<PathBuf>,
-    /// Set after setup finishes successfully. Bridge run mode warns if
-    /// this is false to nudge the user toward `couchlink setup`.
     pub setup_complete: bool,
-    /// Saved Pico inventory shown by the guided home screen. This is
-    /// intentionally just device identity and last-known network info;
-    /// Wi-Fi credentials remain only on the Pico.
     #[serde(default)]
     pub picos: Vec<PicoIdentity>,
-    /// Saved controller-to-Pico layout from the guided runner. The
-    /// Startup shortcut uses `couchlink run`, so this lets a multi-Pico
-    /// layout start without asking questions every logon.
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
-    /// Optional external power controls for `couchlink lab`. Each command is
-    /// an argv vector: first item is the executable, remaining items are args.
     #[serde(default)]
     pub lab_power: Option<LabPowerConfig>,
     #[serde(default)]
@@ -80,16 +60,14 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn remember_pico(&mut self, mut pico: PicoIdentity) {
+    pub(crate) fn remember_pico(&mut self, mut pico: PicoIdentity) {
         if let Some(existing) = self
             .picos
             .iter_mut()
             .find(|p| p.unique_id_short == pico.unique_id_short)
         {
-            // Fresh observations (discovery acks, USB hello) never carry a
-            // nickname; keep the user's saved one instead of clobbering it.
             if pico.nickname.is_none() {
-                pico.nickname = existing.nickname.clone();
+                pico.nickname.clone_from(&existing.nickname);
             }
             *existing = pico.clone();
         } else {
@@ -98,7 +76,7 @@ impl Config {
         self.last_pico = Some(pico);
     }
 
-    pub fn nickname_for(&self, unique_id_short: u32) -> Option<&str> {
+    pub(crate) fn nickname_for(&self, unique_id_short: u32) -> Option<&str> {
         self.picos
             .iter()
             .find(|p| p.unique_id_short == unique_id_short)?
@@ -106,9 +84,7 @@ impl Config {
             .as_deref()
     }
 
-    /// Set or clear a saved Pico's nickname. Returns false when no saved
-    /// Pico has that UID.
-    pub fn set_nickname(&mut self, unique_id_short: u32, nickname: Option<String>) -> bool {
+    pub(crate) fn set_nickname(&mut self, unique_id_short: u32, nickname: Option<String>) -> bool {
         let Some(pico) = self
             .picos
             .iter_mut()
@@ -116,7 +92,7 @@ impl Config {
         else {
             return false;
         };
-        pico.nickname = nickname.clone();
+        pico.nickname.clone_from(&nickname);
         if let Some(last) = self
             .last_pico
             .as_mut()
@@ -127,14 +103,14 @@ impl Config {
         true
     }
 
-    pub fn auth_key_for(&self, unique_id_short: u32) -> Option<&str> {
+    pub(crate) fn auth_key_for(&self, unique_id_short: u32) -> Option<&str> {
         self.auth_keys
             .iter()
             .find(|k| k.unique_id_short == unique_id_short)
             .map(|k| k.key.as_str())
     }
 
-    pub fn set_auth_key(&mut self, unique_id_short: u32, key: String) {
+    pub(crate) fn set_auth_key(&mut self, unique_id_short: u32, key: String) {
         self.clear_auth_key(unique_id_short);
         self.auth_keys.push(PicoAuthKey {
             unique_id_short,
@@ -142,19 +118,18 @@ impl Config {
         });
     }
 
-    pub fn clear_auth_key(&mut self, unique_id_short: u32) {
+    pub(crate) fn clear_auth_key(&mut self, unique_id_short: u32) {
         self.auth_keys
             .retain(|k| k.unique_id_short != unique_id_short);
     }
 
-    pub fn forget_pico(&mut self, unique_id_short: u32) {
+    pub(crate) fn forget_pico(&mut self, unique_id_short: u32) {
         self.picos.retain(|p| p.unique_id_short != unique_id_short);
         self.routes.retain(|r| r.pico_uid != unique_id_short);
         if self
             .last_pico
             .as_ref()
-            .map(|p| p.unique_id_short == unique_id_short)
-            .unwrap_or(false)
+            .is_some_and(|p| p.unique_id_short == unique_id_short)
         {
             self.last_pico = self.picos.first().cloned();
         }
@@ -162,7 +137,7 @@ impl Config {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PicoIdentity {
+pub(crate) struct PicoIdentity {
     pub unique_id_short: u32,
     pub board_type: u8,
     pub fw_major: u8,
@@ -170,27 +145,23 @@ pub struct PicoIdentity {
     pub fw_patch: u8,
     pub last_ip: Option<String>,
     pub device_name: Option<String>,
-    /// User-assigned name, usually the console this Pico is dedicated to
-    /// ("Dreamcast", "N64 player 2"). Shown ahead of the board/UID in the
-    /// home screen and pickers.
     #[serde(default)]
     pub nickname: Option<String>,
 }
 
 impl PicoIdentity {
-    pub fn uid_hex(&self) -> String {
+    pub(crate) fn uid_hex(&self) -> String {
         format!("{:08X}", self.unique_id_short)
     }
 
-    /// "<nickname> - <board> <uid>" when named, else "<board> <uid>".
-    pub fn display_title(&self) -> String {
+    pub(crate) fn display_title(&self) -> String {
         match self.nickname.as_deref() {
             Some(name) => format!("{name} - {} {}", self.board_label(), self.uid_hex()),
             None => format!("{} {}", self.board_label(), self.uid_hex()),
         }
     }
 
-    pub fn board_label(&self) -> &'static str {
+    pub(crate) fn board_label(&self) -> &'static str {
         match self.board_type {
             protocol::BOARD_PICO_2_W => "Pico 2 W",
             protocol::BOARD_PICO_W_RP2040 => "Pico W",
@@ -198,12 +169,7 @@ impl PicoIdentity {
         }
     }
 
-    /// Last-known firmware for a saved Pico, only shown while it is offline.
-    /// Stored as the date-triplet (the discovery ack never carried the build
-    /// number), so render it through the shared formatter -- "2026.5.31.x",
-    /// build unknown -- rather than a raw "26.5.31" that reads like a
-    /// different, lower version.
-    pub fn firmware_version(&self) -> String {
+    pub(crate) fn firmware_version(&self) -> String {
         crate::firmware_version::FirmwareVersion::from_triplet(
             self.fw_major,
             self.fw_minor,
@@ -214,29 +180,27 @@ impl PicoIdentity {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PicoAuthKey {
+pub(crate) struct PicoAuthKey {
     pub unique_id_short: u32,
     pub key: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RouteConfig {
-    /// XInput slot, zero-based internally. The UI displays this as
-    /// controller 1 through 4.
+pub(crate) struct RouteConfig {
     pub source_slot: u32,
     pub pico_uid: u32,
     pub label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LabPowerConfig {
+pub(crate) struct LabPowerConfig {
     pub off: Vec<String>,
     pub on: Vec<String>,
     #[serde(default)]
     pub probe: Option<Vec<String>>,
 }
 
-pub fn load() -> Result<Config> {
+pub(crate) fn load() -> Result<Config> {
     let path = config_path()?;
     match fs::read_to_string(&path) {
         Ok(s) => toml::from_str(&s).context("parsing config.toml"),
@@ -245,7 +209,7 @@ pub fn load() -> Result<Config> {
     }
 }
 
-pub fn save(cfg: &Config) -> Result<()> {
+pub(crate) fn save(cfg: &Config) -> Result<()> {
     ensure_dirs()?;
     let path = config_path()?;
     let s = toml::to_string_pretty(cfg).context("serializing config")?;
@@ -259,7 +223,7 @@ pub fn save(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn ensure_dirs() -> Result<()> {
+pub(crate) fn ensure_dirs() -> Result<()> {
     let d = dirs()?;
     fs::create_dir_all(d.config_dir())?;
     fs::create_dir_all(d.data_local_dir())?;
@@ -279,7 +243,7 @@ mod tests {
             fw_major: 26,
             fw_minor: 5,
             fw_patch: 30,
-            last_ip: ip.map(|s| s.to_string()),
+            last_ip: ip.map(std::string::ToString::to_string),
             device_name: None,
             nickname: None,
         }
@@ -288,24 +252,23 @@ mod tests {
     #[test]
     fn remember_pico_upserts_by_uid() {
         let mut cfg = Config::default();
-        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.226")));
-        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.227")));
+        cfg.remember_pico(pico(0x07D3_7EB6, Some("192.168.50.226")));
+        cfg.remember_pico(pico(0x07D3_7EB6, Some("192.168.50.227")));
 
         assert_eq!(cfg.picos.len(), 1);
         assert_eq!(cfg.picos[0].last_ip.as_deref(), Some("192.168.50.227"));
-        assert_eq!(cfg.last_pico.as_ref().unwrap().unique_id_short, 0x07D37EB6);
+        assert_eq!(cfg.last_pico.as_ref().unwrap().unique_id_short, 0x07D3_7EB6);
     }
 
     #[test]
     fn remember_pico_keeps_nickname_when_fresh_observation_has_none() {
         let mut cfg = Config::default();
-        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.226")));
-        assert!(cfg.set_nickname(0x07D37EB6, Some("Dreamcast".to_string())));
+        cfg.remember_pico(pico(0x07D3_7EB6, Some("192.168.50.226")));
+        assert!(cfg.set_nickname(0x07D3_7EB6, Some("Dreamcast".to_string())));
 
-        // A rescan rebuilds the identity from the ack, without a nickname.
-        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.227")));
+        cfg.remember_pico(pico(0x07D3_7EB6, Some("192.168.50.227")));
 
-        assert_eq!(cfg.nickname_for(0x07D37EB6), Some("Dreamcast"));
+        assert_eq!(cfg.nickname_for(0x07D3_7EB6), Some("Dreamcast"));
         assert_eq!(
             cfg.last_pico.as_ref().unwrap().nickname.as_deref(),
             Some("Dreamcast")
@@ -316,11 +279,11 @@ mod tests {
     #[test]
     fn set_nickname_clears_and_reports_unknown_uid() {
         let mut cfg = Config::default();
-        cfg.remember_pico(pico(0x07D37EB6, None));
-        assert!(cfg.set_nickname(0x07D37EB6, Some("N64".to_string())));
-        assert!(cfg.set_nickname(0x07D37EB6, None));
-        assert_eq!(cfg.nickname_for(0x07D37EB6), None);
-        assert!(!cfg.set_nickname(0xDEADBEEF, Some("nope".to_string())));
+        cfg.remember_pico(pico(0x07D3_7EB6, None));
+        assert!(cfg.set_nickname(0x07D3_7EB6, Some("N64".to_string())));
+        assert!(cfg.set_nickname(0x07D3_7EB6, None));
+        assert_eq!(cfg.nickname_for(0x07D3_7EB6), None);
+        assert!(!cfg.set_nickname(0xDEAD_BEEF, Some("nope".to_string())));
     }
 
     #[test]
@@ -330,11 +293,11 @@ mod tests {
             setup_complete: true,
             ..Config::default()
         };
-        cfg.remember_pico(pico(0x07D37EB6, Some("192.168.50.226")));
-        cfg.remember_pico(pico(0x523861E6, None));
+        cfg.remember_pico(pico(0x07D3_7EB6, Some("192.168.50.226")));
+        cfg.remember_pico(pico(0x5238_61E6, None));
         cfg.routes.push(RouteConfig {
             source_slot: 2,
-            pico_uid: 0x523861E6,
+            pico_uid: 0x5238_61E6,
             label: Some("Pico W".to_string()),
         });
         cfg.lab_power = Some(LabPowerConfig {
@@ -357,17 +320,17 @@ mod tests {
     #[test]
     fn forget_pico_removes_routes_and_last_pico() {
         let mut cfg = Config::default();
-        cfg.remember_pico(pico(0x07D37EB6, None));
+        cfg.remember_pico(pico(0x07D3_7EB6, None));
         cfg.routes.push(RouteConfig {
             source_slot: 0,
-            pico_uid: 0x07D37EB6,
+            pico_uid: 0x07D3_7EB6,
             label: None,
         });
 
-        cfg.forget_pico(0x07D37EB6);
+        cfg.forget_pico(0x07D3_7EB6);
 
-        assert!(cfg.picos.is_empty());
-        assert!(cfg.routes.is_empty());
+        assert_eq!(cfg.picos, <[crate::config::PicoIdentity; 0]>::default());
+        assert_eq!(cfg.routes, <[crate::config::RouteConfig; 0]>::default());
         assert!(cfg.last_pico.is_none());
     }
 }

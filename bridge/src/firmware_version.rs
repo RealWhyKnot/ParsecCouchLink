@@ -1,14 +1,11 @@
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FirmwareVersion {
+pub(crate) enum FirmwareVersion {
     Release {
         year: u16,
         month: u8,
         day: u8,
-        // None when the source can't carry the build number -- notably the
-        // Wi-Fi discovery ack, which only encodes year/month/day. Rendered
-        // as ".x" so a same-day rebuild is never mistaken for build 0.
         revision: Option<u8>,
         suffix: Option<[u8; 4]>,
     },
@@ -20,14 +17,12 @@ pub enum FirmwareVersion {
 }
 
 impl FirmwareVersion {
-    pub fn from_triplet(major: u8, minor: u8, patch: u8) -> Self {
+    pub(crate) fn from_triplet(major: u8, minor: u8, patch: u8) -> Self {
         if (20..=99).contains(&major) && (1..=12).contains(&minor) && (1..=31).contains(&patch) {
             Self::Release {
-                year: 2000 + major as u16,
+                year: 2000 + u16::from(major),
                 month: minor,
                 day: patch,
-                // The triplet (discovery ack) carries only the date; the
-                // build number is unknown over this transport.
                 revision: None,
                 suffix: None,
             }
@@ -40,7 +35,7 @@ impl FirmwareVersion {
         }
     }
 
-    pub fn from_hello_payload(payload: &[u8]) -> Self {
+    pub(crate) fn from_hello_payload(payload: &[u8]) -> Self {
         if payload.len() >= 11 {
             let year = u16::from_le_bytes([payload[6], payload[7]]);
             let month = payload[8];
@@ -75,7 +70,7 @@ impl FirmwareVersion {
         }
         let mut suffix = [0u8; 4];
         suffix.copy_from_slice(&payload[12..16]);
-        if suffix.iter().all(|b| b.is_ascii_alphanumeric()) {
+        if suffix.iter().all(u8::is_ascii_alphanumeric) {
             Some(suffix)
         } else {
             None
@@ -97,11 +92,12 @@ impl fmt::Display for FirmwareVersion {
                     Some(revision) => {
                         write!(f, "{year}.{month}.{day}.{revision}")?;
                         if let Some(suffix) = suffix {
-                            let suffix = std::str::from_utf8(&suffix).map_err(|_| fmt::Error)?;
+                            let Ok(suffix) = std::str::from_utf8(&suffix) else {
+                                return Err(fmt::Error);
+                            };
                             write!(f, "-{suffix}")?;
                         }
                     }
-                    // Build unknown (discovery ack): date only, ".x" build.
                     None => write!(f, "{year}.{month}.{day}.x")?,
                 }
                 Ok(())
@@ -153,14 +149,10 @@ mod tests {
 
     #[test]
     fn from_triplet_gates_release_vs_legacy() {
-        // An in-range date triplet is a release whose build is unknown over
-        // the discovery transport, so it renders as YYYY.M.D.x -- never .0,
-        // which would falsely read as "build 0" against a same-day rebuild.
         assert_eq!(
             FirmwareVersion::from_triplet(26, 5, 30).to_string(),
             "2026.5.30.x"
         );
-        // Out-of-range fields stay a legacy triplet (year < 2020, bad month, bad day).
         assert_eq!(
             FirmwareVersion::from_triplet(19, 5, 30).to_string(),
             "19.5.30"
@@ -195,7 +187,6 @@ mod tests {
         };
         assert_eq!(no_suffix.to_string(), "2026.5.30.0");
 
-        // Build unknown (e.g. from the Wi-Fi discovery ack) renders ".x".
         let unknown_build = FirmwareVersion::Release {
             year: 2026,
             month: 5,

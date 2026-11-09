@@ -1,10 +1,3 @@
-//! `couchlink doctor` -- run every diagnostic check and report
-//! PASS/WARN/FAIL/SKIP with a one-line hint per failure. Exit codes:
-//! 0 clean, 1 warnings, 2 hard fail, 3 setup not complete.
-//!
-//! Each check is also exported so `cmd_test::run` can invoke it
-//! individually.
-
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -13,26 +6,26 @@ use console::style;
 use crate::{cdc, config, discovery, support};
 
 #[derive(Debug)]
-pub enum CheckResult {
+pub(crate) enum CheckResult {
     Pass(String),
     Warn(String),
     Skip(String),
     Fail(String, String),
 }
 
-pub type BoxedCheck = std::pin::Pin<Box<dyn std::future::Future<Output = CheckResult>>>;
+pub(crate) type BoxedCheck = std::pin::Pin<Box<dyn std::future::Future<Output = CheckResult>>>;
 
 #[derive(Debug, Default)]
-pub struct DoctorSummary {
+pub(crate) struct DoctorSummary {
     pub warns: usize,
     pub fails: usize,
     pub setup_complete: bool,
 }
 
-pub async fn run() -> Result<()> {
+pub(crate) async fn run() -> Result<()> {
     let summary = run_checks().await?;
     if !summary.setup_complete && summary.fails == 0 {
-        println!("(note: config marks setup as incomplete; run `couchlink setup`)");
+        outln!("(note: config marks setup as incomplete; run `couchlink setup`)");
         std::process::exit(3);
     }
     if summary.fails > 0 {
@@ -48,8 +41,8 @@ pub async fn run() -> Result<()> {
 
 async fn run_checks() -> Result<DoctorSummary> {
     tracing::info!("doctor: starting, bridge v{}", crate::VERSION);
-    println!("couchlink doctor v{}", crate::VERSION);
-    println!();
+    outln!("couchlink doctor v{}", crate::VERSION);
+    outln!();
 
     let mut passes = 0;
     let mut warns = 0;
@@ -67,42 +60,45 @@ async fn run_checks() -> Result<DoctorSummary> {
     ];
 
     for (name, fut) in checks {
-        print!("  {:<14} ", name);
+        out!("  {:<14} ", name);
         let t0 = Instant::now();
         let res = fut.await;
         let ms = t0.elapsed().as_millis();
         match &res {
             CheckResult::Pass(m) => {
-                println!("{}  ({:>5} ms)  {}", style("PASS").green(), ms, m);
+                outln!("{}  ({:>5} ms)  {}", style("PASS").green(), ms, m);
                 tracing::debug!("doctor: {} -> PASS ({}ms)", name, ms);
                 passes += 1;
             }
             CheckResult::Warn(m) => {
-                println!("{}  ({:>5} ms)  {}", style("WARN").yellow(), ms, m);
+                outln!("{}  ({:>5} ms)  {}", style("WARN").yellow(), ms, m);
                 tracing::debug!("doctor: {} -> WARN ({}ms)", name, ms);
                 warns += 1;
             }
             CheckResult::Skip(m) => {
-                println!("{}  ({:>5} ms)  {}", style("SKIP").dim(), ms, m);
+                outln!("{}  ({:>5} ms)  {}", style("SKIP").dim(), ms, m);
                 tracing::debug!("doctor: {} -> SKIP ({}ms)", name, ms);
                 skips += 1;
             }
             CheckResult::Fail(m, hint) => {
-                println!("{}  ({:>5} ms)  {}", style("FAIL").red(), ms, m);
-                println!("                hint: {}", hint);
+                outln!("{}  ({:>5} ms)  {}", style("FAIL").red(), ms, m);
+                outln!("                hint: {}", hint);
                 tracing::debug!("doctor: {} -> FAIL ({}ms)", name, ms);
                 fails += 1;
             }
         }
     }
 
-    println!();
-    println!(
+    outln!();
+    outln!(
         "summary: {} pass, {} warn, {} fail, {} skip",
-        passes, warns, fails, skips,
+        passes,
+        warns,
+        fails,
+        skips,
     );
 
-    let setup_complete = config::load().map(|c| c.setup_complete).unwrap_or(false);
+    let setup_complete = config::load().is_ok_and(|c| c.setup_complete);
     Ok(DoctorSummary {
         warns,
         fails,
@@ -110,7 +106,7 @@ async fn run_checks() -> Result<DoctorSummary> {
     })
 }
 
-pub async fn check_paths() -> CheckResult {
+pub(crate) async fn check_paths() -> CheckResult {
     let cfg_dir = match config::config_dir() {
         Ok(p) => p,
         Err(e) => {
@@ -134,16 +130,17 @@ pub async fn check_paths() -> CheckResult {
     ))
 }
 
-pub async fn check_xinput() -> CheckResult {
+pub(crate) async fn check_xinput() -> CheckResult {
     #[cfg(windows)]
     {
         use windows::Win32::UI::Input::XboxController::{
-            XInputGetState, XINPUT_STATE, XUSER_MAX_COUNT,
+            XINPUT_STATE, XInputGetState, XUSER_MAX_COUNT,
         };
         let mut found = Vec::new();
         for s in 0..XUSER_MAX_COUNT {
             let mut state = XINPUT_STATE::default();
-            let r = unsafe { XInputGetState(s, &mut state) };
+            // SAFETY: `state` is a live XINPUT_STATE that the call fills in.
+            let r = unsafe { XInputGetState(s, &raw mut state) };
             if r == 0 {
                 found.push(s);
             }
@@ -156,7 +153,7 @@ pub async fn check_xinput() -> CheckResult {
                     .into(),
             );
         }
-        CheckResult::Pass(format!("XInput slots connected: {:?}", found))
+        CheckResult::Pass(format!("XInput slots connected: {found:?}"))
     }
     #[cfg(not(windows))]
     {
@@ -164,7 +161,7 @@ pub async fn check_xinput() -> CheckResult {
     }
 }
 
-pub async fn check_startup_shortcut() -> CheckResult {
+pub(crate) async fn check_startup_shortcut() -> CheckResult {
     #[cfg(windows)]
     {
         match crate::known_folders::shortcut_path_for("Parsec CouchLink") {
@@ -185,7 +182,7 @@ pub async fn check_startup_shortcut() -> CheckResult {
     }
 }
 
-pub async fn check_firewall() -> CheckResult {
+pub(crate) async fn check_firewall() -> CheckResult {
     #[cfg(windows)]
     {
         match tokio::process::Command::new("netsh")
@@ -221,7 +218,7 @@ pub async fn check_firewall() -> CheckResult {
     }
 }
 
-pub async fn check_24ghz_warning() -> CheckResult {
+pub(crate) async fn check_24ghz_warning() -> CheckResult {
     CheckResult::Warn(
         "Pico 2 W is 2.4 GHz only. If your home Wi-Fi runs 5 GHz exclusively, \
          the Pico cannot join. Enable a 2.4 GHz SSID on the router and use \
@@ -230,19 +227,11 @@ pub async fn check_24ghz_warning() -> CheckResult {
     )
 }
 
-pub async fn check_cdc() -> CheckResult {
-    // Three-way classify so a stuck-at-stage-4 bundle says exactly
-    // which branch fired:
-    //   - no port  -> Skip (this is normal post-setup)
-    //   - port found but HELLO bombs -> Fail with the specific reason
-    //   - port found and HELLO succeeds -> Pass with firmware details
-    let port = match cdc::find_setup_port() {
-        Ok(p) => p,
-        Err(_) => {
-            return CheckResult::Skip(
-                "no Pico in setup mode plugged in (this is normal once setup is finished)".into(),
-            );
-        }
+pub(crate) async fn check_cdc() -> CheckResult {
+    let Ok(port) = cdc::find_setup_port() else {
+        return CheckResult::Skip(
+            "no Pico in setup mode plugged in (this is normal once setup is finished)".into(),
+        );
     };
     let probe = tokio::task::spawn_blocking(move || -> Result<cdc::HelloAck> {
         let mut p = cdc::PicoSetup::open_named(&port)?;
@@ -276,7 +265,7 @@ pub async fn check_cdc() -> CheckResult {
     }
 }
 
-pub async fn check_discover() -> CheckResult {
+pub(crate) async fn check_discover() -> CheckResult {
     let socket = match crate::net::bind_udp("0.0.0.0:0").await {
         Ok(s) => s,
         Err(e) => {
@@ -344,7 +333,7 @@ mod tests {
                     fw_patch: 16,
                     board_type: protocol::BOARD_PICO_2_W,
                     uptime_seconds: 42,
-                    unique_id_short: 0x07D37EB6,
+                    unique_id_short: 0x07D3_7EB6,
                     full_version: None,
                 },
                 persona: Persona::Ps4,
@@ -359,7 +348,7 @@ mod tests {
                     fw_patch: 16,
                     board_type: protocol::BOARD_PICO_W_RP2040,
                     uptime_seconds: 41,
-                    unique_id_short: 0x523861E6,
+                    unique_id_short: 0x5238_61E6,
                     full_version: None,
                 },
                 persona: Persona::Ps4,

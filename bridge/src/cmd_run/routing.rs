@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 
 use crate::{config, protocol, xinput};
 
 use super::{PicoTarget, RunOptions, StreamRoute};
-pub fn identity_from_target(pico: &PicoTarget) -> config::PicoIdentity {
+pub(crate) fn identity_from_target(pico: &PicoTarget) -> config::PicoIdentity {
     config::PicoIdentity {
         unique_id_short: pico.info.unique_id_short,
         board_type: pico.info.board_type,
@@ -19,7 +19,7 @@ pub fn identity_from_target(pico: &PicoTarget) -> config::PicoIdentity {
     }
 }
 
-pub fn auto_routes(
+pub(crate) fn auto_routes(
     picos: Vec<PicoTarget>,
     preferred_slots: Option<Vec<u32>>,
 ) -> Result<Vec<StreamRoute>> {
@@ -32,7 +32,7 @@ pub fn auto_routes(
         .collect();
     let mut slots = preferred_slots.unwrap_or_else(|| {
         if connected.is_empty() {
-            (0..picos.len().min(4)).map(|i| i as u32).collect()
+            (0u32..4).take(picos.len()).collect()
         } else {
             connected
         }
@@ -56,7 +56,10 @@ pub fn auto_routes(
         .collect())
 }
 
-pub fn parse_route_specs(specs: &[String], picos: &[PicoTarget]) -> Result<Vec<StreamRoute>> {
+pub(crate) fn parse_route_specs(
+    specs: &[String],
+    picos: &[PicoTarget],
+) -> Result<Vec<StreamRoute>> {
     let mut routes = Vec::new();
     for spec in specs {
         let (source, target) = spec
@@ -73,7 +76,7 @@ pub fn parse_route_specs(specs: &[String], picos: &[PicoTarget]) -> Result<Vec<S
     Ok(routes)
 }
 
-pub fn parse_user_slot(input: &str) -> Result<u32> {
+pub(super) fn parse_user_slot(input: &str) -> Result<u32> {
     let s = input
         .trim()
         .trim_start_matches(['p', 'P'])
@@ -87,7 +90,7 @@ pub fn parse_user_slot(input: &str) -> Result<u32> {
     Ok(user_slot - 1)
 }
 
-pub fn match_pico_selector(selector: &str, picos: &[PicoTarget]) -> Result<PicoTarget> {
+pub(crate) fn match_pico_selector(selector: &str, picos: &[PicoTarget]) -> Result<PicoTarget> {
     let selector = selector.trim();
     if selector.is_empty() {
         bail!("empty Pico selector");
@@ -95,21 +98,21 @@ pub fn match_pico_selector(selector: &str, picos: &[PicoTarget]) -> Result<PicoT
 
     if let Some(ip) = parse_ip_selector(selector) {
         let matches: Vec<_> = picos.iter().filter(|p| p.peer.ip() == ip).collect();
-        return single_match(selector, matches);
+        return single_match(selector, &matches);
     }
 
     let uid_text = selector
         .strip_prefix("0x")
         .or_else(|| selector.strip_prefix("0X"))
         .unwrap_or(selector);
-    if uid_text.chars().all(|c| c.is_ascii_hexdigit()) {
-        if let Ok(uid) = u32::from_str_radix(uid_text, 16) {
-            let matches: Vec<_> = picos
-                .iter()
-                .filter(|p| p.info.unique_id_short == uid)
-                .collect();
-            return single_match(selector, matches);
-        }
+    if uid_text.chars().all(|c| c.is_ascii_hexdigit())
+        && let Ok(uid) = u32::from_str_radix(uid_text, 16)
+    {
+        let matches: Vec<_> = picos
+            .iter()
+            .filter(|p| p.info.unique_id_short == uid)
+            .collect();
+        return single_match(selector, &matches);
     }
 
     let wanted_board = match selector.to_ascii_lowercase().as_str() {
@@ -122,16 +125,15 @@ pub fn match_pico_selector(selector: &str, picos: &[PicoTarget]) -> Result<PicoT
             .iter()
             .filter(|p| p.info.board_type == board)
             .collect();
-        return single_match(selector, matches);
+        return single_match(selector, &matches);
     }
 
     bail!(
-        "Pico `{}` was not found. Use a UID like 07D37EB6, an IP address, or rp2350/rp2040.",
-        selector
+        "Pico `{selector}` was not found. Use a UID like 07D37EB6, an IP address, or rp2350/rp2040."
     );
 }
 
-pub fn parse_ip_selector(input: &str) -> Option<IpAddr> {
+pub(crate) fn parse_ip_selector(input: &str) -> Option<IpAddr> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;
@@ -170,8 +172,8 @@ fn route_target(spec: &str) -> Option<&str> {
         .map(|(_, target)| target.trim())
 }
 
-fn single_match(selector: &str, matches: Vec<&PicoTarget>) -> Result<PicoTarget> {
-    match matches.as_slice() {
+fn single_match(selector: &str, matches: &[&PicoTarget]) -> Result<PicoTarget> {
+    match matches {
         [one] => Ok((*one).clone()),
         [] => bail!("Pico `{selector}` was not found in the current discovery results"),
         _ => bail!("Pico selector `{selector}` matched more than one board; use the UID instead"),

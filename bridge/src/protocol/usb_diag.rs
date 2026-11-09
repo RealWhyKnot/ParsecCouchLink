@@ -1,13 +1,15 @@
-use super::wire::{put_u16_le, put_u32_le, read_u16_le, read_u32_le};
+#[cfg(test)]
+use super::wire::{put_u16_le, put_u32_le};
+use super::wire::{read_u16_le, read_u32_le};
 use super::{
-    UsbConfigurationState, UsbDiagDecodeError, MAGIC, TYPE_USB_DIAG, USB_DIAG_ACTIVITY_OUT,
-    USB_DIAG_ACTIVITY_PARSEC, USB_DIAG_ACTIVITY_PEER, USB_DIAG_ACTIVITY_SENT,
-    USB_DIAG_FLAG_MOUNTED, USB_DIAG_FLAG_SUSPENDED, USB_DIAG_V1_VERSION, USB_DIAG_V1_WIRE_SIZE,
-    USB_DIAG_VERSION, USB_DIAG_WIRE_SIZE,
+    MAGIC, TYPE_USB_DIAG, USB_DIAG_ACTIVITY_OUT, USB_DIAG_ACTIVITY_PARSEC, USB_DIAG_ACTIVITY_PEER,
+    USB_DIAG_ACTIVITY_SENT, USB_DIAG_FLAG_MOUNTED, USB_DIAG_FLAG_SUSPENDED, USB_DIAG_V1_VERSION,
+    USB_DIAG_V1_WIRE_SIZE, USB_DIAG_VERSION, USB_DIAG_WIRE_SIZE, UsbConfigurationState,
+    UsbDiagDecodeError,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UsbDiag {
+pub(crate) struct UsbDiag {
     pub seq: u8,
     pub flags: u8,
     pub version: u8,
@@ -43,37 +45,37 @@ pub struct UsbDiag {
 }
 
 impl UsbDiag {
-    pub fn mounted(&self) -> bool {
+    pub(crate) fn mounted(&self) -> bool {
         self.usb_flags & USB_DIAG_FLAG_MOUNTED != 0
     }
 
-    pub fn suspended(&self) -> bool {
+    pub(crate) fn suspended(&self) -> bool {
         self.usb_flags & USB_DIAG_FLAG_SUSPENDED != 0
     }
 
-    pub fn xinput_report_sent(&self) -> bool {
+    pub(crate) fn xinput_report_sent(&self) -> bool {
         self.activity_flags & USB_DIAG_ACTIVITY_SENT != 0
     }
 
-    pub fn xinput_out_seen(&self) -> bool {
+    pub(crate) fn xinput_out_seen(&self) -> bool {
         self.activity_flags & USB_DIAG_ACTIVITY_OUT != 0
     }
 
-    pub fn bridge_peer_latched(&self) -> bool {
+    pub(crate) fn bridge_peer_latched(&self) -> bool {
         self.activity_flags & USB_DIAG_ACTIVITY_PEER != 0
     }
 
-    pub fn parsec_connected(&self) -> bool {
+    pub(crate) fn parsec_connected(&self) -> bool {
         self.activity_flags & USB_DIAG_ACTIVITY_PARSEC != 0
     }
 
-    pub fn in_blocked_total(&self) -> u32 {
+    pub(crate) fn in_blocked_total(&self) -> u32 {
         self.xinput_in_blocked_not_mounted_count
             .saturating_add(self.xinput_in_blocked_not_ready_count)
             .saturating_add(self.xinput_in_blocked_short_write_count)
     }
 
-    pub fn configuration_state(&self) -> UsbConfigurationState {
+    pub(crate) fn configuration_state(&self) -> UsbConfigurationState {
         if self.mounted() {
             return UsbConfigurationState::Configured;
         }
@@ -93,7 +95,7 @@ impl UsbDiag {
         }
     }
 
-    pub fn age_ms(&self, timestamp_ms: u32) -> Option<u32> {
+    pub(crate) fn age_ms(&self, timestamp_ms: u32) -> Option<u32> {
         if timestamp_ms == 0 {
             None
         } else {
@@ -101,7 +103,8 @@ impl UsbDiag {
         }
     }
 
-    pub fn encode(&self) -> [u8; USB_DIAG_WIRE_SIZE] {
+    #[cfg(test)]
+    pub(crate) fn encode(&self) -> [u8; USB_DIAG_WIRE_SIZE] {
         let mut buf = [0u8; USB_DIAG_WIRE_SIZE];
         buf[0] = MAGIC;
         buf[1] = TYPE_USB_DIAG;
@@ -139,12 +142,11 @@ impl UsbDiag {
         put_u16_le(&mut buf, 98, self.last_in_blocked_got);
         let crc =
             crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..USB_DIAG_WIRE_SIZE - 2]);
-        buf[USB_DIAG_WIRE_SIZE - 2] = (crc & 0xFF) as u8;
-        buf[USB_DIAG_WIRE_SIZE - 1] = (crc >> 8) as u8;
+        buf[USB_DIAG_WIRE_SIZE - 2..USB_DIAG_WIRE_SIZE].copy_from_slice(&crc.to_le_bytes());
         buf
     }
 
-    pub fn decode(buf: &[u8]) -> Result<Self, UsbDiagDecodeError> {
+    pub(crate) fn decode(buf: &[u8]) -> Result<Self, UsbDiagDecodeError> {
         if buf.len() != USB_DIAG_WIRE_SIZE && buf.len() != USB_DIAG_V1_WIRE_SIZE {
             return Err(UsbDiagDecodeError::WrongSize {
                 got: buf.len(),
@@ -158,8 +160,8 @@ impl UsbDiag {
             return Err(UsbDiagDecodeError::WrongType(buf[1]));
         }
         let crc_offset = buf.len() - 2;
-        let crc_lo = buf[crc_offset] as u16;
-        let crc_hi = buf[crc_offset + 1] as u16;
+        let crc_lo = u16::from(buf[crc_offset]);
+        let crc_hi = u16::from(buf[crc_offset + 1]);
         let crc_got = crc_lo | (crc_hi << 8);
         let crc_want = crc::Crc::<u16>::new(&crc::CRC_16_IBM_3740).checksum(&buf[..crc_offset]);
         if crc_got != crc_want {

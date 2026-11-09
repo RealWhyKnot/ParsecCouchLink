@@ -11,15 +11,10 @@
 
 #define XINPUT_IDLE_REPORT_INTERVAL_MS 8u
 
-// 20-byte XInput IN report layout matches the Microsoft wired Xbox 360
-// pad exactly. The bitmask layout of XINPUT_GAMEPAD.wButtons is also
-// directly compatible with the `buttons` field in our shared state, so
-// no remapping happens here -- pure byte copy from g_gamepad_state into
-// the 20-byte payload.
 typedef struct __attribute__((packed)) {
-    uint8_t rid;       // 0x00
-    uint8_t rsize;     // 0x14 (20)
-    uint16_t wButtons; // 16-bit bitmask
+    uint8_t rid;
+    uint8_t rsize;
+    uint16_t wButtons;
     uint8_t bLeftTrigger;
     uint8_t bRightTrigger;
     int16_t sThumbLX;

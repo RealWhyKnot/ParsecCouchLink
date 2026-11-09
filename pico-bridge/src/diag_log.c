@@ -7,14 +7,10 @@
 #include "pico/stdlib.h"
 #include "pico/sync.h"
 
-// 16 KiB ring buffer. Large enough to retain setup, Wi-Fi retry, USB
-// enumeration, and bundle-triggered diagnostics in the same snapshot.
-// Host-side bundles also carry an explicit lost-bytes counter so any
-// remaining truncation is visible.
 static uint8_t ring[DIAG_LOG_RING_SIZE];
-static size_t head;   // next write position
-static size_t filled; // number of valid bytes in the ring
-static uint32_t lost; // bytes overwritten because the ring was full
+static size_t head;
+static size_t filled;
+static uint32_t lost;
 static critical_section_t cs;
 
 void diag_log_init(void) {
@@ -28,10 +24,6 @@ static void write_bytes(const uint8_t *data, size_t n) {
     critical_section_enter_blocking(&cs);
     for (size_t i = 0; i < n; i++) {
         if (filled == DIAG_LOG_RING_SIZE) {
-            // Overwriting the oldest byte. Track it so a host pulling
-            // a snapshot can tell the user that earlier lines were
-            // dropped under retry / burst load instead of silently
-            // showing only the tail.
             lost++;
         }
         ring[head] = data[i];
@@ -46,9 +38,6 @@ static void write_bytes(const uint8_t *data, size_t n) {
 void diag_log_msg(const char *msg) {
     if (!msg)
         return;
-    // Build the full timestamped line into a single stack buffer before
-    // entering the ring's critical section, so an interrupting context
-    // that also logs can't interleave its bytes into the middle of ours.
     char line[224];
     uint32_t ms = to_ms_since_boot(get_absolute_time());
     int n = snprintf(line, sizeof(line), "[%10u] %s\n", ms, msg);
@@ -86,7 +75,6 @@ size_t diag_log_snapshot(uint8_t *out, size_t cap, uint32_t *lost_out) {
         return 0;
     }
     critical_section_enter_blocking(&cs);
-    // Walk from the oldest valid byte to head, copying up to `cap`.
     size_t avail = filled;
     size_t skip = (avail > cap) ? (avail - cap) : 0;
     size_t to_write = avail - skip;
@@ -95,17 +83,12 @@ size_t diag_log_snapshot(uint8_t *out, size_t cap, uint32_t *lost_out) {
         out[i] = ring[(start + i) % DIAG_LOG_RING_SIZE];
     }
     if (lost_out) {
-        // Count bytes we trimmed for `cap` as additional loss so the
-        // host always sees the total dropped relative to what it
-        // received in this snapshot.
         *lost_out = lost + (uint32_t)skip;
     }
     critical_section_exit(&cs);
     return to_write;
 }
 
-// Shared implementation: walk backward from `head` to find the last
-// committed line. Caller decides whether to wrap in a critical section.
 static size_t copy_last_line_inner(char *out, size_t cap) {
     size_t avail = filled;
     if (avail == 0) {

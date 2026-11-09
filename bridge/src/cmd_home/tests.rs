@@ -1,5 +1,12 @@
 use super::*;
+use crate::cmd_flash;
+use crate::cmd_home::inventory::BootselPico;
+use crate::cmd_home::inventory::SetupUsbPico;
+use crate::cmd_home::streaming::preferred_source_slot;
+use crate::cmd_run;
 use crate::protocol;
+use crate::xinput;
+use std::path::PathBuf;
 
 fn pico(uid: u32, ip: &str, board: u8) -> cmd_run::PicoTarget {
     cmd_run::PicoTarget {
@@ -26,7 +33,7 @@ fn saved_pico(uid: u32, ip: Option<&str>) -> config::PicoIdentity {
         fw_major: 26,
         fw_minor: 5,
         fw_patch: 30,
-        last_ip: ip.map(|s| s.to_string()),
+        last_ip: ip.map(std::string::ToString::to_string),
         device_name: None,
         nickname: None,
     }
@@ -50,11 +57,15 @@ fn setup_usb(port: &str, uid: Option<u32>, creds_present: bool) -> SetupUsbPico 
 #[test]
 fn basic_cards_prefer_live_wifi_for_saved_pico() {
     let cfg = config::Config {
-        picos: vec![saved_pico(0x07D37EB6, Some("192.168.50.1"))],
+        picos: vec![saved_pico(0x07D3_7EB6, Some("192.168.50.1"))],
         ..config::Config::default()
     };
     let inventory = PicoInventory {
-        wifi: vec![pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W)],
+        wifi: vec![pico(
+            0x07D3_7EB6,
+            "192.168.50.226",
+            protocol::BOARD_PICO_2_W,
+        )],
         ..PicoInventory::default()
     };
 
@@ -65,12 +76,14 @@ fn basic_cards_prefer_live_wifi_for_saved_pico() {
     assert!(cards[0].actions.iter().any(|action| matches!(
         action,
         PicoAction::StartStreaming { target }
-            if target.info.unique_id_short == 0x07D37EB6
+            if target.info.unique_id_short == 0x07D3_7EB6
     )));
-    assert!(!cards[0]
-        .actions
-        .iter()
-        .any(|action| matches!(action, PicoAction::SaveIdentity { .. })));
+    assert!(
+        !cards[0]
+            .actions
+            .iter()
+            .any(|action| matches!(action, PicoAction::SaveIdentity { .. }))
+    );
 }
 
 #[test]
@@ -78,8 +91,8 @@ fn basic_cards_expose_setup_usb_and_bootsel_targets() {
     let cfg = config::Config::default();
     let inventory = PicoInventory {
         usb: vec![
-            setup_usb("COM4", Some(0x07D37EB6), true),
-            setup_usb("COM5", Some(0x523861E6), false),
+            setup_usb("COM4", Some(0x07D3_7EB6), true),
+            setup_usb("COM5", Some(0x5238_61E6), false),
         ],
         bootsel: vec![BootselPico {
             mount: PathBuf::from("I:\\"),
@@ -94,10 +107,11 @@ fn basic_cards_expose_setup_usb_and_bootsel_targets() {
         .iter()
         .find(|card| card.status.contains("COM4"))
         .expect("COM4 card");
-    assert!(com4
-        .actions
-        .iter()
-        .any(|action| { matches!(action, PicoAction::RecoverToWifi { port } if port == "COM4") }));
+    assert!(
+        com4.actions.iter().any(|action| {
+            matches!(action, PicoAction::RecoverToWifi { port } if port == "COM4")
+        })
+    );
     assert!(com4.actions.iter().any(|action| {
         matches!(action, PicoAction::UpdateFirmwareFromSetupUsb { port } if port == "COM4")
     }));
@@ -106,14 +120,17 @@ fn basic_cards_expose_setup_usb_and_bootsel_targets() {
         .iter()
         .find(|card| card.status.contains("COM5"))
         .expect("COM5 card");
-    assert!(!com5
-        .actions
-        .iter()
-        .any(|action| matches!(action, PicoAction::RecoverToWifi { .. })));
-    assert!(com5
-        .actions
-        .iter()
-        .any(|action| { matches!(action, PicoAction::ConfigureWifi { port } if port == "COM5") }));
+    assert!(
+        !com5
+            .actions
+            .iter()
+            .any(|action| matches!(action, PicoAction::RecoverToWifi { .. }))
+    );
+    assert!(
+        com5.actions.iter().any(|action| {
+            matches!(action, PicoAction::ConfigureWifi { port } if port == "COM5")
+        })
+    );
 
     assert!(cards.iter().any(|card| {
         card.actions.iter().any(|action| {
@@ -132,8 +149,8 @@ fn basic_cards_keep_multiple_wifi_picos_targeted() {
     let cfg = config::Config::default();
     let inventory = PicoInventory {
         wifi: vec![
-            pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
-            pico(0x523861E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
+            pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W),
+            pico(0x5238_61E6, "192.168.50.4", protocol::BOARD_PICO_W_RP2040),
         ],
         ..PicoInventory::default()
     };
@@ -148,7 +165,7 @@ fn basic_cards_keep_multiple_wifi_picos_targeted() {
         })
         .collect();
 
-    assert_eq!(streaming_targets, vec![0x07D37EB6, 0x523861E6]);
+    assert_eq!(streaming_targets, vec![0x07D3_7EB6, 0x5238_61E6]);
     assert!(cards.iter().all(|card| {
         card.actions.iter().all(|action| {
             !matches!(
@@ -161,13 +178,13 @@ fn basic_cards_keep_multiple_wifi_picos_targeted() {
 
 #[test]
 fn wifi_card_shows_nickname_persona_and_identify_actions() {
-    let mut saved = saved_pico(0x07D37EB6, Some("192.168.50.1"));
+    let mut saved = saved_pico(0x07D3_7EB6, Some("192.168.50.1"));
     saved.nickname = Some("Living room DC".to_string());
     let cfg = config::Config {
         picos: vec![saved],
         ..config::Config::default()
     };
-    let mut target = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    let mut target = pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
     target.persona = protocol::Persona::Maple;
     let inventory = PicoInventory {
         wifi: vec![target],
@@ -184,19 +201,19 @@ fn wifi_card_shows_nickname_persona_and_identify_actions() {
     assert!(cards[0].actions.iter().any(|action| matches!(
         action,
         PicoAction::BlinkLed { target }
-            if target.info.unique_id_short == 0x07D37EB6
+            if target.info.unique_id_short == 0x07D3_7EB6
     )));
     assert!(cards[0].actions.iter().any(|action| matches!(
         action,
         PicoAction::Rename { identity, .. }
-            if identity.unique_id_short == 0x07D37EB6
+            if identity.unique_id_short == 0x07D3_7EB6
     )));
 }
 
 #[test]
 fn unsaved_wifi_card_suggests_console_nickname_on_save() {
     let cfg = config::Config::default();
-    let mut target = pico(0x07D37EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
+    let mut target = pico(0x07D3_7EB6, "192.168.50.226", protocol::BOARD_PICO_2_W);
     target.persona = protocol::Persona::Ps3;
     let inventory = PicoInventory {
         wifi: vec![target],
@@ -211,15 +228,17 @@ fn unsaved_wifi_card_suggests_console_nickname_on_save() {
         PicoAction::SaveIdentity { nickname_suggestion, .. }
             if nickname_suggestion.as_deref() == Some("PS3")
     )));
-    assert!(!cards[0]
-        .actions
-        .iter()
-        .any(|action| matches!(action, PicoAction::Rename { .. })));
+    assert!(
+        !cards[0]
+            .actions
+            .iter()
+            .any(|action| matches!(action, PicoAction::Rename { .. }))
+    );
 }
 
 #[test]
 fn missing_saved_card_title_uses_nickname() {
-    let mut saved = saved_pico(0x07D37EB6, None);
+    let mut saved = saved_pico(0x07D3_7EB6, None);
     saved.nickname = Some("N64".to_string());
     let cfg = config::Config {
         picos: vec![saved],
@@ -229,16 +248,18 @@ fn missing_saved_card_title_uses_nickname() {
     let cards = build_pico_cards(&cfg, &PicoInventory::default());
 
     assert_eq!(cards[0].title, "N64 - Pico 2 W 07D37EB6");
-    assert!(cards[0]
-        .actions
-        .iter()
-        .any(|action| matches!(action, PicoAction::Rename { .. })));
+    assert!(
+        cards[0]
+            .actions
+            .iter()
+            .any(|action| matches!(action, PicoAction::Rename { .. }))
+    );
 }
 
 #[test]
 fn missing_saved_pico_actions_are_targeted_to_saved_identity() {
     let cfg = config::Config {
-        picos: vec![saved_pico(0x07D37EB6, Some("192.168.50.226"))],
+        picos: vec![saved_pico(0x07D3_7EB6, Some("192.168.50.226"))],
         ..config::Config::default()
     };
 
@@ -248,19 +269,19 @@ fn missing_saved_pico_actions_are_targeted_to_saved_identity() {
     assert!(cards[0].actions.iter().any(|action| matches!(
         action,
         PicoAction::FindLastIp { identity, ip }
-            if identity.unique_id_short == 0x07D37EB6 && ip == "192.168.50.226"
+            if identity.unique_id_short == 0x07D3_7EB6 && ip == "192.168.50.226"
     )));
     assert!(cards[0].actions.iter().any(|action| matches!(
         action,
         PicoAction::RemoveSaved { identity }
-            if identity.unique_id_short == 0x07D37EB6
+            if identity.unique_id_short == 0x07D3_7EB6
     )));
 }
 
 #[test]
 fn seed_saved_picos_migrates_legacy_last_pico_once() {
     let mut cfg = config::Config {
-        last_pico: Some(saved_pico(0x07D37EB6, None)),
+        last_pico: Some(saved_pico(0x07D3_7EB6, None)),
         ..config::Config::default()
     };
 
@@ -315,8 +336,8 @@ fn xinput_slot(slot: u32) -> xinput::SlotSnapshot {
     xinput::SlotSnapshot {
         slot,
         state: protocol::GamepadState {
-            buttons: slot as u16,
-            left_trigger: slot as u8,
+            buttons: u16::try_from(slot).unwrap(),
+            left_trigger: u8::try_from(slot).unwrap(),
             right_trigger: 0,
             left_x: 0,
             left_y: 0,

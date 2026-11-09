@@ -1,29 +1,30 @@
 [package]
 name = "parsec-couchlink"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.99"
 description = "Windows host-side bridge between Parsec virtual gamepads and a Pico 2 W controller adapter."
 license = "GPL-3.0-or-later"
 repository = "https://github.com/RealWhyKnot/ParsecCouchLink"
+
+[lints]
+workspace = true
 
 [[bin]]
 name = "couchlink"
 path = "src/main.rs"
 
 [dependencies]
-# runtime engine
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 
-# CLI + interactive UX
 clap = { version = "4", features = ["derive"] }
 dialoguer = { version = "0.12", features = ["password"] }
 console = "0.16"
 indicatif = "0.18"
 
-# Cross-cutting / formats
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
@@ -37,17 +38,12 @@ sha2 = "0.11"
 getrandom = "0.4"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
-# Filesystem / OS paths
 directories = "6"
 
-# Support bundles
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
-# Setup-mode USB-CDC enumeration (blocking; only used in setup/configure-wifi)
 serialport = "4"
 
-# WinUSB vendor-control diag retrieval (works against the Pico's diag
-# interface regardless of CDC bulk endpoint state). Pure-Rust, no libusb.
 nusb = "0.2"
 
 [target.'cfg(windows)'.dependencies]
@@ -66,6 +62,45 @@ windows = { version = "0.62", features = [
     "Win32_Networking_WinSock",
     "Win32_Security_Cryptography",
 ] }
+
+[workspace]
+
+[workspace.lints.rust]
+unknown_lints = "deny"
+unreachable_pub = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+undocumented_unsafe_blocks = "deny"
+unnecessary_safety_comment = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+self_named_module_files = "deny"
+ref_option = "deny"
+needless_pass_by_value = "deny"
+fn_params_excessive_bools = "deny"
+clone_on_ref_ptr = "deny"
+redundant_clone = "deny"
+match_wildcard_for_single_variants = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+cast_lossless = "deny"
+cast_precision_loss = "deny"
+as_conversions = "deny"
+map_err_ignore = "deny"
+format_push_string = "deny"
+needless_collect = "deny"
+significant_drop_tightening = "deny"
+manual_assert_eq = "deny"
+assert_is_empty = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
 
 [profile.release]
 lto = "thin"

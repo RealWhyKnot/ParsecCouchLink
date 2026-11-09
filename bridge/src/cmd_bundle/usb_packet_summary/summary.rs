@@ -1,14 +1,14 @@
 use std::collections::BTreeSet;
 
 use super::{
+    UsbPacketBundleSummary, UsbPacketNamedSummary, UsbPacketSummary, UsbPacketSummarySource,
     decode::{
         decode_control_payload_fields, decode_hid_report_metadata, decode_setup_fields, hex_u8,
     },
     support::{
-        bump, fields, harvest_value, json_bool, json_string, json_u64, max_assign, merge_counts,
-        min_assign, parsed_u64, HARVEST_PREFIX,
+        HARVEST_PREFIX, bump, fields, harvest_value, json_bool, json_string, json_u64, max_assign,
+        merge_counts, min_assign, parsed_u64,
     },
-    UsbPacketBundleSummary, UsbPacketNamedSummary, UsbPacketSummary, UsbPacketSummarySource,
 };
 
 pub(in crate::cmd_bundle) fn summarize_text(text: &str) -> UsbPacketSummary {
@@ -365,6 +365,17 @@ impl UsbPacketSummary {
         self.hid_report_lines += other.hid_report_lines;
         merge_counts(&mut self.hid_report_types, &other.hid_report_types);
         merge_counts(&mut self.hid_report_ids, &other.hid_report_ids);
+        self.merge_sequence_and_sizes(other);
+        self.merge_stats_and_timing(other);
+        self.merge_harvest_maxima(other);
+
+        merge_counts(
+            &mut self.harvest_chunk_statuses,
+            &other.harvest_chunk_statuses,
+        );
+    }
+
+    fn merge_sequence_and_sizes(&mut self, other: &UsbPacketSummary) {
         if self.first_seq.is_none() {
             self.first_seq = other.first_seq;
         }
@@ -391,6 +402,9 @@ impl UsbPacketSummary {
             &mut self.max_suppressed_idle_reports,
             other.max_suppressed_idle_reports,
         );
+    }
+
+    fn merge_stats_and_timing(&mut self, other: &UsbPacketSummary) {
         if other.last_stats_total_packets.is_some() {
             self.last_stats_total_packets = other.last_stats_total_packets;
         }
@@ -430,6 +444,9 @@ impl UsbPacketSummary {
             other.max_inter_packet_gap_ms,
         );
         self.packet_time_regressions += other.packet_time_regressions;
+    }
+
+    fn merge_harvest_maxima(&mut self, other: &UsbPacketSummary) {
         max_assign(
             &mut self.max_harvest_duration_ms,
             other.max_harvest_duration_ms,
@@ -482,10 +499,6 @@ impl UsbPacketSummary {
         max_assign(
             &mut self.max_harvest_duplicate_lines,
             other.max_harvest_duplicate_lines,
-        );
-        merge_counts(
-            &mut self.harvest_chunk_statuses,
-            &other.harvest_chunk_statuses,
         );
     }
 }

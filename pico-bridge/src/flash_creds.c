@@ -9,23 +9,17 @@
 
 #include "diag_log.h"
 
-// Pico 2 W has 4 MB of QSPI flash; Pico W has 2 MB. Reserving the last
-// two 4 KB sectors works for both. Offsets here are flash-relative
-// (what flash_range_erase / flash_range_program expect); reads use
-// XIP_BASE + offset.
 #ifndef PICO_FLASH_SIZE_BYTES
 #error "PICO_FLASH_SIZE_BYTES not defined; check board headers"
 #endif
 
-#define SLOT_SIZE FLASH_SECTOR_SIZE // 4096
+#define SLOT_SIZE FLASH_SECTOR_SIZE
 #define SLOT_A_OFFSET (PICO_FLASH_SIZE_BYTES - 2 * SLOT_SIZE)
 #define SLOT_B_OFFSET (PICO_FLASH_SIZE_BYTES - 1 * SLOT_SIZE)
 
 _Static_assert(FLASH_CREDS_RECORD_SIZE <= FLASH_PAGE_SIZE,
                "credential record must fit in a single flash program page");
 
-// CRC-32 (zlib / Ethernet variant): poly reflected 0xEDB88320, init
-// 0xFFFFFFFF, final XOR 0xFFFFFFFF.
 static uint32_t crc32_zlib(const uint8_t *data, size_t n) {
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; i < n; i++) {
@@ -64,7 +58,6 @@ bool flash_creds_load(flash_creds_t *out) {
     bool vb = record_is_valid(b);
     const flash_creds_t *winner = NULL;
     if (va && vb) {
-        // Wrap-aware comparison: prefer the newer generation.
         winner = ((int32_t)(a->generation - b->generation) > 0) ? a : b;
     } else if (va) {
         winner = a;
@@ -99,10 +92,6 @@ static int program_slot(uint32_t offset, const flash_creds_t *rec) {
     memcpy(buf, rec, FLASH_CREDS_RECORD_SIZE);
 
     flash_op_args_t args = {.offset = offset, .data = buf};
-    // flash_safe_execute coordinates with core 1 (cyw43) when present and
-    // keeps interrupt-disabled windows scoped to the actual erase/program
-    // calls instead of one big block. 1 s lockout is far more than the
-    // ~30 ms a sector erase + page program takes on RP2350.
     int rc = flash_safe_execute(do_program_slot, &args, 1000);
     if (rc != PICO_OK) {
         diag_log_printf("flash_creds: flash_safe_execute (program) rc=%d", rc);
@@ -121,8 +110,6 @@ int flash_creds_store(const flash_creds_t *rec) {
     if (rec->name_len > FLASH_CREDS_NAME_MAX)
         return -1;
 
-    // Pick the older slot to write into so we keep at least one valid
-    // record at all times.
     const flash_creds_t *a = slot_ptr(SLOT_A_OFFSET);
     const flash_creds_t *b = slot_ptr(SLOT_B_OFFSET);
     bool va = record_is_valid(a);

@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use super::{
     BT_STATUS_FIXED_LEN, BT_STATUS_FLAG_CONNECTED, BT_STATUS_FLAG_SEND_REQUESTED,
@@ -6,8 +6,8 @@ use super::{
     BT_STATUS_V2_VERSION, BT_STATUS_V3_FIXED_LEN, BT_STATUS_V3_VERSION, BT_STATUS_V4_FIXED_LEN,
     BT_STATUS_V4_VERSION, BT_STATUS_VERSION,
 };
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BtStatus {
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct BtStatus {
     pub status_version: u8,
     pub decoded_status_version: u8,
     pub flags: u8,
@@ -94,19 +94,19 @@ pub struct BtStatus {
 }
 
 impl BtStatus {
-    pub fn started(&self) -> bool {
+    pub(crate) fn started(&self) -> bool {
         self.flags & BT_STATUS_FLAG_STARTED != 0
     }
 
-    pub fn connected(&self) -> bool {
+    pub(crate) fn connected(&self) -> bool {
         self.flags & BT_STATUS_FLAG_CONNECTED != 0
     }
 
-    pub fn send_requested(&self) -> bool {
+    pub(crate) fn send_requested(&self) -> bool {
         self.flags & BT_STATUS_FLAG_SEND_REQUESTED != 0
     }
 
-    pub fn pairing_security_contact_seen(&self) -> bool {
+    pub(crate) fn pairing_security_contact_seen(&self) -> bool {
         self.pin_code_request_count > 0
             || self.pin_code_response_count > 0
             || self.user_confirmation_request_count > 0
@@ -119,27 +119,29 @@ impl BtStatus {
             || self.last_security_event_ms > 0
     }
 
-    pub fn newer_status_version(&self) -> bool {
+    pub(crate) fn newer_status_version(&self) -> bool {
         self.status_version > BT_STATUS_VERSION
     }
 
-    pub fn reconnect_peer_known(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn reconnect_peer_known(&self) -> bool {
         self.reconnect_state & 0x01 != 0
     }
 
-    pub fn reconnect_pending(&self) -> bool {
+    pub(crate) fn reconnect_pending(&self) -> bool {
         self.reconnect_state & 0x02 != 0
     }
 
-    pub fn reconnect_in_progress(&self) -> bool {
+    pub(crate) fn reconnect_in_progress(&self) -> bool {
         self.reconnect_state & 0x04 != 0
     }
 
-    pub fn reconnect_maxed(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn reconnect_maxed(&self) -> bool {
         self.reconnect_state & 0x08 != 0
     }
 
-    pub fn reconnect_activity_seen(&self) -> bool {
+    pub(crate) fn reconnect_activity_seen(&self) -> bool {
         self.reconnect_schedule_count > 0
             || self.reconnect_attempt_count > 0
             || self.reconnect_success_count > 0
@@ -148,18 +150,18 @@ impl BtStatus {
             || self.last_reconnect_ms > 0
     }
 
-    pub fn incoming_hid_l2cap_seen(&self) -> bool {
+    pub(crate) fn incoming_hid_l2cap_seen(&self) -> bool {
         self.incoming_l2cap_connection_count > 0
             || self.incoming_l2cap_hid_control_count > 0
             || self.incoming_l2cap_hid_interrupt_count > 0
             || self.last_incoming_l2cap_psm != 0
     }
 
-    pub fn bt_cdc_counters_captured(&self) -> bool {
+    pub(crate) fn bt_cdc_counters_captured(&self) -> bool {
         self.decoded_status_version >= BT_STATUS_VERSION
     }
 
-    pub fn bt_cdc_input_seen(&self) -> bool {
+    pub(crate) fn bt_cdc_input_seen(&self) -> bool {
         self.bt_cdc_counters_captured()
             && (self.bt_cdc_state_count > 0 || self.bt_cdc_heartbeat_count > 0)
     }
@@ -178,7 +180,13 @@ fn read_u32_le(payload: &[u8], offset: usize) -> u32 {
     ])
 }
 
-pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
+struct BtStatusLayout {
+    version: u8,
+    name_start: usize,
+    name_end: usize,
+}
+
+fn bt_status_layout(payload: &[u8]) -> Result<BtStatusLayout> {
     if payload.is_empty() {
         bail!("BT_STATUS response truncated ({} bytes)", payload.len());
     }
@@ -214,7 +222,7 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
     };
     let name_start = fixed_len;
     let name_len = if decode_name {
-        payload[name_len_offset] as usize
+        usize::from(payload[name_len_offset])
     } else {
         0
     };
@@ -229,6 +237,93 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
             payload.len()
         );
     }
+    Ok(BtStatusLayout {
+        version,
+        name_start,
+        name_end: need,
+    })
+}
+
+fn read_report_counters(status: &mut BtStatus, payload: &[u8]) {
+    status.get_report_count = read_u32_le(payload, 48);
+    status.get_report_success_count = read_u32_le(payload, 52);
+    status.get_report_unsupported_count = read_u32_le(payload, 56);
+    status.set_report_count = read_u32_le(payload, 60);
+    status.set_report_accepted_count = read_u32_le(payload, 64);
+    status.set_report_unsupported_count = read_u32_le(payload, 68);
+    status.out_report_count = read_u32_le(payload, 72);
+    status.out_report_accepted_count = read_u32_le(payload, 76);
+    status.out_report_unsupported_count = read_u32_le(payload, 80);
+    status.last_get_report_id = payload[84];
+    status.last_get_report_type = payload[85];
+    status.last_set_report_id = payload[86];
+    status.last_set_report_type = payload[87];
+    status.last_out_report_id = payload[88];
+    status.last_out_report_type = payload[89];
+    status.last_get_report_len = read_u16_le(payload, 92);
+    status.last_set_report_len = read_u16_le(payload, 94);
+    status.last_out_report_len = read_u16_le(payload, 96);
+}
+
+fn read_security_counters(status: &mut BtStatus, payload: &[u8]) {
+    status.pin_code_request_count = read_u32_le(payload, 98);
+    status.pin_code_response_count = read_u32_le(payload, 102);
+    status.user_confirmation_request_count = read_u32_le(payload, 106);
+    status.user_confirmation_response_count = read_u32_le(payload, 110);
+    status.simple_pairing_complete_count = read_u32_le(payload, 114);
+    status.authentication_complete_count = read_u32_le(payload, 118);
+    status.link_key_notification_count = read_u32_le(payload, 122);
+    status.encryption_change_count = read_u32_le(payload, 126);
+    status.disconnection_complete_count = read_u32_le(payload, 130);
+    status.hid_open_failed_count = read_u32_le(payload, 134);
+    status.last_security_event_ms = read_u32_le(payload, 138);
+    status.last_simple_pairing_status = payload[142];
+    status.last_authentication_status = payload[143];
+    status.last_encryption_status = payload[144];
+    status.last_encryption_enabled = payload[145];
+    status.last_disconnection_reason = payload[146];
+    status.last_hid_open_status = payload[147];
+}
+
+fn read_reconnect_counters(status: &mut BtStatus, payload: &[u8]) {
+    status.reconnect_state = payload[152];
+    status.reconnect_cycle_attempts = payload[153];
+    status.last_reconnect_status = payload[154];
+    status.last_reconnect_reason = payload[155];
+    status.reconnect_schedule_count = read_u32_le(payload, 156);
+    status.reconnect_attempt_count = read_u32_le(payload, 160);
+    status.reconnect_success_count = read_u32_le(payload, 164);
+    status.reconnect_failed_count = read_u32_le(payload, 168);
+    status.reconnect_blocked_count = read_u32_le(payload, 172);
+    status.last_reconnect_ms = read_u32_le(payload, 176);
+    status.connection_complete_count = read_u32_le(payload, 180);
+    status.last_connection_complete_status = payload[184];
+    status.last_connection_complete_link_type = payload[185];
+    status.last_connection_complete_ms = read_u32_le(payload, 188);
+    status.incoming_l2cap_connection_count = read_u32_le(payload, 192);
+    status.incoming_l2cap_hid_control_count = read_u32_le(payload, 196);
+    status.incoming_l2cap_hid_interrupt_count = read_u32_le(payload, 200);
+    status.last_incoming_l2cap_psm = read_u16_le(payload, 204);
+    status.last_incoming_l2cap_local_cid = read_u16_le(payload, 206);
+    status.last_incoming_l2cap_ms = read_u32_le(payload, 208);
+}
+
+fn read_cdc_counters(status: &mut BtStatus, payload: &[u8]) {
+    status.bt_cdc_state_count = read_u32_le(payload, 212);
+    status.bt_cdc_heartbeat_count = read_u32_le(payload, 216);
+    status.bt_cdc_bad_length_count = read_u32_le(payload, 220);
+    status.bt_cdc_rejected_count = read_u32_le(payload, 224);
+    status.bt_cdc_last_frame_ms = read_u32_le(payload, 228);
+    status.bt_cdc_last_state_ms = read_u32_le(payload, 232);
+    status.bt_cdc_last_heartbeat_ms = read_u32_le(payload, 236);
+    status.bt_cdc_last_seq = payload[240];
+    status.bt_cdc_last_command = payload[241];
+    status.bt_cdc_last_flags = payload[242];
+}
+
+pub(crate) fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
+    let layout = bt_status_layout(payload)?;
+    let version = layout.version;
     let has_v2 = version == BT_STATUS_V2_VERSION
         || version == BT_STATUS_V3_VERSION
         || version == BT_STATUS_V4_VERSION
@@ -238,7 +333,7 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
         || version >= BT_STATUS_VERSION;
     let has_v4 = version == BT_STATUS_V4_VERSION || version >= BT_STATUS_VERSION;
     let has_v5 = version >= BT_STATUS_VERSION;
-    Ok(BtStatus {
+    let mut status = BtStatus {
         status_version: version,
         decoded_status_version: if version > BT_STATUS_VERSION {
             BT_STATUS_VERSION
@@ -260,71 +355,21 @@ pub fn decode_bt_status_payload(payload: &[u8]) -> Result<BtStatus> {
         send_request_count: read_u32_le(payload, 36),
         last_event_ms: read_u32_le(payload, 40),
         last_send_ms: read_u32_le(payload, 44),
-        get_report_count: if has_v2 { read_u32_le(payload, 48) } else { 0 },
-        get_report_success_count: if has_v2 { read_u32_le(payload, 52) } else { 0 },
-        get_report_unsupported_count: if has_v2 { read_u32_le(payload, 56) } else { 0 },
-        set_report_count: if has_v2 { read_u32_le(payload, 60) } else { 0 },
-        set_report_accepted_count: if has_v2 { read_u32_le(payload, 64) } else { 0 },
-        set_report_unsupported_count: if has_v2 { read_u32_le(payload, 68) } else { 0 },
-        out_report_count: if has_v2 { read_u32_le(payload, 72) } else { 0 },
-        out_report_accepted_count: if has_v2 { read_u32_le(payload, 76) } else { 0 },
-        out_report_unsupported_count: if has_v2 { read_u32_le(payload, 80) } else { 0 },
-        last_get_report_id: if has_v2 { payload[84] } else { 0 },
-        last_get_report_type: if has_v2 { payload[85] } else { 0 },
-        last_set_report_id: if has_v2 { payload[86] } else { 0 },
-        last_set_report_type: if has_v2 { payload[87] } else { 0 },
-        last_out_report_id: if has_v2 { payload[88] } else { 0 },
-        last_out_report_type: if has_v2 { payload[89] } else { 0 },
-        last_get_report_len: if has_v2 { read_u16_le(payload, 92) } else { 0 },
-        last_set_report_len: if has_v2 { read_u16_le(payload, 94) } else { 0 },
-        last_out_report_len: if has_v2 { read_u16_le(payload, 96) } else { 0 },
-        pin_code_request_count: if has_v3 { read_u32_le(payload, 98) } else { 0 },
-        pin_code_response_count: if has_v3 { read_u32_le(payload, 102) } else { 0 },
-        user_confirmation_request_count: if has_v3 { read_u32_le(payload, 106) } else { 0 },
-        user_confirmation_response_count: if has_v3 { read_u32_le(payload, 110) } else { 0 },
-        simple_pairing_complete_count: if has_v3 { read_u32_le(payload, 114) } else { 0 },
-        authentication_complete_count: if has_v3 { read_u32_le(payload, 118) } else { 0 },
-        link_key_notification_count: if has_v3 { read_u32_le(payload, 122) } else { 0 },
-        encryption_change_count: if has_v3 { read_u32_le(payload, 126) } else { 0 },
-        disconnection_complete_count: if has_v3 { read_u32_le(payload, 130) } else { 0 },
-        hid_open_failed_count: if has_v3 { read_u32_le(payload, 134) } else { 0 },
-        last_security_event_ms: if has_v3 { read_u32_le(payload, 138) } else { 0 },
-        last_simple_pairing_status: if has_v3 { payload[142] } else { 0 },
-        last_authentication_status: if has_v3 { payload[143] } else { 0 },
-        last_encryption_status: if has_v3 { payload[144] } else { 0 },
-        last_encryption_enabled: if has_v3 { payload[145] } else { 0 },
-        last_disconnection_reason: if has_v3 { payload[146] } else { 0 },
-        last_hid_open_status: if has_v3 { payload[147] } else { 0 },
-        reconnect_state: if has_v4 { payload[152] } else { 0 },
-        reconnect_cycle_attempts: if has_v4 { payload[153] } else { 0 },
-        last_reconnect_status: if has_v4 { payload[154] } else { 0 },
-        last_reconnect_reason: if has_v4 { payload[155] } else { 0 },
-        reconnect_schedule_count: if has_v4 { read_u32_le(payload, 156) } else { 0 },
-        reconnect_attempt_count: if has_v4 { read_u32_le(payload, 160) } else { 0 },
-        reconnect_success_count: if has_v4 { read_u32_le(payload, 164) } else { 0 },
-        reconnect_failed_count: if has_v4 { read_u32_le(payload, 168) } else { 0 },
-        reconnect_blocked_count: if has_v4 { read_u32_le(payload, 172) } else { 0 },
-        last_reconnect_ms: if has_v4 { read_u32_le(payload, 176) } else { 0 },
-        connection_complete_count: if has_v4 { read_u32_le(payload, 180) } else { 0 },
-        last_connection_complete_status: if has_v4 { payload[184] } else { 0 },
-        last_connection_complete_link_type: if has_v4 { payload[185] } else { 0 },
-        last_connection_complete_ms: if has_v4 { read_u32_le(payload, 188) } else { 0 },
-        incoming_l2cap_connection_count: if has_v4 { read_u32_le(payload, 192) } else { 0 },
-        incoming_l2cap_hid_control_count: if has_v4 { read_u32_le(payload, 196) } else { 0 },
-        incoming_l2cap_hid_interrupt_count: if has_v4 { read_u32_le(payload, 200) } else { 0 },
-        last_incoming_l2cap_psm: if has_v4 { read_u16_le(payload, 204) } else { 0 },
-        last_incoming_l2cap_local_cid: if has_v4 { read_u16_le(payload, 206) } else { 0 },
-        last_incoming_l2cap_ms: if has_v4 { read_u32_le(payload, 208) } else { 0 },
-        bt_cdc_state_count: if has_v5 { read_u32_le(payload, 212) } else { 0 },
-        bt_cdc_heartbeat_count: if has_v5 { read_u32_le(payload, 216) } else { 0 },
-        bt_cdc_bad_length_count: if has_v5 { read_u32_le(payload, 220) } else { 0 },
-        bt_cdc_rejected_count: if has_v5 { read_u32_le(payload, 224) } else { 0 },
-        bt_cdc_last_frame_ms: if has_v5 { read_u32_le(payload, 228) } else { 0 },
-        bt_cdc_last_state_ms: if has_v5 { read_u32_le(payload, 232) } else { 0 },
-        bt_cdc_last_heartbeat_ms: if has_v5 { read_u32_le(payload, 236) } else { 0 },
-        bt_cdc_last_seq: if has_v5 { payload[240] } else { 0 },
-        bt_cdc_last_command: if has_v5 { payload[241] } else { 0 },
-        bt_cdc_last_flags: if has_v5 { payload[242] } else { 0 },
-        local_name: String::from_utf8_lossy(&payload[name_start..need]).into_owned(),
-    })
+        local_name: String::from_utf8_lossy(&payload[layout.name_start..layout.name_end])
+            .into_owned(),
+        ..BtStatus::default()
+    };
+    if has_v2 {
+        read_report_counters(&mut status, payload);
+    }
+    if has_v3 {
+        read_security_counters(&mut status, payload);
+    }
+    if has_v4 {
+        read_reconnect_counters(&mut status, payload);
+    }
+    if has_v5 {
+        read_cdc_counters(&mut status, payload);
+    }
+    Ok(status)
 }

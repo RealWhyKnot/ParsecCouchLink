@@ -1,9 +1,3 @@
-//! Best-effort local diagnostic cache for last-seen Pico state.
-//!
-//! This is intentionally separate from `config.toml`: config is user
-//! preference and saved routing state, while this cache is support evidence
-//! that `couchlink bundle` can include even when the Pico is offline later.
-
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -27,7 +21,7 @@ static WARNED: OnceLock<()> = OnceLock::new();
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-pub struct CachedUsbDiag {
+pub(crate) struct CachedUsbDiag {
     pub verdict: String,
     pub mounted: bool,
     pub suspended: bool,
@@ -52,12 +46,19 @@ pub struct CachedUsbDiag {
     pub last_in_blocked_got: u16,
     pub last_out_ms: u32,
     pub last_bridge_packet_ms: u32,
+    #[serde(flatten)]
+    pub stream: CachedStreamState,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub(crate) struct CachedStreamState {
     pub bridge_peer: bool,
     pub parsec_connected: bool,
 }
 
 impl CachedUsbDiag {
-    pub fn from_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> Self {
+    pub(crate) fn from_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> Self {
         Self {
             verdict: usb_verdict_label(diag, persona).to_string(),
             mounted: diag.mounted(),
@@ -86,14 +87,16 @@ impl CachedUsbDiag {
             last_in_blocked_got: diag.last_in_blocked_got,
             last_out_ms: diag.last_out_ms,
             last_bridge_packet_ms: diag.last_bridge_packet_ms,
-            bridge_peer: diag.bridge_peer_latched(),
-            parsec_connected: diag.parsec_connected(),
+            stream: CachedStreamState {
+                bridge_peer: diag.bridge_peer_latched(),
+                parsec_connected: diag.parsec_connected(),
+            },
         }
     }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RouteSnapshot {
+pub(crate) struct RouteSnapshot {
     pub source_slot: Option<u32>,
     pub source_label: Option<String>,
     pub peer_health: Option<String>,
@@ -108,7 +111,7 @@ pub struct RouteSnapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PicoStateSnapshot {
+pub(crate) struct PicoStateSnapshot {
     pub schema_version: u8,
     pub captured_at: String,
     pub source: String,
@@ -131,7 +134,7 @@ pub struct PicoStateSnapshot {
 }
 
 impl PicoStateSnapshot {
-    pub fn from_target(source: impl Into<String>, pico: &PicoTarget) -> Self {
+    pub(crate) fn from_target(source: impl Into<String>, pico: &PicoTarget) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
             captured_at: Local::now().to_rfc3339(),
@@ -155,7 +158,10 @@ impl PicoStateSnapshot {
         }
     }
 
-    pub fn offline_from_config(source: impl Into<String>, pico: &config::PicoIdentity) -> Self {
+    pub(crate) fn offline_from_config(
+        source: impl Into<String>,
+        pico: &config::PicoIdentity,
+    ) -> Self {
         let peer = pico
             .last_ip
             .as_deref()
@@ -185,56 +191,60 @@ impl PicoStateSnapshot {
         }
     }
 
-    pub fn with_route(mut self, route: RouteSnapshot) -> Self {
+    pub(crate) fn with_route(mut self, route: RouteSnapshot) -> Self {
         self.route = Some(route);
         self
     }
 
-    pub fn with_usb_diag(mut self, diag: &protocol::UsbDiag, persona: protocol::Persona) -> Self {
+    pub(crate) fn with_usb_diag(
+        mut self,
+        diag: &protocol::UsbDiag,
+        persona: protocol::Persona,
+    ) -> Self {
         self.usb_diag = Some(CachedUsbDiag::from_diag(diag, persona));
         self
     }
 
-    pub fn with_pico_state(mut self, state: &protocol::PicoStateDiag) -> Self {
+    pub(crate) fn with_pico_state(mut self, state: &protocol::PicoStateDiag) -> Self {
         self.pico_state = Some(state.to_json_map());
         self
     }
 
-    pub fn with_outcome(mut self, outcome: impl Into<String>) -> Self {
+    pub(crate) fn with_outcome(mut self, outcome: impl Into<String>) -> Self {
         self.capture_outcome = Some(outcome.into());
         self
     }
 }
 
-pub fn record_target(source: &str, pico: &PicoTarget) {
-    record(PicoStateSnapshot::from_target(source, pico));
+pub(crate) fn record_target(source: &str, pico: &PicoTarget) {
+    record(&PicoStateSnapshot::from_target(source, pico));
 }
 
-pub fn record(snapshot: PicoStateSnapshot) {
+pub(crate) fn record(snapshot: &PicoStateSnapshot) {
     if let Err(e) = record_inner(snapshot) {
-        warn_once(format!(
+        warn_once(&format!(
             "pico-cache: could not write diagnostic cache: {e:#}"
         ));
     }
 }
 
-pub fn current_path() -> Option<PathBuf> {
+pub(crate) fn current_path() -> Option<PathBuf> {
     config::diag_cache_dir().ok().map(|d| d.join(CURRENT_FILE))
 }
 
-pub fn history_path() -> Option<PathBuf> {
+pub(crate) fn history_path() -> Option<PathBuf> {
     config::diag_cache_dir().ok().map(|d| d.join(HISTORY_FILE))
 }
 
-pub fn read_current() -> Option<String> {
+pub(crate) fn read_current() -> Option<String> {
     fs::read_to_string(current_path()?).ok()
 }
 
-pub fn read_history() -> Option<String> {
+pub(crate) fn read_history() -> Option<String> {
     fs::read_to_string(history_path()?).ok()
 }
 
-fn record_inner(snapshot: PicoStateSnapshot) -> anyhow::Result<()> {
+fn record_inner(snapshot: &PicoStateSnapshot) -> anyhow::Result<()> {
     config::ensure_dirs()?;
     trim_history_if_needed();
     let json = serde_json::to_string_pretty(&snapshot)?;
@@ -268,16 +278,15 @@ fn trim_history_if_needed() {
     let start = bytes[start..]
         .iter()
         .position(|&b| b == b'\n')
-        .map(|i| start + i + 1)
-        .unwrap_or(start);
+        .map_or(start, |i| start + i + 1);
     let _ = fs::write(path, &bytes[start..]);
 }
 
-pub fn duration_ms(d: Duration) -> u64 {
-    d.as_millis().min(u128::from(u64::MAX)) as u64
+pub(crate) fn duration_ms(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
-fn warn_once(message: String) {
+fn warn_once(message: &str) {
     if WARNED.set(()).is_ok() {
         tracing::warn!("{message}");
     }
@@ -287,13 +296,13 @@ fn usb_verdict_label(diag: &protocol::UsbDiag, persona: protocol::Persona) -> &'
     match diag.configuration_state() {
         protocol::UsbConfigurationState::NoHostTraffic => return "no_usb_host_traffic",
         protocol::UsbConfigurationState::EnumerationStarted => {
-            return "enumeration_started_not_configured"
+            return "enumeration_started_not_configured";
         }
         protocol::UsbConfigurationState::ConfiguredThenUnmounted => {
-            return "configured_then_unmounted"
+            return "configured_then_unmounted";
         }
         protocol::UsbConfigurationState::ConfiguredThenUnmountedWithoutCallback => {
-            return "configured_then_unmounted_without_callback"
+            return "configured_then_unmounted_without_callback";
         }
         protocol::UsbConfigurationState::Suspended => return "configured_suspended",
         protocol::UsbConfigurationState::Configured => {}
@@ -320,11 +329,12 @@ fn usb_verdict_label(diag: &protocol::UsbDiag, persona: protocol::Persona) -> &'
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_diag::{DiagStage, usb_diag};
 
     #[test]
     fn offline_snapshot_keeps_identity_without_secrets() {
         let pico = config::PicoIdentity {
-            unique_id_short: 0x02E22DA9,
+            unique_id_short: 0x02E2_2DA9,
             board_type: protocol::BOARD_PICO_2_W,
             fw_major: 26,
             fw_minor: 6,
@@ -342,50 +352,9 @@ mod tests {
         assert!(!json.to_ascii_lowercase().contains("ssid"));
     }
 
-    fn usb_diag(mounted: bool, desc: bool) -> protocol::UsbDiag {
-        protocol::UsbDiag {
-            seq: 1,
-            flags: 0,
-            version: protocol::USB_DIAG_VERSION,
-            usb_flags: if mounted {
-                protocol::USB_DIAG_FLAG_MOUNTED
-            } else {
-                0
-            },
-            activity_flags: 0,
-            last_out_len: 0,
-            now_ms: 10_000,
-            last_bridge_packet_ms: 0,
-            mount_count: if mounted { 1 } else { 0 },
-            umount_count: 0,
-            suspend_count: 0,
-            resume_count: 0,
-            device_desc_count: if desc { 1 } else { 0 },
-            config_desc_count: if desc { 1 } else { 0 },
-            xinput_in_queued_count: 0,
-            xinput_in_sent_count: 0,
-            xinput_out_count: 0,
-            xinput_in_blocked_not_mounted_count: 0,
-            xinput_in_blocked_not_ready_count: 0,
-            xinput_in_blocked_short_write_count: 0,
-            xinput_in_idle_suppressed_count: 0,
-            last_mount_ms: 9000,
-            last_umount_ms: 0,
-            last_in_queued_ms: 0,
-            last_in_sent_ms: 0,
-            last_out_ms: 0,
-            last_in_blocked_ms: 0,
-            last_in_blocked_reason: 0,
-            last_in_blocked_want: 0,
-            last_in_blocked_got: 0,
-            last_out_byte0: 0,
-            last_out_byte1: 0,
-        }
-    }
-
     #[test]
     fn usb_verdict_label_keeps_dropped_after_mount_distinct() {
-        let mut diag = usb_diag(false, true);
+        let mut diag = usb_diag(DiagStage::DescriptorsOnly);
         diag.mount_count = 1;
 
         assert_eq!(

@@ -1,9 +1,5 @@
 #pragma once
 
-// lwIP configuration tuned for a single-port UDP application on Pico W.
-// Keeps the heap and pbuf counts low: we never use TCP, DNS, DHCPv6, or
-// anything else, just UDP.
-
 #define NO_SYS 1
 #define LWIP_SOCKET 0
 #define LWIP_NETCONN 0
@@ -44,7 +40,5 @@
 #define DEFAULT_ACCEPTMBOX_SIZE 0
 #define TCPIP_MBOX_SIZE 8
 
-// Stats / debug off in release; the diag_log ring buffer is what we use
-// for support output.
 #define LWIP_STATS 0
 #define LWIP_DEBUG 0

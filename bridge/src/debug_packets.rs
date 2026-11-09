@@ -102,8 +102,8 @@ impl DebugPacketSink {
         Ok(written)
     }
 
-    pub(crate) fn append_harvest_ok(&mut self, record: HarvestOkRecord) -> Result<()> {
-        self.append_harvest_record(harvest_ok_json(&record, self.total_written))
+    pub(crate) fn append_harvest_ok(&mut self, record: &HarvestOkRecord) -> Result<()> {
+        self.append_harvest_record(&harvest_ok_json(record, self.total_written))
     }
 
     pub(crate) fn append_harvest_error(&mut self, duration_ms: u64, error: &str) -> Result<()> {
@@ -112,7 +112,7 @@ impl DebugPacketSink {
         Ok(())
     }
 
-    fn append_harvest_record(&mut self, record: serde_json::Value) -> Result<()> {
+    fn append_harvest_record(&mut self, record: &serde_json::Value) -> Result<()> {
         writeln!(self.file, "# harvest {record}")?;
         self.file.flush()?;
         Ok(())
@@ -142,8 +142,7 @@ fn harvest_ok_json(record: &HarvestOkRecord, total_packet_lines: usize) -> serde
         && record
             .snapshot
             .expected_chunks
-            .map(|expected| usize::from(expected) == record.snapshot.chunk_count)
-            .unwrap_or(false)
+            .is_some_and(|expected| usize::from(expected) == record.snapshot.chunk_count)
         && record.snapshot.missing_chunks.is_empty();
     json!({
         "at": Local::now().to_rfc3339(),
@@ -278,18 +277,18 @@ pub(crate) async fn capture_run_diag_log(
     }
 
     Ok(assemble_diag_log_snapshot(
-        chunks,
+        &chunks,
         got_last,
         duplicate_chunk_count,
     ))
 }
 
 fn assemble_diag_log_snapshot(
-    chunks: BTreeMap<u8, protocol::LogChunk>,
+    chunks: &BTreeMap<u8, protocol::LogChunk>,
     got_last: bool,
     duplicate_chunk_count: usize,
 ) -> DiagLogSnapshot {
-    let lost_bytes = chunks.get(&0).map(|chunk| chunk.lost_bytes).unwrap_or(0);
+    let lost_bytes = chunks.get(&0).map_or(0, |chunk| chunk.lost_bytes);
     let expected_chunks = chunks.get(&0).map(|chunk| chunk.total_chunks);
     let missing_chunks = expected_chunks
         .map(|expected| {
@@ -322,8 +321,9 @@ fn is_packet_file(path: &Path) -> bool {
         && path
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| name.starts_with("usb-packets-") && name.ends_with(".log"))
-            .unwrap_or(false)
+            .is_some_and(|name| {
+                name.starts_with("usb-packets-") && name.strip_suffix(".log").is_some()
+            })
 }
 
 fn sanitize_filename(value: &str) -> String {
@@ -379,12 +379,13 @@ mod tests {
     fn sink_dedupes_packet_lines() {
         let root = temp_root("sink");
         let mut sink = DebugPacketSink::create_in(&root, "02:E2/2D\\A9", peer()).unwrap();
-        assert!(sink
-            .path()
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap()
-            .contains("02E22DA9"));
+        assert!(
+            sink.path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap()
+                .contains("02E22DA9")
+        );
         let lines = vec![
             "usb-packet seq=1 dir=out data=01".to_string(),
             "usb-packet seq=1 dir=out data=01".to_string(),
@@ -405,7 +406,7 @@ mod tests {
         let mut sink = DebugPacketSink::create_in(&root, "02E22DA9", peer()).unwrap();
         sink.append_lines(&["usb-packet seq=1 dir=in data=00".to_string()])
             .unwrap();
-        sink.append_harvest_ok(HarvestOkRecord {
+        sink.append_harvest_ok(&HarvestOkRecord {
             duration_ms: 14,
             snapshot: DiagLogSnapshot {
                 text: "usb-packet seq=1 dir=in data=00\nusb-packet-stats total=1\n".to_string(),
@@ -484,7 +485,7 @@ mod tests {
                 payload: b"third\n".to_vec(),
             },
         );
-        let snapshot = assemble_diag_log_snapshot(chunks, true, 1);
+        let snapshot = assemble_diag_log_snapshot(&chunks, true, 1);
         assert_eq!(snapshot.text, "first\nthird\n");
         assert_eq!(snapshot.lost_bytes, 9);
         assert_eq!(snapshot.chunk_count, 2);

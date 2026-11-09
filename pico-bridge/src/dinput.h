@@ -2,8 +2,6 @@
 
 #include <stdint.h>
 
-// Pump one gamepad HID report onto the USB endpoint when the host is ready.
-// Only used when a gamepad HID persona is active.
 void dinput_init(void);
 void dinput_task(void);
 void dinput_note_usb_reset(void);

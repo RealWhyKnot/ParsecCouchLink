@@ -8,10 +8,6 @@
 #include "keyboard_state.h"
 #include "usb_diag.h"
 
-// Resend an unchanged report at least this often so a host that drops a
-// frame still re-converges, mirroring the XInput idle cadence. Keypresses
-// are change-driven, so this is just a keep-fresh floor, not the input
-// rate.
 #define HID_KBD_IDLE_REPORT_INTERVAL_MS 8u
 
 static uint8_t last_mods;
@@ -41,8 +37,6 @@ void hid_kbd_task(void) {
         return;
     }
 
-    // Read the shared state field-by-field so each access is a volatile
-    // load (single-writer net_udp, single-reader here).
     uint8_t mods = g_keyboard_state.modifiers;
     uint8_t keys[6];
     for (int i = 0; i < 6; i++)
@@ -56,8 +50,6 @@ void hid_kbd_task(void) {
         return;
     }
 
-    // Report ID 0: single boot-keyboard report. tud_hid_keyboard_report
-    // packs [modifier, reserved, keycode[6]] into the 8-byte IN report.
     if (tud_hid_keyboard_report(0, mods, keys)) {
         usb_diag_note_xinput_in_queued(8);
         last_mods = mods;

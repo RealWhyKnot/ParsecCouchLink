@@ -1,19 +1,17 @@
-//! Shared Pico mode-switch helpers used by the setup and debug flows.
-
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
 use crate::{cdc, cmd_run, net, protocol, udp_auth};
 
-pub async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
+pub(crate) async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
     tracing::info!(
         "pico-mode: request reboot-to-setup for {}",
         pico.short_label()
     );
     if let Err(e) = udp_auth::prepare(pico.peer).await {
         tracing::info!("pico-mode: {e:#}");
-        println!("{}", udp_auth::RECOVERY_HINT);
+        outln!("{}", udp_auth::RECOVERY_HINT);
     }
     let socket = net::bind_udp("0.0.0.0:0")
         .await
@@ -36,12 +34,7 @@ pub async fn request_reboot_to_setup(pico: &cmd_run::PicoTarget) -> Result<()> {
     Ok(())
 }
 
-/// Ask a run-mode Pico to persist a new output persona and reboot into it.
-/// The firmware ignores the request when it's already in the requested
-/// persona, so this is safe to send unconditionally. Several datagrams go
-/// out to cover UDP loss; a transient send error after the Pico starts
-/// rebooting is expected and ignored.
-pub async fn request_set_persona(
+pub(crate) async fn request_set_persona(
     pico: &cmd_run::PicoTarget,
     persona: protocol::Persona,
 ) -> Result<()> {
@@ -74,7 +67,7 @@ pub async fn request_set_persona(
             }
             Err(e) => {
                 return Err(e)
-                    .with_context(|| format!("sending set-persona request to {}", pico.peer))
+                    .with_context(|| format!("sending set-persona request to {}", pico.peer));
             }
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -82,9 +75,7 @@ pub async fn request_set_persona(
     Ok(())
 }
 
-/// Ask a run-mode Pico to reboot into `persona` with one-shot USB packet
-/// capture active from before `tusb_init()`.
-pub async fn request_set_usb_capture_persona(
+pub(crate) async fn request_set_usb_capture_persona(
     pico: &cmd_run::PicoTarget,
     persona: protocol::Persona,
 ) -> Result<()> {
@@ -120,7 +111,7 @@ pub async fn request_set_usb_capture_persona(
             }
             Err(e) => {
                 return Err(e)
-                    .with_context(|| format!("sending usb-capture request to {}", pico.peer))
+                    .with_context(|| format!("sending usb-capture request to {}", pico.peer));
             }
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -128,9 +119,7 @@ pub async fn request_set_usb_capture_persona(
     Ok(())
 }
 
-/// Clear raw USB packet capture for the current boot. This does not reboot or
-/// change the persisted persona.
-pub async fn request_clear_usb_capture(pico: &cmd_run::PicoTarget) -> Result<()> {
+pub(crate) async fn request_clear_usb_capture(pico: &cmd_run::PicoTarget) -> Result<()> {
     tracing::info!(
         "pico-mode: request clear usb-capture for {}",
         pico.short_label()
@@ -158,8 +147,9 @@ pub async fn request_clear_usb_capture(pico: &cmd_run::PicoTarget) -> Result<()>
                 break;
             }
             Err(e) => {
-                return Err(e)
-                    .with_context(|| format!("sending clear usb-capture request to {}", pico.peer))
+                return Err(e).with_context(|| {
+                    format!("sending clear usb-capture request to {}", pico.peer)
+                });
             }
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -167,12 +157,10 @@ pub async fn request_clear_usb_capture(pico: &cmd_run::PicoTarget) -> Result<()>
     Ok(())
 }
 
-/// Ask a run-mode Pico to blink its onboard LED for `blink_seconds` so the
-/// user can spot the physical board. Returns true when the Pico confirmed
-/// the request with an ACK; false means no confirmation arrived, which
-/// usually indicates firmware from before the IDENTIFY command existed
-/// (there is no spare ACK capability bit to advertise it).
-pub async fn request_identify(pico: &cmd_run::PicoTarget, blink_seconds: u8) -> Result<bool> {
+pub(crate) async fn request_identify(
+    pico: &cmd_run::PicoTarget,
+    blink_seconds: u8,
+) -> Result<bool> {
     tracing::info!(
         "pico-mode: request identify blink {}s for {}",
         blink_seconds,
@@ -192,9 +180,6 @@ pub async fn request_identify(pico: &cmd_run::PicoTarget, blink_seconds: u8) -> 
             .await
             .with_context(|| format!("sending identify request to {}", pico.peer))?;
 
-        // The firmware replies with a standard ACK. Its ACK sequence
-        // counter is independent of ours, so match on the sender and
-        // packet kind instead of the sequence number.
         let deadline = tokio::time::sleep(Duration::from_millis(400));
         tokio::pin!(deadline);
         loop {
@@ -211,14 +196,14 @@ pub async fn request_identify(pico: &cmd_run::PicoTarget, blink_seconds: u8) -> 
                         return Ok(true);
                     }
                 }
-                _ = &mut deadline => break,
+                () = &mut deadline => break,
             }
         }
     }
     Ok(false)
 }
 
-pub async fn wait_for_setup_port(timeout: Duration) -> Result<String> {
+pub(crate) async fn wait_for_setup_port(timeout: Duration) -> Result<String> {
     let started = Instant::now();
     let deadline = started + timeout;
     let mut next_beat = started + Duration::from_secs(10);
@@ -232,7 +217,7 @@ pub async fn wait_for_setup_port(timeout: Duration) -> Result<String> {
         }
         if now >= next_beat {
             let elapsed = now.duration_since(started).as_secs();
-            println!(
+            outln!(
                 "  ... still waiting for setup-mode USB ({elapsed}s/{})",
                 timeout.as_secs()
             );

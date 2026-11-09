@@ -1,6 +1,7 @@
 use clap::CommandFactory;
 
 use super::*;
+use crate::cli::{AutoArgs, LabArgs, XboxArgs};
 
 #[test]
 fn lower_level_diagnostic_commands_are_hidden_from_help() {
@@ -58,7 +59,7 @@ fn lab_command_parses_defaults_and_overrides() {
     .unwrap();
 
     match cli.command {
-        Some(Command::Lab {
+        Some(Command::Lab(LabArgs {
             all,
             picos,
             scenario,
@@ -66,7 +67,7 @@ fn lab_command_parses_defaults_and_overrides() {
             power,
             no_flash,
             ..
-        }) => {
+        })) => {
             assert!(!all);
             assert_eq!(picos, vec!["07D37EB6"]);
             assert_eq!(scenario, cmd_lab::LabScenario::PowerCycle);
@@ -83,7 +84,7 @@ fn lab_command_parses_pnp_remove_power() {
     let cli = Cli::try_parse_from(["couchlink", "lab", "--power", "pnp-remove"]).unwrap();
 
     match cli.command {
-        Some(Command::Lab { power, .. }) => {
+        Some(Command::Lab(LabArgs { power, .. })) => {
             assert_eq!(power, cmd_lab::LabPower::PnpRemove);
         }
         other => panic!("expected lab command, got {other:?}"),
@@ -129,11 +130,11 @@ fn maple_command_parses_target_and_no_stream() {
         Cli::try_parse_from(["couchlink", "maple", "--pico", "07D37EB6", "--no-stream"]).unwrap();
 
     match cli.command {
-        Some(Command::Maple {
+        Some(Command::Maple(SwitchArgs {
             picos,
             all,
             no_stream,
-        }) => {
+        })) => {
             assert_eq!(picos, vec!["07D37EB6"]);
             assert!(!all);
             assert!(no_stream);
@@ -155,11 +156,11 @@ fn auto_command_parses_target_all_and_no_stream() {
     .unwrap();
 
     match cli.command {
-        Some(Command::Auto {
+        Some(Command::Auto(AutoArgs {
             picos,
             all,
             no_stream,
-        }) => {
+        })) => {
             assert_eq!(picos, vec!["07D37EB6"]);
             assert!(all);
             assert!(no_stream);
@@ -180,11 +181,11 @@ fn debug_input_command_parses_target_and_no_stream() {
     .unwrap();
 
     match cli.command {
-        Some(Command::DebugInput {
+        Some(Command::DebugInput(SwitchArgs {
             picos,
             all,
             no_stream,
-        }) => {
+        })) => {
             assert_eq!(picos, vec!["07D37EB6"]);
             assert!(!all);
             assert!(no_stream);
@@ -199,11 +200,11 @@ fn xinput_command_parses_target_and_no_stream() {
         Cli::try_parse_from(["couchlink", "xinput", "--pico", "07D37EB6", "--no-stream"]).unwrap();
 
     match cli.command {
-        Some(Command::Xinput {
+        Some(Command::Xinput(SwitchArgs {
             picos,
             all,
             no_stream,
-        }) => {
+        })) => {
             assert_eq!(picos, vec!["07D37EB6"]);
             assert!(!all);
             assert!(no_stream);
@@ -224,11 +225,11 @@ fn controller_command_still_parses_as_hidden_alias() {
     .unwrap();
 
     match cli.command {
-        Some(Command::Controller {
+        Some(Command::Controller(SwitchArgs {
             picos,
             all,
             no_stream,
-        }) => {
+        })) => {
             assert_eq!(picos, vec!["07D37EB6"]);
             assert!(!all);
             assert!(no_stream);
@@ -243,11 +244,11 @@ fn dinput_command_parses_target_and_no_stream() {
         Cli::try_parse_from(["couchlink", "dinput", "--pico", "07D37EB6", "--no-stream"]).unwrap();
 
     match cli.command {
-        Some(Command::Dinput {
+        Some(Command::Dinput(SwitchArgs {
             picos,
             all,
             no_stream,
-        }) => {
+        })) => {
             assert_eq!(picos, vec!["07D37EB6"]);
             assert!(!all);
             assert!(no_stream);
@@ -279,75 +280,75 @@ fn specific_gamepad_persona_commands_parse_target_and_no_stream() {
         match (command, cli.command) {
             (
                 "xbox",
-                Some(Command::Xbox {
+                Some(Command::Xbox(XboxArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "xbox360",
-                Some(Command::Xbox360 {
+                Some(Command::Xbox360(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "xboxone",
-                Some(Command::Xboxone {
+                Some(Command::Xboxone(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "ps3",
-                Some(Command::Ps3 {
+                Some(Command::Ps3(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "ps4",
-                Some(Command::Ps4 {
+                Some(Command::Ps4(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "generic-hid",
-                Some(Command::GenericHid {
+                Some(Command::GenericHid(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "bluetooth" | "bluetooth-hid" | "blueretro" | "n64-bluetooth",
-                Some(Command::BluetoothHid {
+                Some(Command::BluetoothHid(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "bluetooth-xbox" | "blueretro-xbox",
-                Some(Command::BluetoothXbox {
+                Some(Command::BluetoothXbox(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             )
             | (
                 "bluetooth-playstation" | "blueretro-playstation",
-                Some(Command::BluetoothPlaystation {
+                Some(Command::BluetoothPlaystation(SwitchArgs {
                     picos,
                     all,
                     no_stream,
-                }),
+                })),
             ) => {
                 assert_eq!(picos, vec!["07D37EB6"]);
                 assert!(!all);

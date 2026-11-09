@@ -17,10 +17,6 @@ boot_cold_action_t boot_mode_flash_update_action(bool have_creds) {
 }
 
 run_persona_t boot_mode_persona_from_flash(bool have_creds, uint8_t persona_byte) {
-    // The stored flash byte is the run_persona_t value itself
-    // (FLASH_PERSONA_* == RUN_PERSONA_*, asserted in boot_mode.c), so no
-    // flash_creds.h dependency is needed here -- which keeps this module
-    // host-compilable for the unit tests.
     if (!have_creds)
         return RUN_PERSONA_XINPUT;
     if (persona_byte == (uint8_t)RUN_PERSONA_KEYBOARD)

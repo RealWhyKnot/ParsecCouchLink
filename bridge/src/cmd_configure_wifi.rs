@@ -1,25 +1,17 @@
-//! `couchlink configure-wifi` -- re-provision a Pico that's in setup mode
-//! over USB-CDC. Prompts for SSID + password, sends `SET_WIFI`, then
-//! `REBOOT_TO_RUN`.
-//!
-//! The password is read with `dialoguer::Password` (no echo), held in a
-//! `String` only as long as needed, and zeroized on `Drop` via the helper
-//! in `cdc.rs`. Neither SSID nor password ever hits disk.
-
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
-use dialoguer::{theme::ColorfulTheme, Input, Password};
+use anyhow::{Context, Result, bail};
+use dialoguer::{Input, Password, theme::ColorfulTheme};
 use zeroize::Zeroize;
 
 use crate::tui::select;
 use crate::{cdc, cmd_run, pico_mode, udp_auth};
 
-pub async fn run() -> Result<()> {
-    println!("couchlink configure-wifi");
-    println!();
-    println!(
+pub(crate) async fn run() -> Result<()> {
+    outln!("couchlink configure-wifi");
+    outln!();
+    outln!(
         "Looking for a Pico in setup mode (VID 0x{:04X}, PID 0x{:04X})...",
         cdc::SETUP_VID,
         cdc::SETUP_PID
@@ -31,21 +23,20 @@ pub async fn run() -> Result<()> {
     configure_setup_port(port).await
 }
 
-pub async fn run_for_port(port: String) -> Result<()> {
-    println!("couchlink configure-wifi");
-    println!();
+pub(crate) async fn run_for_port(port: String) -> Result<()> {
+    outln!("couchlink configure-wifi");
+    outln!();
     configure_setup_port(port).await
 }
 
 async fn configure_setup_port(port: String) -> Result<()> {
-    println!("Found Pico on {port}");
+    outln!("Found Pico on {port}");
 
-    // dialoguer is blocking; isolate it from the async runtime.
     let mut creds = tokio::task::spawn_blocking(prompt_credentials).await??;
 
     let mut pico = cdc::PicoSetup::open_named(&port).context("opening CDC port for setup")?;
     let hello = pico.hello().context("CDC HELLO failed")?;
-    println!(
+    outln!(
         "  -> Pico firmware v{} (proto v{}, board 0x{:02X})",
         hello.firmware_version(),
         hello.proto_version,
@@ -59,26 +50,22 @@ async fn configure_setup_port(port: String) -> Result<()> {
         );
     }
 
-    // Move fields out of `creds` without destructuring (Drop on the parent
-    // would forbid the destructure-move). After the takes, `creds.password`
-    // is an empty String and the eventual Drop is a no-op.
     let before_wifi = wifi_uid_set().await?;
     let ssid = std::mem::take(&mut creds.ssid);
     let mut password = std::mem::take(&mut creds.password);
     drop(creds);
-    println!("Sending Wi-Fi credentials to Pico...");
+    outln!("Sending Wi-Fi credentials to Pico...");
     let result = pico.set_wifi(&ssid, &mut password);
-    // set_wifi zeroizes on success; double-belt for the error path.
     password.zeroize();
     drop(password);
     result.context("SET_WIFI failed")?;
     let paired = udp_auth::provision(&mut pico)?;
-    println!("  -> {}", udp_auth::pairing_summary(paired));
-    println!("  -> stored. Asking Pico to reboot into run mode.");
+    outln!("  -> {}", udp_auth::pairing_summary(paired));
+    outln!("  -> stored. Asking Pico to reboot into run mode.");
 
     pico.reboot_to_run().context("REBOOT_TO_RUN failed")?;
-    println!();
-    println!("Pico will reboot. Waiting up to 60 s for a Wi-Fi reply...");
+    outln!();
+    outln!("Pico will reboot. Waiting up to 60 s for a Wi-Fi reply...");
     print_discovered_pico_ips(before_wifi).await?;
     Ok(())
 }
@@ -91,16 +78,16 @@ async fn find_setup_port_or_recover() -> Result<Option<String>> {
         }
     }
 
-    println!();
-    println!("No setup-mode USB appeared yet.");
-    println!("Checking whether the Pico is already running on Wi-Fi...");
+    outln!();
+    outln!("No setup-mode USB appeared yet.");
+    outln!("Checking whether the Pico is already running on Wi-Fi...");
     match cmd_run::discover_picos(Duration::from_secs(5)).await {
         Ok(picos) if !picos.is_empty() => return handle_running_picos(picos).await,
         Ok(_) => {}
-        Err(e) => println!("Wi-Fi discovery check failed: {e:#}"),
+        Err(e) => outln!("Wi-Fi discovery check failed: {e:#}"),
     }
 
-    println!("No running Pico replied on Wi-Fi either. Continuing to wait for setup-mode USB...");
+    outln!("No running Pico replied on Wi-Fi either. Continuing to wait for setup-mode USB...");
     pico_mode::wait_for_setup_port(Duration::from_secs(47))
         .await
         .map(Some)
@@ -112,17 +99,20 @@ async fn find_setup_port_or_recover() -> Result<Option<String>> {
 }
 
 async fn handle_running_picos(mut picos: Vec<cmd_run::PicoTarget>) -> Result<Option<String>> {
-    println!("Found running Pico board(s) on Wi-Fi:");
+    outln!("Found running Pico board(s) on Wi-Fi:");
     for (idx, pico) in picos.iter().enumerate() {
-        println!("  {}. {}", idx + 1, pico.detail_label());
+        outln!("  {}. {}", idx + 1, pico.detail_label());
     }
-    println!();
-    println!("That means the Pico kept saved Wi-Fi and booted into its saved input mode.");
+    outln!();
+    outln!("That means the Pico kept saved Wi-Fi and booted into its saved input mode.");
 
     let pico = if picos.len() == 1 {
         picos.remove(0)
     } else {
-        let items: Vec<String> = picos.iter().map(|p| p.detail_label()).collect();
+        let items: Vec<String> = picos
+            .iter()
+            .map(super::cmd_run::PicoTarget::detail_label)
+            .collect();
         let idx = select("Which Pico should change Wi-Fi?", &items, 0).await?;
         picos.remove(idx)
     };
@@ -134,16 +124,16 @@ async fn handle_running_picos(mut picos: Vec<cmd_run::PicoTarget>) -> Result<Opt
     ];
     match select("Next step", &choices, 0).await? {
         0 => {
-            println!("Keeping current Wi-Fi. Next: choose `Start streaming` from the main menu.");
+            outln!("Keeping current Wi-Fi. Next: choose `Start streaming` from the main menu.");
             Ok(None)
         }
         1 => {
-            println!(
+            outln!(
                 "Asking {} to reboot into setup-mode USB...",
                 pico.short_label()
             );
             pico_mode::request_reboot_to_setup(&pico).await?;
-            println!("Waiting for setup-mode USB...");
+            outln!("Waiting for setup-mode USB...");
             pico_mode::wait_for_setup_port(Duration::from_secs(60))
                 .await
                 .map(Some)
@@ -161,12 +151,6 @@ async fn print_discovered_pico_ips(before: BTreeSet<u32>) -> Result<()> {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(60);
     let mut next_beat = started + Duration::from_secs(10);
-    // The setup-mode COM port we just rebooted lingers in the OS for a
-    // second or two after REBOOT_TO_RUN, before the board re-enumerates as
-    // the XInput device. Only treat a setup port as a genuine bounce
-    // back to setup once it has first disappeared -- otherwise the stale
-    // pre-reboot port reads as an instant "didn't join" even when the board
-    // went on to join Wi-Fi normally.
     let mut setup_port_gone = false;
     loop {
         let picos = cmd_run::discover_picos(Duration::from_secs(2)).await?;
@@ -177,33 +161,30 @@ async fn print_discovered_pico_ips(before: BTreeSet<u32>) -> Result<()> {
         }
 
         match cdc::find_setup_port() {
-            // No setup port right now: the reboot took effect. A setup port
-            // that appears *after* this point is a real bounce-back.
             Err(_) => setup_port_gone = true,
             Ok(port) if setup_port_gone => {
-                println!();
-                println!("The Pico came back in setup-mode USB before joining Wi-Fi.");
-                println!("That usually means the SSID was not found, the password was rejected, or DHCP never completed.");
+                outln!();
+                outln!("The Pico came back in setup-mode USB before joining Wi-Fi.");
+                outln!(
+                    "That usually means the SSID was not found, the password was rejected, or DHCP never completed."
+                );
                 print_setup_mode_diag(&port).await;
-                println!("Fix the Wi-Fi details, then run `couchlink configure-wifi` again.");
+                outln!("Fix the Wi-Fi details, then run `couchlink configure-wifi` again.");
                 return Ok(());
             }
-            // Pre-reboot setup port still lingering; ignore and keep waiting.
             Ok(_) => {}
         }
 
         let now = Instant::now();
         if now >= deadline {
-            println!("No Pico replied yet.");
-            println!("If your router shows its IP, choose `Enter Pico IP manually` from the menu.");
-            println!(
-                "If it still fails, run `couchlink bundle` and attach the zip to a bug report."
-            );
+            outln!("No Pico replied yet.");
+            outln!("If your router shows its IP, choose `Enter Pico IP manually` from the menu.");
+            outln!("If it still fails, run `couchlink bundle` and attach the zip to a bug report.");
             return Ok(());
         }
         if now >= next_beat {
             let elapsed = now.duration_since(started).as_secs();
-            println!("  ... still waiting for Wi-Fi reply ({elapsed}/60s)");
+            outln!("  ... still waiting for Wi-Fi reply ({elapsed}/60s)");
             next_beat = now + Duration::from_secs(10);
         }
     }
@@ -219,7 +200,7 @@ async fn wifi_uid_set() -> Result<BTreeSet<u32>> {
 
 fn print_pico_ips(picos: &[cmd_run::PicoTarget]) {
     for pico in picos {
-        println!(
+        outln!(
             "Pico replied at {}  fw v{}  uid 0x{:08X}",
             pico.peer,
             pico.info.firmware_version(),
@@ -227,11 +208,11 @@ fn print_pico_ips(picos: &[cmd_run::PicoTarget]) {
         );
     }
     if picos.len() == 1 {
-        println!("Confirmed Pico IP: {}", picos[0].peer.ip());
+        outln!("Confirmed Pico IP: {}", picos[0].peer.ip());
     } else {
-        println!("Confirmed Pico IPs:");
+        outln!("Confirmed Pico IPs:");
         for pico in picos {
-            println!("  {}  {}", pico.peer.ip(), pico.short_label());
+            outln!("  {}  {}", pico.peer.ip(), pico.short_label());
         }
     }
 }
@@ -246,13 +227,11 @@ async fn print_setup_mode_diag(port: &str) {
 
     match result {
         Ok(Ok((text, lost))) if !text.trim().is_empty() => {
-            println!();
+            outln!();
             if lost > 0 {
-                println!(
-                    "--- firmware Wi-Fi log (last 40 lines; {lost} older byte(s) dropped) ---"
-                );
+                outln!("--- firmware Wi-Fi log (last 40 lines; {lost} older byte(s) dropped) ---");
             } else {
-                println!("--- firmware Wi-Fi log (last 40 lines) ---");
+                outln!("--- firmware Wi-Fi log (last 40 lines) ---");
             }
             let lines: Vec<&str> = text
                 .lines()
@@ -271,22 +250,22 @@ async fn print_setup_mode_diag(port: &str) {
                     || line.contains("auth rejected")
                     || line.contains("SSID not found")
                 {
-                    println!(">>> {line}");
+                    outln!(">>> {line}");
                 } else {
-                    println!("    {line}");
+                    outln!("    {line}");
                 }
             }
-            println!("--- end of firmware Wi-Fi log ---");
-            println!();
+            outln!("--- end of firmware Wi-Fi log ---");
+            outln!();
         }
         Ok(Ok((_text, _lost))) => {
-            println!("The firmware log was empty.");
+            outln!("The firmware log was empty.");
         }
         Ok(Err(e)) => {
-            println!("Could not read firmware log over setup USB: {e:#}");
+            outln!("Could not read firmware log over setup USB: {e:#}");
         }
         Err(e) => {
-            println!("Could not read firmware log over setup USB: {e}");
+            outln!("Could not read firmware log over setup USB: {e}");
         }
     }
 }
@@ -303,22 +282,18 @@ impl Drop for Credentials {
 }
 
 fn prompt_credentials() -> Result<Credentials> {
-    // Non-interactive override for scripted / headless provisioning: when
-    // both COUCHLINK_WIFI_SSID and COUCHLINK_WIFI_PASSWORD are set, use them
-    // instead of prompting. Same length limits as the interactive path.
-    // Env vars keep the password out of argv and shell history.
-    if let Ok(ssid) = std::env::var("COUCHLINK_WIFI_SSID") {
-        if !ssid.is_empty() {
-            let password = std::env::var("COUCHLINK_WIFI_PASSWORD").unwrap_or_default();
-            if ssid.len() > 32 {
-                bail!("COUCHLINK_WIFI_SSID can't be longer than 32 bytes");
-            }
-            if password.len() > 63 {
-                bail!("COUCHLINK_WIFI_PASSWORD can't be longer than 63 bytes (WPA2 limit)");
-            }
-            println!("Using Wi-Fi credentials from COUCHLINK_WIFI_SSID/PASSWORD.");
-            return Ok(Credentials { ssid, password });
+    if let Ok(ssid) = std::env::var("COUCHLINK_WIFI_SSID")
+        && !ssid.is_empty()
+    {
+        let password = std::env::var("COUCHLINK_WIFI_PASSWORD").unwrap_or_default();
+        if ssid.len() > 32 {
+            bail!("COUCHLINK_WIFI_SSID can't be longer than 32 bytes");
         }
+        if password.len() > 63 {
+            bail!("COUCHLINK_WIFI_PASSWORD can't be longer than 63 bytes (WPA2 limit)");
+        }
+        outln!("Using Wi-Fi credentials from COUCHLINK_WIFI_SSID/PASSWORD.");
+        return Ok(Credentials { ssid, password });
     }
     let theme = ColorfulTheme::default();
     let ssid: String = Input::with_theme(&theme)

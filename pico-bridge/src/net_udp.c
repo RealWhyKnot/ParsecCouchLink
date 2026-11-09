@@ -24,12 +24,6 @@
 #include "usb_packet_debug.h"
 #include "version.h"
 
-// Translate an lwIP err_t to a short name. Without this every
-// udp_sendto failure looks the same in pico-diag.txt -- with it,
-// memory pressure (ERR_MEM, often a sign that PBUF_POOL_SIZE needs
-// raising under burst), routing failures (ERR_RTE, AP dropped),
-// netif-down (ERR_IF), and config bugs (ERR_VAL / ERR_ARG) are
-// distinguishable at a glance.
 static const char *lwip_err_name(err_t e) {
     switch (e) {
     case ERR_OK:
@@ -95,29 +89,13 @@ static const char *lwip_err_name(err_t e) {
 #define TYPE_PICO_STATE 0x88
 
 #define FLAG_PARSEC_CONNECTED 0x01
-// Capability bit set in ACK[3] (the flags byte, formerly always zero)
-// so the bridge can detect optional diagnostic request support without
-// the protocol version bumping. Keeps old bridges compatible: they
-// decode the flags byte but ignore unrecognised bits.
 #define ACK_FLAG_LOG_CHUNK_SUPPORTED 0x01
 #define ACK_FLAG_USB_DIAG_SUPPORTED 0x02
 #define ACK_FLAG_REBOOT_SETUP_SUPPORTED 0x04
-// Set when this Pico is currently presenting the HID keyboard persona,
-// so the bridge knows to stream key reports instead of pad state. Also
-// implicitly advertises that SET_PERSONA is understood.
 #define ACK_FLAG_KEYBOARD_PERSONA 0x08
-// Set when this firmware answers TYPE_GET_VERSION with the exact build
-// revision and optional four-character development suffix.
 #define ACK_FLAG_FULL_VERSION_SUPPORTED 0x10
-// Set when this Pico is currently in Dreamcast Maple adapter mode. It
-// consumes the same STATE packets and emits the same Xbox-compatible USB
-// reports as the XInput persona.
 #define ACK_FLAG_MAPLE_PERSONA 0x20
-// Set when this Pico is currently in PS3 HID mode. Combined with
-// ACK_FLAG_ALT_PERSONA for PS4 HID mode.
 #define ACK_FLAG_DINPUT_PERSONA 0x40
-// Persona extension flag. Alone it marks Bluetooth HID. Exact extended
-// combinations mark additional Bluetooth HID target layouts.
 #define ACK_FLAG_ALT_PERSONA 0x80
 
 #define USB_DIAG_WIRE_SIZE 104
@@ -134,14 +112,10 @@ static const char *lwip_err_name(err_t e) {
 #define PICO_STATE_WIRE_SIZE 176
 #define PICO_STATE_VERSION 3
 
-// LogChunk layout (matches bridge protocol.rs):
-//   header (12 bytes) + payload (<= 256 bytes) + crc16 (2 bytes)
 #define LOG_CHUNK_HEADER_LEN 12
 #define LOG_CHUNK_MAX_PAYLOAD 256
 #define LOG_CHUNK_FLAG_LAST 0x01
 
-// Diag log snapshot capacity. The ring buffer is 16 KiB; sized to match
-// so we always pull the full ring in one snapshot call.
 #define DIAG_SNAPSHOT_CAP DIAG_LOG_RING_SIZE
 
 #define LOG_REPLY_INTERVAL_MS 400u
@@ -156,8 +130,8 @@ static ip_addr_t peer_addr;
 static u16_t peer_port;
 static absolute_time_t next_keepalive;
 static uint32_t uid_short;
-static uint32_t tx_count; // ack + keepalive + log-chunk datagrams sent
-static uint32_t rx_count; // received datagrams (including malformed)
+static uint32_t tx_count;
+static uint32_t rx_count;
 static bool reboot_to_setup_pending;
 static bool set_persona_pending;
 static uint8_t set_persona_value;
@@ -172,11 +146,6 @@ static reply_gate_t auth_drop_gate;
 static uint32_t auth_drop_count;
 static bool auth_recovery_boot;
 
-// Blink-to-identify state (TYPE_IDENTIFY). The request handler only
-// records the deadline; the LED itself is driven from net_udp_task() on
-// the main loop, where cyw43_arch_gpio_put is safe alongside
-// cyw43_arch_poll. The onboard LED sits on the CYW43 chip on both the
-// Pico W and the Pico 2 W, so this needs no board-specific GPIO.
 #define IDENTIFY_MAX_SECONDS 60u
 #define IDENTIFY_TOGGLE_MS 125u
 static bool identify_active;
@@ -184,7 +153,6 @@ static bool identify_led_on;
 static absolute_time_t identify_until;
 static absolute_time_t identify_next_toggle;
 
-// CRC-8/SMBUS: poly 0x07, init 0x00, no reflect, no XOR-out.
 static uint8_t crc8(const uint8_t *data, size_t n) {
     uint8_t c = 0;
     for (size_t i = 0; i < n; i++) {
@@ -196,9 +164,6 @@ static uint8_t crc8(const uint8_t *data, size_t n) {
     return c;
 }
 
-// CRC-16/CCITT-FALSE (alias CRC-16/IBM-3740): poly 0x1021, init 0xFFFF,
-// no reflect, no XOR-out. Used for the variable-length LogChunk frames;
-// 17-byte fixed packets keep the lighter CRC-8.
 static uint16_t crc16_ccitt_false(const uint8_t *data, size_t n) {
     uint16_t c = 0xFFFF;
     for (size_t i = 0; i < n; i++) {
@@ -260,7 +225,6 @@ static void build_state_fields(uint8_t *buf, uint8_t type, uint8_t seq) {
     buf[1] = type;
     buf[2] = seq;
     buf[3] = 0;
-    // Body is 12 bytes of zeros for a Pico-side keepalive; not used.
     memset(&buf[4], 0, 12);
 }
 
@@ -272,9 +236,6 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq,
     buf[0] = MAGIC;
     buf[1] = TYPE_ACK;
     buf[2] = out_seq++;
-    // Advertise the LogChunk capability in the flags byte. Old bridges
-    // decode the flags field but ignore unknown bits; new bridges gate
-    // their CMD_GET_LOG attempt on this bit being set.
     uint8_t ack_flags = ACK_FLAG_LOG_CHUNK_SUPPORTED | ACK_FLAG_USB_DIAG_SUPPORTED |
                         ACK_FLAG_REBOOT_SETUP_SUPPORTED | ACK_FLAG_FULL_VERSION_SUPPORTED;
     if (boot_mode_run_persona() == RUN_PERSONA_KEYBOARD)
@@ -299,7 +260,6 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq,
         ack_flags |= ACK_FLAG_KEYBOARD_PERSONA | ACK_FLAG_DINPUT_PERSONA | ACK_FLAG_MAPLE_PERSONA |
                      ACK_FLAG_ALT_PERSONA;
     buf[3] = ack_flags;
-    // body[0..11]
     buf[4] = current_proto_version();
     buf[5] = PICO_BRIDGE_FW_WIRE_MAJOR;
     buf[6] = PICO_BRIDGE_FW_WIRE_MINOR;
@@ -344,16 +304,10 @@ static void send_ack(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq,
     }
 }
 
-// Push the diag-log ring out as one or more LogChunk datagrams. Bounded
-// by DIAG_SNAPSHOT_CAP / LOG_CHUNK_MAX_PAYLOAD = 64 chunks; each chunk
-// is its own pbuf_alloc/udp_sendto/pbuf_free so memory pressure shows
-// up as a per-chunk ERR_MEM rather than a single all-or-nothing alloc.
 static void send_log_chunks(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_seq) {
     static uint8_t snapshot[DIAG_SNAPSHOT_CAP];
     uint32_t lost = 0;
     size_t got = diag_log_snapshot(snapshot, sizeof(snapshot), &lost);
-    // Always send at least one chunk so the bridge sees a definitive
-    // "Pico answered, log was empty" reply instead of timing out.
     size_t total_chunks =
         (got == 0) ? 1 : ((got + LOG_CHUNK_MAX_PAYLOAD - 1) / LOG_CHUNK_MAX_PAYLOAD);
     if (total_chunks > 255)
@@ -384,8 +338,7 @@ static void send_log_chunks(const ip_addr_t *to_addr, u16_t to_port, uint8_t in_
         buf[4] = (uint8_t)total_chunks;
         buf[5] = (uint8_t)(payload_len & 0xFF);
         buf[6] = (uint8_t)((payload_len >> 8) & 0xFF);
-        buf[7] = 0; // reserved
-        // lost_bytes is meaningful only in chunk 0; zero elsewhere.
+        buf[7] = 0;
         uint32_t lost_field = (i == 0) ? lost : 0;
         buf[8] = (uint8_t)(lost_field & 0xFF);
         buf[9] = (uint8_t)((lost_field >> 8) & 0xFF);
@@ -673,9 +626,6 @@ static void apply_state_body(const uint8_t *body, uint8_t flags) {
     g_last_packet_ms = to_ms_since_boot(get_absolute_time());
 }
 
-// Keyboard packets carry the 8-byte HID boot report in the same 12-byte
-// body slot: body[0]=modifiers, body[1]=reserved (ignored), body[2..7]=
-// up to six key usage codes. The trailing body bytes are reserved zero.
 static void apply_key_body(const uint8_t *body, uint8_t flags) {
     g_keyboard_state.modifiers = body[0];
     for (int i = 0; i < 6; i++)
@@ -709,11 +659,6 @@ static uint8_t normalize_persona_byte(uint8_t persona) {
     return want;
 }
 
-// Persist a new output persona and reboot so the correct runtime path comes
-// up at the next boot. Called from the main loop (net_udp_task), never the
-// lwIP callback, so flash_safe_execute can coordinate with the cyw43 core.
-// A no-op when the persona already matches, to avoid needless flash wear
-// and a session-dropping reboot.
 static void apply_set_persona(uint8_t persona) {
     uint8_t want = normalize_persona_byte(persona);
 
@@ -730,7 +675,7 @@ static void apply_set_persona(uint8_t persona) {
 
     rec.usb_persona = want;
     int rc = flash_creds_store(&rec);
-    memset(&rec, 0, sizeof(rec)); // scrub the cleartext password copy
+    memset(&rec, 0, sizeof(rec));
     if (rc != 0) {
         diag_log_printf("net_udp: set_persona store failed rc=%d", rc);
         return;
@@ -758,7 +703,7 @@ static void apply_set_usb_capture(uint8_t persona, bool enabled) {
     if (changed) {
         rec.usb_persona = want;
         int rc = flash_creds_store(&rec);
-        memset(&rec, 0, sizeof(rec)); // scrub the cleartext password copy
+        memset(&rec, 0, sizeof(rec));
         if (rc != 0) {
             diag_log_printf("net_udp: usb_capture persona store failed rc=%d", rc);
             return;
@@ -782,9 +727,6 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
     if (!p)
         return;
     rx_count++;
-    // Use tot_len, not len: a chained pbuf has len < tot_len. Copy into a
-    // contiguous local buffer rather than reading p->payload directly so we
-    // never read past the first segment of a chain.
     u16_t len = p->tot_len;
     if (len != WIRE_PKT_SIZE && len != UDP_AUTH_SIGNED_LEN) {
         note_malformed_packet("size", len);
@@ -823,14 +765,7 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
         if (!udp_auth.keyed || !udp_auth_discover_challenge(buf, &challenge))
             challenge = NULL;
         send_ack(addr, port, seq, challenge);
-        // Don't latch the peer yet -- wait for the first STATE or
-        // HEARTBEAT, which proves end-to-end works.
     } else if (type == TYPE_GET_LOG) {
-        // The bridge's bundle command sends this when capturing diag
-        // from a running Pico. We don't require the caller to be the
-        // latched peer -- the host firewall already gates 4242 inbound,
-        // and this lets `couchlink bundle` work even when discovery is
-        // racing the latch.
         if (reply_gate_allow(&log_reply_gate, to_ms_since_boot(get_absolute_time()),
                              LOG_REPLY_INTERVAL_MS, LOG_REPLY_BURST))
             send_log_chunks(addr, port, seq);
@@ -851,7 +786,7 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
                         (udp_auth.keyed && auth == UDP_AUTH_OPEN) ? " unsigned" : "");
     } else if (type == TYPE_SET_PERSONA) {
         send_ack(addr, port, seq, NULL);
-        set_persona_value = buf[4]; // body[0] = desired FLASH_PERSONA_*
+        set_persona_value = buf[4];
         set_persona_pending = true;
         diag_log_printf("net_udp: set_persona=%u requested by %u.%u.%u.%u:%u",
                         (unsigned)set_persona_value, ip4_addr1(ip_2_ip4(addr)),
@@ -859,11 +794,10 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
                         ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
     } else if (type == TYPE_IDENTIFY) {
         send_ack(addr, port, seq, NULL);
-        uint8_t secs = buf[4]; // body[0] = blink seconds, 0 = stop
+        uint8_t secs = buf[4];
         if (secs > IDENTIFY_MAX_SECONDS)
             secs = IDENTIFY_MAX_SECONDS;
         if (secs == 0) {
-            // Expire immediately; net_udp_task turns the LED off.
             identify_until = get_absolute_time();
         } else {
             identify_until = make_timeout_time_ms((uint32_t)secs * 1000u);
@@ -875,7 +809,7 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
                         ip4_addr3(ip_2_ip4(addr)), ip4_addr4(ip_2_ip4(addr)), (unsigned)port);
     } else if (type == TYPE_SET_USB_CAPTURE) {
         send_ack(addr, port, seq, NULL);
-        set_usb_capture_persona = buf[4]; // body[0] = desired FLASH_PERSONA_*
+        set_usb_capture_persona = buf[4];
         set_usb_capture_enabled = (buf[5] != 0);
         set_usb_capture_pending = true;
         diag_log_printf("net_udp: usb_capture persona=%u enabled=%u requested by %u.%u.%u.%u:%u",
@@ -900,7 +834,6 @@ static void on_recv(void *arg, struct udp_pcb *pcb_in, struct pbuf *p, const ip_
     } else {
         note_malformed_packet("type", type);
     }
-    // pbuf already freed above after pbuf_copy_partial; nothing to do here.
 }
 
 static void send_keepalive(void) {
@@ -948,7 +881,6 @@ bool net_udp_init(void) {
     }
     udp_recv(pcb, on_recv, NULL);
 
-    // Cache the short unique-id once for ack bodies.
     pico_unique_board_id_t id;
     pico_get_unique_board_id(&id);
     uid_short = (uint32_t)id.id[0] | ((uint32_t)id.id[1] << 8) | ((uint32_t)id.id[2] << 16) |

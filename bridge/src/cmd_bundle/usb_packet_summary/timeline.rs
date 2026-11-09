@@ -1,9 +1,9 @@
 use super::{
-    support::{
-        display_field, fields, harvest_value, json_bool, json_string, json_u64, parsed_u64,
-        HARVEST_PREFIX,
-    },
     UsbPacketSummarySource,
+    support::{
+        HARVEST_PREFIX, display_field, fields, harvest_value, json_bool, json_string, json_u64,
+        parsed_u64,
+    },
 };
 
 pub(in crate::cmd_bundle) fn packet_timeline_text_for_text(
@@ -62,9 +62,9 @@ pub(in crate::cmd_bundle) fn packet_timeline_text_for_sources(
 fn packet_timeline_rows(text: &str) -> Vec<String> {
     let mut previous_t_ms = None;
     text.lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            packet_timeline_row((index + 1) as u64, line, &mut previous_t_ms)
+        .zip(1u64..)
+        .filter_map(|(line, line_number)| {
+            packet_timeline_row(line_number, line, &mut previous_t_ms)
         })
         .collect()
 }
@@ -146,33 +146,27 @@ fn packet_timeline_row(
             value
                 .as_ref()
                 .and_then(|value| json_u64(value, "duration_ms"))
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
+                .map_or_else(|| "-".to_string(), |value| value.to_string()),
             value
                 .as_ref()
                 .and_then(|value| json_bool(value, "chunk_complete"))
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
+                .map_or_else(|| "-".to_string(), |value| value.to_string()),
             value
                 .as_ref()
                 .and_then(|value| json_u64(value, "packet_lines"))
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
+                .map_or_else(|| "-".to_string(), |value| value.to_string()),
             value
                 .as_ref()
                 .and_then(|value| json_u64(value, "raw_packet_lines"))
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
+                .map_or_else(|| "-".to_string(), |value| value.to_string()),
             value
                 .as_ref()
                 .and_then(|value| json_u64(value, "new_lines"))
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "-".to_string()),
+                .map_or_else(|| "-".to_string(), |value| value.to_string()),
             value
                 .as_ref()
                 .and_then(|value| json_string(value, "error"))
-                .map(|value| sanitize_timeline_field(&value))
-                .unwrap_or_else(|| "-".to_string()),
+                .map_or_else(|| "-".to_string(), |value| sanitize_timeline_field(&value)),
         ));
     }
     None
@@ -182,15 +176,16 @@ fn timeline_delta(t_ms: Option<u64>, previous_t_ms: &mut Option<u64>) -> String 
     let Some(t_ms) = t_ms else {
         return "-".to_string();
     };
-    let delta = previous_t_ms
-        .map(|previous| {
+    let delta = previous_t_ms.map_or_else(
+        || "-".to_string(),
+        |previous| {
             if t_ms >= previous {
                 (t_ms - previous).to_string()
             } else {
                 "regression".to_string()
             }
-        })
-        .unwrap_or_else(|| "-".to_string());
+        },
+    );
     *previous_t_ms = Some(t_ms);
     delta
 }

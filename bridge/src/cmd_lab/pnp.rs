@@ -1,3 +1,4 @@
+use crate::cdc;
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
@@ -6,13 +7,13 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 
 const PNP_RECONNECT_HOLD: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum PnpHelperAction {
+pub(crate) enum PnpHelperAction {
     DisableEnable,
     RemoveRescan,
 }
@@ -27,20 +28,20 @@ impl PnpHelperAction {
 
     fn label(self) -> &'static str {
         match self {
-            PnpHelperAction::DisableEnable => "PnP disable/enable",
-            PnpHelperAction::RemoveRescan => "PnP remove/rescan",
+            PnpHelperAction::DisableEnable => "PNP disable/enable",
+            PnpHelperAction::RemoveRescan => "PNP remove/rescan",
         }
     }
 }
 
-pub fn run_pnp_helper(
+pub(crate) fn run_pnp_helper(
     action: PnpHelperAction,
-    instance_ids: Vec<String>,
+    instance_ids: &[String],
     hold_seconds: u64,
     result_file: Option<PathBuf>,
 ) -> Result<()> {
     let result = (|| {
-        let ids = validate_pnp_instance_ids(&instance_ids)?;
+        let ids = validate_pnp_instance_ids(instance_ids)?;
         run_pnp_action(&ids, action, Duration::from_secs(hold_seconds), true)
     })();
     if let Some(path) = result_file {
@@ -111,7 +112,9 @@ pub(in crate::cmd_lab) fn parse_pico_pnp_instances(text: &str) -> Vec<PnpInstanc
 
 fn pnp_instance_from_id(id: &str) -> Option<PnpInstance> {
     let upper = id.to_ascii_uppercase();
-    let (persona, serial) = if let Some(serial) = upper.strip_prefix(r"USB\VID_2E8A&PID_CAF0\") {
+    let (persona, serial) = if let Some(serial) =
+        upper.strip_prefix(format!(r"USB\{}\", cdc::setup_hardware_id()).as_str())
+    {
         (PnpPersona::Setup, serial)
     } else {
         let serial = upper.strip_prefix(r"USB\VID_045E&PID_028E\")?;
@@ -141,12 +144,12 @@ pub(in crate::cmd_lab) fn validate_pnp_instance_ids(
     instance_ids: &[String],
 ) -> Result<Vec<String>> {
     if instance_ids.is_empty() {
-        bail!("no PnP instance IDs supplied");
+        bail!("no PNP instance IDs supplied");
     }
     let mut validated = Vec::with_capacity(instance_ids.len());
     for id in instance_ids {
         if pnp_instance_from_id(id).is_none() {
-            bail!("refusing to touch non-CouchLink Pico PnP instance ID: {id}");
+            bail!("refusing to touch non-CouchLink Pico PNP instance ID: {id}");
         }
         validated.push(id.clone());
     }
@@ -193,7 +196,7 @@ fn run_pnp_disable_enable(
     allow_force_disable: bool,
 ) -> Result<()> {
     if instance_ids.is_empty() {
-        bail!("no PnP instance IDs supplied");
+        bail!("no PNP instance IDs supplied");
     }
 
     let mut disabled = Vec::new();
@@ -226,7 +229,7 @@ fn run_pnp_disable_enable(
 
 fn run_pnp_remove_rescan(instance_ids: &[String], hold: Duration, allow_force: bool) -> Result<()> {
     if instance_ids.is_empty() {
-        bail!("no PnP instance IDs supplied");
+        bail!("no PNP instance IDs supplied");
     }
 
     let result = (|| {
@@ -386,12 +389,12 @@ fn run_elevated_pnp_helper(instance_ids: &[String], action: PnpHelperAction) -> 
             &script,
         ])
         .status()
-        .context("starting elevated PnP helper")?;
+        .context("starting elevated PNP helper")?;
     if !status.success() {
         let helper_result = fs::read_to_string(&result_file)
             .unwrap_or_else(|e| format!("could not read helper result file: {e}"));
         bail!(
-            "elevated PnP helper exited with {status}; helper result: {}",
+            "elevated PNP helper exited with {status}; helper result: {}",
             helper_result.trim()
         );
     }
@@ -425,10 +428,11 @@ pub(in crate::cmd_lab) fn problem_usb_devices() -> Vec<String> {
 }
 
 pub(in crate::cmd_lab) fn parse_problem_usb_devices(text: &str) -> Vec<String> {
+    let pico_id = cdc::setup_hardware_id();
     text.lines()
         .filter(|line| {
             let upper = line.to_ascii_uppercase();
-            upper.contains("VID_2E8A&PID_CAF0") || upper.contains("VID_045E&PID_028E")
+            upper.contains(pico_id.as_str()) || upper.contains("VID_045E&PID_028E")
         })
         .map(|line| line.trim().to_string())
         .collect()

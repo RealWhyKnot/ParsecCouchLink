@@ -1,13 +1,3 @@
-# Standard CMake boilerplate to locate or fetch the pico-sdk.
-#
-# Resolution order (first match wins):
-#   1. $PICO_SDK_PATH environment variable
-#   2. $PICO_SDK_FETCH_FROM_GIT (clone into build dir at configure time)
-#   3. error
-#
-# The contents below are based on the canonical pico_sdk_import.cmake
-# shipped in the pico-sdk repo, simplified for direct use here.
-
 if (DEFINED ENV{PICO_SDK_PATH} AND (NOT PICO_SDK_PATH))
     set(PICO_SDK_PATH $ENV{PICO_SDK_PATH})
     message(STATUS "Using PICO_SDK_PATH from environment: ${PICO_SDK_PATH}")
@@ -17,8 +7,6 @@ if (NOT PICO_SDK_PATH)
     if (PICO_SDK_FETCH_FROM_GIT OR DEFINED ENV{PICO_SDK_FETCH_FROM_GIT})
         include(FetchContent)
         set(FETCHCONTENT_BASE_DIR_save ${FETCHCONTENT_BASE_DIR})
-        # Share the SDK clone across per-board build dirs (build-pico2w/,
-        # build-picow/, etc.) so dual-board builds don't re-clone ~200 MB.
         set(FETCHCONTENT_BASE_DIR ${CMAKE_SOURCE_DIR}/build-_pico_sdk)
         set(PICO_SDK_FETCH_FROM_GIT_TAG "2.2.0" CACHE STRING "pico-sdk git tag")
         FetchContent_Declare(
@@ -30,14 +18,6 @@ if (NOT PICO_SDK_PATH)
         FetchContent_GetProperties(pico_sdk)
         if (NOT pico_sdk_POPULATED)
             message(STATUS "Fetching pico-sdk @ ${PICO_SDK_FETCH_FROM_GIT_TAG}")
-            # CMake 3.30 deprecated calling FetchContent_Populate(name) after
-            # FetchContent_Declare(name). The replacement, FetchContent_Make-
-            # Available, also calls add_subdirectory on the populated source.
-            # That is not the right pattern for the pico-sdk: it is included
-            # later via pico_sdk_init.cmake, not added as a subproject. Pin
-            # CMP0169 to OLD locally so we keep the manual Populate flow
-            # without spamming the configure log. Stays valid until CMP0169
-            # is removed outright, which has not been scheduled.
             cmake_policy(PUSH)
             if (POLICY CMP0169)
                 cmake_policy(SET CMP0169 OLD)

@@ -1,12 +1,9 @@
-//! Filesystem collection helpers: rotated logs, crash dumps, and setup
-//! transcript discovery for the bundle zip.
-
 use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 use crate::config;
 
@@ -38,8 +35,7 @@ pub(super) fn bundle_log_prefix(
                 let ok = p.is_file()
                     && p.file_name()
                         .and_then(|n| n.to_str())
-                        .map(|n| n.starts_with(prefix) && n.ends_with(".log"))
-                        .unwrap_or(false);
+                        .is_some_and(|n| n.starts_with(prefix) && n.strip_suffix(".log").is_some());
                 if ok {
                     paths.push(p);
                 }
@@ -89,10 +85,10 @@ pub(super) fn collect_crash_file_names() -> Vec<String> {
     for entry in entries {
         match entry {
             Ok(e) => {
-                if e.path().is_file() {
-                    if let Ok(name) = e.file_name().into_string() {
-                        out.push(name);
-                    }
+                if e.path().is_file()
+                    && let Ok(name) = e.file_name().into_string()
+                {
+                    out.push(name);
                 }
             }
             Err(e) => tracing::debug!("bundle: skip crash entry: {e}"),
@@ -119,12 +115,12 @@ pub(super) fn collect_setup_transcript_names() -> Vec<String> {
     for entry in entries {
         match entry {
             Ok(e) => {
-                if e.path().is_file() {
-                    if let Ok(name) = e.file_name().into_string() {
-                        if name.starts_with("setup-") && name.ends_with(".log") {
-                            names.push(name);
-                        }
-                    }
+                if e.path().is_file()
+                    && let Ok(name) = e.file_name().into_string()
+                    && name.starts_with("setup-")
+                    && name.strip_suffix(".log").is_some()
+                {
+                    names.push(name);
                 }
             }
             Err(e) => tracing::debug!("bundle: skip log entry: {e}"),

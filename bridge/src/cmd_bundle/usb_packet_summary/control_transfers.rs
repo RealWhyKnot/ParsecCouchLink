@@ -1,7 +1,7 @@
 use super::{
+    UsbPacketSummarySource,
     decode::{control_payload_decode_text, setup_decode_text},
     support::{display_field, fields},
-    UsbPacketSummarySource,
 };
 
 pub(in crate::cmd_bundle) fn control_transfers_text_for_text(
@@ -58,8 +58,8 @@ pub(in crate::cmd_bundle) fn control_transfers_text_for_sources(
 
 fn control_transfer_rows(text: &str) -> Vec<String> {
     text.lines()
-        .enumerate()
-        .filter_map(|(index, line)| control_transfer_row((index + 1) as u64, line))
+        .zip(1u64..)
+        .filter_map(|(line, line_number)| control_transfer_row(line_number, line))
         .collect()
 }
 

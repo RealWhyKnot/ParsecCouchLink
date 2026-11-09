@@ -1,11 +1,3 @@
-# Host-side unit tests for the pure-C CDC framing. This is a standalone
-# project on purpose: it does NOT pull in the Pico SDK or the ARM
-# cross-toolchain, so it configures and runs with the host compiler both
-# locally and in CI.
-#
-#   cmake -S pico-bridge/tests -B build-host-tests
-#   cmake --build build-host-tests --config Debug
-#   ctest --test-dir build-host-tests -C Debug --output-on-failure
 cmake_minimum_required(VERSION 3.13)
 project(couchlink_host_tests C)
 

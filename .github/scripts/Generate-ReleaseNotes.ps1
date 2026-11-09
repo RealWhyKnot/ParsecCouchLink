@@ -1,108 +1,4 @@
 #!/usr/bin/env pwsh
-<#
-.SYNOPSIS
-  Generate the GitHub release body for a tag from the git-log slice,
-  per-repo template sections, and the release manifest.
-
-.DESCRIPTION
-  Composes a multi-section markdown body for the release page. Section order:
-
-    1. Title (h1: "<repo> <tag>")
-    2. What's Changed (auto-changelog from the commit slice between prev tag
-       and this tag; bucketed by conventional-commit prefix)
-    3. File integrity (pointer to the attached integrity and manifest TSV assets)
-    4. More (from .github/release-template/links.md, with token substitution)
-    5. Install (fresh) (from .github/release-template/install.md)
-    6. Uninstall (from .github/release-template/uninstall.md)
-    7. What you need to do (from .github/release-template/what-you-need-to-do.md)
-    8. Optional extras (from .github/release-extras/<tag>.md if present;
-       appended below with `---` separator and `## Additional notes` heading)
-
-  Slice composition: walks commits between prev tag and current tag. Stable
-  release tags use the previous stable tag as their base, so any beta notes
-  since the last stable release are included in the stable release body. Beta
-  and dev tags keep using the nearest previous tag. Skips merge commits and
-  commits containing "[skip changelog]". Strips trailing version-stamp noise
-  of the form " (YYYY.M.D.N-XXXX)" that some repos append to subjects. Groups
-  by conventional-commit prefix when at least one entry has one, otherwise
-  emits a flat bullet list.
-
-  Prev-tag resolution is layered for resilience against history rewrites that
-  orphan the prior tag (rebase + force-push of main): describe + sanity gate,
-  then subject-match against the most recent published GitHub release. If no
-  prior tag or release exists, the body uses the curated CHANGELOG first-release
-  section instead of walking the repository's full pre-release history.
-
-  Templates and the optional extras file run through the same ASCII
-  normalisation as commit subjects.
-
-  Outputs the markdown body to stdout. Throws on:
-    * empty slice (no qualifying commits between prev and current tag)
-    * wording patterns that do not belong in public release notes
-    * non-ASCII characters in the final body (after a normalisation pass)
-
-  Each failure prints a remediation hint naming the commit, template, or
-  extras file that needs a plain public wording fix.
-
-  Requires the checkout step to have used fetch-depth: 0 (or otherwise have
-  the full history + tags available).
-
-.PARAMETER Tag
-  The release tag being built (e.g. "v2026.4.28.0"). Defaults to env:TAG_NAME
-  or env:GITHUB_REF_NAME.
-
-.PARAMETER Repo
-  GitHub "owner/repo" slug for the compare link. Defaults to env:GITHUB_REPOSITORY.
-
-.PARAMETER Extras
-  Optional path to a markdown file whose contents get appended verbatim
-  below all auto sections. Used for release-specific narrative that does
-  not fit a commit subject (migration steps, server-side coordination
-  notes, etc.). Default: ".github/release-extras/<tag>.md".
-
-.PARAMETER TemplateDir
-  Directory containing the per-section evergreen templates: links.md,
-  install.md, uninstall.md, what-you-need-to-do.md. Templates undergo
-  token substitution (see README in this directory) before emission.
-  Default: ".github/release-template".
-
-.PARAMETER Manifest
-  Path to the per-file manifest emitted by build.ps1 alongside the zip.
-  Tab-separated path, byte count, and sha256 rows. Referenced by the File
-  integrity section.
-  Required (along with -ZipPath, -ZipSize, -ZipSha256) for the File
-  integrity section to render; otherwise that section is skipped.
-
-.PARAMETER ZipPath
-  Path to the release zip artifact. Used to derive the zip name when
-  -ZipName is not set, and as a presence check for the File integrity
-  section.
-
-.PARAMETER ZipName
-  Override for the zip's display name in the File integrity section.
-  Defaults to the leaf of -ZipPath.
-
-.PARAMETER ZipSize
-  Size in bytes of the release zip. Used by the File integrity section.
-
-.PARAMETER ZipSha256
-  SHA256 of the release zip. Used by the File integrity section.
-
-.PARAMETER AllowEmpty
-  Skip the empty-slice guard. Use only for the very first release on a repo
-  where there is no prior tag and the tag-range trick yields nothing
-  meaningful. Default: $false.
-
-.PARAMETER PrereleaseTags
-  Additional tag names to treat as prereleases when resolving the stable
-  release base. The script also reads GitHub release metadata when -Repo is
-  available; this parameter covers older tags or tests where metadata is not
-  available.
-
-.PARAMETER SkipScrub
-  Skip the ASCII scrub. Escape hatch for unblocking edge cases;
-  the workflow should never set this. Default: $false.
-#>
 [CmdletBinding()]
 param(
     [string] $Tag = $(if ($env:TAG_NAME) { $env:TAG_NAME } else { $env:GITHUB_REF_NAME }),
@@ -112,7 +8,7 @@ param(
     [string] $Manifest = $null,
     [string] $ZipPath = $null,
     [string] $ZipName = $null,
-    [long]   $ZipSize = 0,
+    [long] $ZipSize = 0,
     [string] $ZipSha256 = $null,
     [switch] $AllowEmpty,
     [string[]] $PrereleaseTags = @(),
@@ -120,201 +16,26 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 
-if (-not $Tag) { throw "No tag provided (pass -Tag or set TAG_NAME / GITHUB_REF_NAME)." }
+function Read-Utf8File {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory = $true)][string] $Path)
 
-# Default extras path conventionally lives under .github/release-extras/<tag>.md
-# next to the workflow that consumes it. Resolve relative to the caller's CWD,
-# not the script dir, so the workflow can invoke the script from repo root.
-if (-not $Extras) {
-    $Extras = Join-Path -Path (Get-Location) -ChildPath ".github/release-extras/$Tag.md"
+    $fullPath = (Resolve-Path -LiteralPath $Path).Path
+    return [IO.File]::ReadAllText($fullPath, [System.Text.Encoding]::UTF8)
 }
 
-# Default template dir for the per-section evergreen content (More, Install,
-# Uninstall, What you need to do). Each repo curates its own content here;
-# the composer reads `<TemplateDir>/<section>.md` and runs token substitution
-# on the contents before emitting it as a section of the release body.
-if (-not $TemplateDir) {
-    $TemplateDir = Join-Path -Path (Get-Location) -ChildPath ".github/release-template"
-}
+function Read-ChangelogNote {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string] $Version)
 
-# Resolve previous tag. Layered fallback so a history rewrite that orphans the
-# prior tag does not produce a giant slice from pre-release history:
-#   1. `git describe --tags --abbrev=0 <tag>^` finds the most recent tag
-#      reachable from $Tag^ along the current line of history. Stable tags
-#      exclude prerelease/dev tags from this probe so a stable release after a
-#      beta includes the beta's changes in the public release body. Sanity
-#      gate: if the slice is more than 50 commits, treat the describe result as
-#      stale (likely orphaned by a rewrite) and fall through.
-#   2. Ask GitHub for the most recent published non-prerelease release. Look
-#      up its tag in the local repo (the SHA may be orphaned in current
-#      history but the object still exists in git's DB). Read the orphan
-#      commit's subject. Walk current $Tag history looking for that exact
-#      subject; use the matched SHA as the slice anchor. This works because
-#      a typical rebase preserves commit subjects even when SHAs change.
-#   3. Date anchoring is NOT used: a force-push rebase rewrites every
-#      commit's committer-date, so --since against the prev release's
-#      publishedAt walks the full rewritten history instead of the slice.
-#   4. If layers 1+2 yield nothing, treat the tag as the first release and
-#      use the curated CHANGELOG section instead of walking the full repository
-#      history.
-# Emits a ::warning:: when layer 2 or 4 fires so workflow logs show that a
-# fallback was used.
-function Get-KnownPrereleaseTags([string]$Repo, [string[]]$AdditionalTags) {
-    $set = @{}
-    foreach ($tagName in $AdditionalTags) {
-        if ($tagName) { $set[$tagName] = $true }
-    }
-
-    if ($Repo) {
-        $listJson = & gh release list --repo $Repo --limit 100 --json tagName,isPrerelease 2>$null
-        if ($LASTEXITCODE -eq 0 -and $listJson) {
-            try {
-                $releases = $listJson | ConvertFrom-Json
-                foreach ($release in $releases) {
-                    if ($release.isPrerelease -and $release.tagName) {
-                        $set[$release.tagName] = $true
-                    }
-                }
-            }
-            catch {
-                Write-Host "::warning::Failed to parse 'gh release list' output while reading prerelease tags: $_."
-            }
-        }
-    }
-
-    return $set
-}
-
-function Test-IsPrereleaseTag([string]$Tag, [hashtable]$KnownPrereleaseTags) {
-    if ($KnownPrereleaseTags -and $KnownPrereleaseTags.ContainsKey($Tag)) { return $true }
-    return $Tag -match '^v?\d{4}\.\d+\.\d+\.\d+-.+'
-}
-
-function Resolve-PrevTagForSlice([string]$Tag, [string]$Repo, [string[]]$AdditionalPrereleaseTags) {
-    # Function-local relaxation of EAP. The script's outer Stop is intact
-    # for non-git logic, but the prev-tag probes legitimately fail in
-    # several cases (no tags yet, orphaned tags after rewrite, gh not
-    # authed) and need to be soft-failures here.
-    $ErrorActionPreference = 'Continue'
-
-    $knownPrereleaseTags = Get-KnownPrereleaseTags -Repo $Repo -AdditionalTags $AdditionalPrereleaseTags
-
-    # Layer 1: describe + sanity gate.
-    $describeArgs = @('describe', '--tags', '--abbrev=0')
-    if (-not (Test-IsPrereleaseTag -Tag $Tag -KnownPrereleaseTags $knownPrereleaseTags)) {
-        $describeArgs += @('--exclude', '*-*')
-        foreach ($preTag in $knownPrereleaseTags.Keys) {
-            if ($preTag -and $preTag -ne $Tag) {
-                $describeArgs += @('--exclude', $preTag)
-            }
-        }
-    }
-    $describeArgs += "$Tag^"
-    $prevRef = & git @describeArgs 2>$null
-    if ($LASTEXITCODE -eq 0 -and $prevRef) {
-        $prevTag = $prevRef.Trim()
-        $count = & git rev-list --count "$prevTag..$Tag" 2>$null
-        if ($LASTEXITCODE -eq 0 -and [int]$count -le 50) {
-            return @{
-                Tag     = $prevTag
-                LogArgs = @("$prevTag..$Tag")
-                Display = "$prevTag..$Tag"
-                Source  = 'describe'
-            }
-        }
-        Write-Host "::warning::Slice from $prevTag..$Tag is $count commits (>50 cap). Falling back to subject-match against the most recent published release."
-    }
-
-    # Layer 2: subject-match the most recent published GitHub release.
-    if ($Repo) {
-        $listJson = & gh release list --repo $Repo --limit 20 --json tagName,publishedAt,isPrerelease 2>$null
-        if ($LASTEXITCODE -eq 0 -and $listJson) {
-            $candidatePrevTag = $null
-            try {
-                $releases = $listJson | ConvertFrom-Json
-                $candidate = $releases |
-                    Where-Object { $_.tagName -ne $Tag -and -not $_.isPrerelease } |
-                    Sort-Object publishedAt -Descending |
-                    Select-Object -First 1
-                if ($candidate) { $candidatePrevTag = $candidate.tagName }
-            }
-            catch {
-                Write-Host "::warning::Failed to parse 'gh release list' output: $_."
-            }
-
-            if ($candidatePrevTag) {
-                $orphanSha = & git rev-list -n 1 $candidatePrevTag 2>$null
-                if ($LASTEXITCODE -eq 0 -and $orphanSha) {
-                    $orphanSha = $orphanSha.Trim()
-                    & git merge-base --is-ancestor $orphanSha $Tag 2>$null
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Host "::warning::Using published stable release $candidatePrevTag as slice base after describe exceeded the sanity cap."
-                        return @{
-                            Tag     = $candidatePrevTag
-                            LogArgs = @("$candidatePrevTag..$Tag")
-                            Display = "$candidatePrevTag..$Tag"
-                            Source  = 'published-release'
-                        }
-                    }
-
-                    $orphanSubject = & git show -s --format=%s $orphanSha 2>$null
-                    if ($LASTEXITCODE -eq 0 -and $orphanSubject) {
-                        $rebasedSha = $null
-                        $logLines = & git log $Tag --format='%H%x09%s' 2>$null
-                        if ($LASTEXITCODE -eq 0 -and $logLines) {
-                            $lineArr = if ($logLines -is [array]) { $logLines } else { , $logLines }
-                            foreach ($line in $lineArr) {
-                                if (-not $line) { continue }
-                                $parts = $line -split "`t", 2
-                                if ($parts.Count -eq 2 -and $parts[1] -eq $orphanSubject) {
-                                    $rebasedSha = $parts[0]
-                                    break
-                                }
-                            }
-                        }
-                        if ($rebasedSha) {
-                            $shortSha = $rebasedSha.Substring(0, 12)
-                            Write-Host "::warning::Subject-matched slice: prev tag $candidatePrevTag (orphan sha $($orphanSha.Substring(0,12))) matches current-history sha $shortSha by subject; using $shortSha..$Tag."
-                            return @{
-                                Tag     = $candidatePrevTag
-                                LogArgs = @("$rebasedSha..$Tag")
-                                Display = "$candidatePrevTag..$Tag (subject-matched at $shortSha)"
-                                Source  = 'subject-match'
-                            }
-                        }
-                        Write-Host "::warning::Prev tag $candidatePrevTag subject '$orphanSubject' not found in current $Tag history. Falling back to first-release changelog notes."
-                    }
-                }
-            }
-        }
-        else {
-            Write-Host "::warning::'gh release list' produced no usable output (gh not authed or no releases yet). Falling back to first-release changelog notes."
-        }
-    }
-
-    # Layer 3: first release. The repository may have a long pre-release commit
-    # history whose subjects are not suitable for public release notes. Use the
-    # curated CHANGELOG section for this case.
-    Write-Host "::warning::No prior tag or published release matched; treating $Tag as the first release."
-    return @{
-        Tag     = $null
-        LogArgs = @()
-        Display = "$Tag (first release)"
-        Source  = 'first-release'
-    }
-}
-
-$prevInfo = Resolve-PrevTagForSlice -Tag $Tag -Repo $Repo -AdditionalPrereleaseTags $PrereleaseTags
-$prevTag = $prevInfo.Tag
-$logArgs = $prevInfo.LogArgs
-$range = $prevInfo.Display
-
-function Read-ChangelogNotes([string]$Version) {
     $path = Join-Path -Path (Get-Location) -ChildPath 'CHANGELOG.md'
     if (-not (Test-Path -LiteralPath $path)) { return $null }
 
-    $content = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+    $content = Read-Utf8File -Path $path
     if ($Version) {
         $escaped = [regex]::Escape($Version)
         $versionPattern = "(?ms)^##\s+\[$escaped\][^\n]*\n(.*?)(?=^---\s*$|^##\s+|\z)"
@@ -337,194 +58,344 @@ function Read-ChangelogNotes([string]$Version) {
     return $null
 }
 
-$changelogNotes = $null
-if ($prevInfo.Source -eq 'first-release') {
-    $changelogNotes = Read-ChangelogNotes -Version $Tag
-    if (-not $changelogNotes) {
-        if ($AllowEmpty) {
-            $changelogNotes = '_First release; see commit log for details._'
-        }
-        else {
-            throw "No prior tag or release exists, and CHANGELOG.md has no notes for $Tag or Unreleased. " +
-            "For the first release, write curated public notes under ## Unreleased before tagging."
-        }
-    }
-}
-
-# %H = full sha, %h = short sha, %an = author name, %s = subject. Tabs as field
-# separator are safe -- git rejects literal tabs in author names and subjects
-# don't contain them in any of these repos.
-$raw = @()
-if (-not $changelogNotes) {
-    $raw = & git log @logArgs --no-merges --pretty=format:"%H`t%h`t%an`t%s" 2>$null
-    if ($LASTEXITCODE -ne 0) { $raw = @() }
-}
-
-$lines = @()
-if ($raw) { $lines = $raw -split "`r?`n" | Where-Object { $_ } }
-
-# Git author.name is not a GitHub login, and "by @<name>" credits whoever owns
-# that login when the two differ. Prefer the login GitHub reports for each
-# commit; this map covers runs where the API is unreachable. An author in
-# neither passes through unchanged.
-$AuthorHandleMap = @{
-    'WhyKnot' = 'RealWhyKnot'
-    'Sticks'  = 'SticksDev'
-}
-
 function Format-AuthorCredit {
+    [CmdletBinding()]
+    [OutputType([string])]
     param([string] $Author)
 
-    if (-not $Author) { return "" }
+    if (-not $Author) { return '' }
     if ($Author -match '\[bot]$') { return $Author }
     if ($Author -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$') { return $Author }
     return "[$Author](https://github.com/$Author)"
 }
 
-# One compare call returns every commit in the range with the account it is
-# attributed to. Best-effort: the tag may not exist remotely yet on a manual
-# dispatch, so compare against the checked-out HEAD rather than the tag.
-# Parsed in PowerShell rather than with gh --jq: Windows PowerShell splits a
-# jq expression containing double quotes into separate native arguments.
-$AuthorLoginBySha = @{}
-if ($Repo -and $prevTag -and -not $changelogNotes) {
-    $previousPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+function Get-AuthorLoginMap {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [string] $Repo,
+        [string] $PrevTag
+    )
+
+    $map = @{}
+    $headSha = @(Invoke-NativeQuiet -Command 'git' -Arguments @('rev-parse', 'HEAD'))
+    if ($LASTEXITCODE -ne 0 -or $headSha.Count -eq 0 -or -not $headSha[0]) { return $map }
+
+    $comparePath = "repos/$Repo/compare/$PrevTag...$($headSha[0].Trim())"
+    $compareJson = Invoke-NativeQuiet -Command 'gh' -Arguments @('api', $comparePath)
+    if ($LASTEXITCODE -ne 0 -or -not $compareJson) { return $map }
+
     try {
-        $headSha = (& git rev-parse HEAD 2>$null | Select-Object -First 1)
-        if ($LASTEXITCODE -eq 0 -and $headSha) {
-            $compareJson = & gh api "repos/$Repo/compare/$prevTag...$($headSha.Trim())" 2>$null
-            if ($LASTEXITCODE -eq 0 -and $compareJson) {
-                foreach ($commit in (($compareJson -join "`n") | ConvertFrom-Json).commits) {
-                    $login = $commit.author.login
-                    if ($login) { $AuthorLoginBySha[$commit.sha] = $login }
-                }
+        foreach ($commit in (($compareJson -join "`n") | ConvertFrom-Json).commits) {
+            $authorProperty = $commit.PSObject.Properties['author']
+            if ($null -eq $authorProperty -or $null -eq $authorProperty.Value) { continue }
+            $loginProperty = $authorProperty.Value.PSObject.Properties['login']
+            if ($null -ne $loginProperty -and $loginProperty.Value) {
+                $map[$commit.sha] = $loginProperty.Value
             }
         }
+    } catch [System.ArgumentException], [System.Management.Automation.RuntimeException] {
+        return @{}
     }
-    catch {
-        $AuthorLoginBySha = @{}
-    }
-    finally {
-        $ErrorActionPreference = $previousPreference
+    return $map
+}
+
+function Get-CommitEntry {
+    [CmdletBinding()]
+    [OutputType([pscustomobject[]])]
+    param(
+        [string[]] $Lines,
+        [hashtable] $AuthorLoginBySha
+    )
+
+    $authorHandleMap = @{
+        'WhyKnot' = 'RealWhyKnot'
+        'Sticks'  = 'SticksDev'
     }
 
-    if ($AuthorLoginBySha.Count -eq 0) {
-        Write-Host "::warning::Could not resolve GitHub logins from the compare API; using the author handle map."
+    foreach ($line in $Lines) {
+        if ($line -match '\[skip changelog\]') { continue }
+        $parts = $line -split "`t", 4
+        if ($parts.Count -lt 4) { continue }
+        $sha = $parts[0]
+        $author = $parts[2]
+        if ($AuthorLoginBySha.ContainsKey($sha)) {
+            $author = $AuthorLoginBySha[$sha]
+        } elseif ($authorHandleMap.ContainsKey($author)) {
+            $author = $authorHandleMap[$author]
+        }
+
+        $subject = $parts[3] -replace '\s*\(\d{4}\.\d+\.\d+\.\d+-[A-Fa-f0-9]+\)\s*', ' '
+        $subject = $subject.Trim() -replace '\s{2,}', ' '
+
+        [pscustomobject]@{
+            Sha     = $sha
+            Short   = $parts[1]
+            Author  = $author
+            Subject = $subject
+        }
     }
 }
 
-$entries = foreach ($line in $lines) {
-    if ($line -match '\[skip changelog\]') { continue }
-    $parts = $line -split "`t", 4
-    if ($parts.Count -lt 4) { continue }
-    $sha = $parts[0]
-    $short = $parts[1]
-    $author = $parts[2]
-    if ($AuthorLoginBySha.ContainsKey($sha)) { $author = $AuthorLoginBySha[$sha] }
-    elseif ($AuthorHandleMap.ContainsKey($author)) { $author = $AuthorHandleMap[$author] }
-    $subject = $parts[3]
+function Get-Category {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param([string] $Subject)
 
-    # Strip embedded version-stamp noise like " (2026.4.30.13-EB4B)". Some
-    # repos append it mid-subject before a trailing PR ref like " (#42)".
-    $subject = $subject -replace '\s*\(\d{4}\.\d+\.\d+\.\d+-[A-Fa-f0-9]+\)\s*', ' '
-    $subject = $subject.Trim() -replace '\s{2,}', ' '
-
-    [pscustomobject]@{
-        Sha     = $sha
-        Short   = $short
-        Author  = $author
-        Subject = $subject
-    }
-}
-
-# Empty-slice guard. A release with no qualifying commits in the tag range
-# means either the prev-tag detection is wrong, every commit was skipped,
-# or the tag was pushed from an empty branch. All three are worth catching
-# before publish.
-if (-not $changelogNotes -and (-not $entries -or $entries.Count -eq 0)) {
-    if ($AllowEmpty) {
-        # First-release escape hatch. Emit a stub body the workflow can still
-        # publish.
-        return "## What's Changed`n`n_First release; see commit log for details._`n"
-    }
-    throw "No commits found in range $range. " +
-    "Either the previous tag is misdetected, every commit in the range " +
-    "carries [skip changelog], or the tag points at an empty branch. " +
-    "Pass -AllowEmpty for a first release. Otherwise amend the offending " +
-    "commits or push a real change before tagging."
-}
-
-function Get-Category([string] $subject) {
-    if ($subject -match '^feat(\(.+?\))?!?:') { return @{ Order = 1; Name = 'Features' } }
-    if ($subject -match '^fix(\(.+?\))?!?:') { return @{ Order = 2; Name = 'Bug Fixes' } }
-    if ($subject -match '^perf(\(.+?\))?!?:') { return @{ Order = 3; Name = 'Performance' } }
-    if ($subject -match '^refactor(\(.+?\))?!?:') { return @{ Order = 4; Name = 'Refactors' } }
-    if ($subject -match '^revert(\(.+?\))?!?:') { return @{ Order = 5; Name = 'Reverts' } }
-    if ($subject -match '^docs(\(.+?\))?!?:') { return @{ Order = 6; Name = 'Documentation' } }
-    if ($subject -match '^style(\(.+?\))?!?:') { return @{ Order = 7; Name = 'Style' } }
-    if ($subject -match '^test(\(.+?\))?!?:') { return @{ Order = 8; Name = 'Tests' } }
-    if ($subject -match '^ci(\(.+?\))?!?:') { return @{ Order = 9; Name = 'CI' } }
-    if ($subject -match '^build(\(.+?\))?!?:') { return @{ Order = 10; Name = 'Build' } }
-    if ($subject -match '^chore(\(.+?\))?!?:') { return @{ Order = 11; Name = 'Chores' } }
+    if ($Subject -match '^feat(\(.+?\))?!?:') { return @{ Order = 1; Name = 'Features' } }
+    if ($Subject -match '^fix(\(.+?\))?!?:') { return @{ Order = 2; Name = 'Bug Fixes' } }
+    if ($Subject -match '^perf(\(.+?\))?!?:') { return @{ Order = 3; Name = 'Performance' } }
+    if ($Subject -match '^refactor(\(.+?\))?!?:') { return @{ Order = 4; Name = 'Refactors' } }
+    if ($Subject -match '^revert(\(.+?\))?!?:') { return @{ Order = 5; Name = 'Reverts' } }
+    if ($Subject -match '^docs(\(.+?\))?!?:') { return @{ Order = 6; Name = 'Documentation' } }
+    if ($Subject -match '^style(\(.+?\))?!?:') { return @{ Order = 7; Name = 'Style' } }
+    if ($Subject -match '^test(\(.+?\))?!?:') { return @{ Order = 8; Name = 'Tests' } }
+    if ($Subject -match '^ci(\(.+?\))?!?:') { return @{ Order = 9; Name = 'CI' } }
+    if ($Subject -match '^build(\(.+?\))?!?:') { return @{ Order = 10; Name = 'Build' } }
+    if ($Subject -match '^chore(\(.+?\))?!?:') { return @{ Order = 11; Name = 'Chores' } }
     return @{ Order = 99; Name = 'Other Changes' }
 }
 
-# Conventional-commit coverage warning. Don't fail -- 'Other Changes' is the
-# documented bucket for non-conforming subjects -- but log to stderr so the
-# the warning is visible in workflow output.
-$nonConforming = @()
-if (-not $changelogNotes) {
-    $nonConforming = @($entries | Where-Object {
-            $_.Subject -notmatch '^(feat|fix|perf|refactor|revert|docs|style|test|ci|build|chore)(\(.+?\))?!?:'
-        })
-    if ($nonConforming.Count -gt 0) {
-        Write-Host "::warning::$($nonConforming.Count) commit(s) in range $range do not follow conventional-commit prefixes; bucketed under 'Other Changes':"
-        foreach ($e in $nonConforming) {
-            Write-Host "::warning::  $($e.Short)  $($e.Subject)"
+function Test-ConventionalSubject {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([string] $Subject)
+
+    return $Subject -match '^(feat|fix|perf|refactor|revert|docs|style|test|ci|build|chore)(\(.+?\))?!?:'
+}
+
+function Get-TagCommitSha {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string] $Tag)
+
+    $tagSha = Invoke-NativeQuiet -Command 'git' -Arguments @('rev-parse', "$Tag^{}")
+    if ($LASTEXITCODE -eq 0 -and $tagSha) {
+        return $tagSha.Trim()
+    }
+    return ''
+}
+
+function Expand-Token {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [string] $Text,
+        [hashtable] $Map
+    )
+
+    if (-not $Text) { return $Text }
+    foreach ($key in $Map.Keys) {
+        $val = $Map[$key]
+        if ($null -eq $val) { $val = '' }
+        $Text = $Text.Replace($key, $val)
+    }
+    return $Text
+}
+
+function Read-TemplateSection {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [string] $Name,
+        [string] $Dir,
+        [hashtable] $TokenMap
+    )
+
+    $path = Join-Path -Path $Dir -ChildPath "$Name.md"
+    if (-not (Test-Path -LiteralPath $path)) {
+        Write-Host "::warning::Release-body template missing: $path. Section '$Name' will not render."
+        return $null
+    }
+    $content = (Read-Utf8File -Path $path).Trim()
+    if (-not $content) { return $null }
+    return (Expand-Token -Text $content -Map $TokenMap)
+}
+
+function Format-ChangeList {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [object[]] $Entries,
+        [bool] $UseGroups
+    )
+
+    if (-not $UseGroups) {
+        foreach ($e in $Entries) {
+            "- $($e.Subject) by $(Format-AuthorCredit -Author $e.Author) in $($e.Short)"
+        }
+        ''
+        return
+    }
+
+    $tagged = foreach ($e in $Entries) {
+        $cat = Get-Category -Subject $e.Subject
+        [pscustomobject]@{ Order = $cat['Order']; Name = $cat['Name']; Entry = $e }
+    }
+    $groups = $tagged | Group-Object Name | Sort-Object { ($_.Group | Select-Object -First 1).Order }
+    foreach ($g in $groups) {
+        "### $($g.Name)"
+        foreach ($t in $g.Group) {
+            $e = $t.Entry
+            "- $($e.Subject) by $(Format-AuthorCredit -Author $e.Author) in $($e.Short)"
+        }
+        ''
+    }
+}
+
+function ConvertTo-AsciiText {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string] $Text)
+
+    $asciiSubs = @(
+        @{ Pattern = [string][char]0x2014; Replacement = '--' }
+        @{ Pattern = [string][char]0x2013; Replacement = '-' }
+        @{ Pattern = [string][char]0x2026; Replacement = '...' }
+        @{ Pattern = [string][char]0x201C; Replacement = '"' }
+        @{ Pattern = [string][char]0x201D; Replacement = '"' }
+        @{ Pattern = [string][char]0x2018; Replacement = "'" }
+        @{ Pattern = [string][char]0x2019; Replacement = "'" }
+        @{ Pattern = [string][char]0x00A0; Replacement = ' ' }
+        @{ Pattern = [string][char]0x2022; Replacement = '*' }
+        @{ Pattern = [string][char]0x00D7; Replacement = 'x' }
+        @{ Pattern = [string][char]0x2192; Replacement = '->' }
+        @{ Pattern = [string][char]0x2190; Replacement = '<-' }
+        @{ Pattern = [string][char]0x21D2; Replacement = '=>' }
+        @{ Pattern = [string][char]0x21D0; Replacement = '<=' }
+        @{ Pattern = [string][char]0x00A7; Replacement = 'section' }
+        @{ Pattern = [string][char]0x00B6; Replacement = 'paragraph' }
+    )
+    foreach ($sub in $asciiSubs) {
+        $Text = $Text.Replace($sub['Pattern'], $sub['Replacement'])
+    }
+    return $Text
+}
+
+function Assert-AsciiBody {
+    [CmdletBinding()]
+    [OutputType([void])]
+    param([string] $Body)
+
+    $report = [System.Collections.Generic.List[string]]::new()
+    $lineNumber = 0
+    foreach ($line in ($Body -split "`r?`n")) {
+        $lineNumber++
+        for ($i = 0; $i -lt $line.Length; $i++) {
+            $code = [int][char]$line[$i]
+            $isAllowed = ($code -ge 0x20 -and $code -le 0x7E) -or $code -eq 9
+            if (-not $isAllowed) {
+                $report.Add("  line $lineNumber col $($i + 1): $('U+{0:X4}' -f $code) in: $line")
+            }
         }
     }
+    if ($report.Count -eq 0) { return }
+
+    $fix = @(
+        'Fix: amend the offending commit subject (or extras file) to use ASCII equivalents.',
+        'Common substitutes are pre-mapped in Generate-ReleaseNotes.ps1; if a new character',
+        "trips this, add it to `$asciiSubs and try again."
+    ) -join ' '
+    throw "Non-ASCII characters in release body after normalisation:`n$($report -join "`n")`n$fix"
+}
+
+Import-Module -Name (Join-Path $PSScriptRoot 'ReleaseSlice.psm1') -Force
+
+if (-not $Tag) { throw 'No tag provided (pass -Tag or set TAG_NAME / GITHUB_REF_NAME).' }
+
+if (-not $Extras) {
+    $Extras = Join-Path -Path (Get-Location) -ChildPath ".github/release-extras/$Tag.md"
+}
+if (-not $TemplateDir) {
+    $TemplateDir = Join-Path -Path (Get-Location) -ChildPath '.github/release-template'
+}
+
+$prevInfo = Resolve-PrevTagForSlice -Tag $Tag -Repo $Repo -AdditionalPrereleaseTags $PrereleaseTags
+$prevTag = $prevInfo['Tag']
+$range = $prevInfo['Display']
+
+$changelogNotes = $null
+if ($prevInfo['Source'] -eq 'first-release') {
+    $changelogNotes = Read-ChangelogNote -Version $Tag
+    if (-not $changelogNotes) {
+        if (-not $AllowEmpty) {
+            $message = @(
+                "No prior tag or release exists, and CHANGELOG.md has no notes for $Tag or Unreleased.",
+                'For the first release, write curated public notes under ## Unreleased before tagging.'
+            ) -join ' '
+            throw $message
+        }
+        $changelogNotes = '_First release; see commit log for details._'
+    }
+}
+
+$raw = @()
+if (-not $changelogNotes) {
+    $logArguments = [System.Collections.Generic.List[string]]::new()
+    $logArguments.Add('log')
+    $logArguments.AddRange([string[]]@($prevInfo['LogArgs']))
+    $logArguments.AddRange([string[]]@('--no-merges', "--pretty=format:%H`t%h`t%an`t%s"))
+    $raw = Invoke-NativeQuiet -Command 'git' -Arguments $logArguments.ToArray()
+    if ($LASTEXITCODE -ne 0) { $raw = @() }
+}
+
+$lines = @()
+if ($raw) { $lines = @($raw -split "`r?`n" | Where-Object { $_ }) }
+
+$authorLoginBySha = @{}
+if ($Repo -and $prevTag -and -not $changelogNotes) {
+    $authorLoginBySha = Get-AuthorLoginMap -Repo $Repo -PrevTag $prevTag
+    if ($authorLoginBySha.Count -eq 0) {
+        Write-Host '::warning::Could not resolve GitHub logins from the compare API; using the author handle map.'
+    }
+}
+
+$entries = @(Get-CommitEntry -Lines $lines -AuthorLoginBySha $authorLoginBySha)
+
+if (-not $changelogNotes -and $entries.Count -eq 0) {
+    if ($AllowEmpty) {
+        "## What's Changed`n`n_First release; see commit log for details._`n"
+        exit 0
+    }
+    $message = @(
+        "No commits found in range $range.",
+        'Either the previous tag is misdetected, every commit in the range',
+        'carries [skip changelog], or the tag points at an empty branch.',
+        'Pass -AllowEmpty for a first release. Otherwise amend the offending',
+        'commits or push a real change before tagging.'
+    ) -join ' '
+    throw $message
 }
 
 $useGroups = $false
 if (-not $changelogNotes) {
-    foreach ($e in $entries) {
-        if ($e.Subject -match '^(feat|fix|perf|refactor|revert|docs|style|test|ci|build|chore)(\(.+?\))?!?:') {
-            $useGroups = $true
-            break
+    $nonConforming = @($entries | Where-Object { -not (Test-ConventionalSubject -Subject $_.Subject) })
+    if ($nonConforming.Count -gt 0) {
+        $warning = @(
+            "::warning::$($nonConforming.Count) commit(s) in range $range do not follow",
+            "conventional-commit prefixes; bucketed under 'Other Changes':"
+        ) -join ' '
+        Write-Host $warning
+        foreach ($e in $nonConforming) {
+            Write-Host "::warning::  $($e.Short)  $($e.Subject)"
         }
     }
+    $useGroups = $nonConforming.Count -lt $entries.Count
 }
 
-# Token substitution map. Templates and emitted sections reference these by
-# {key} string (literal curly braces in the template). Any value the resolver
-# could not compute is left as the literal {key} in the output so the omission
-# is visible rather than blank.
 $ownerOnly = ''
 $repoShort = ''
 if ($Repo -and ($Repo -match '/')) {
     $parts = $Repo -split '/', 2
     $ownerOnly = $parts[0]
     $repoShort = $parts[1]
-}
-elseif ($Repo) {
+} elseif ($Repo) {
     $repoShort = $Repo
 }
-$tagCommitSha = ''
+
+$tagCommitSha = Get-TagCommitSha -Tag $Tag
 $tagCommitShort = ''
-$prevErrorActionPreference = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-try {
-    $tagSha = & git rev-parse "$Tag^{}" 2>$null
-    if ($LASTEXITCODE -eq 0 -and $tagSha) {
-        $tagCommitSha = $tagSha.Trim()
-        if ($tagCommitSha.Length -ge 12) { $tagCommitShort = $tagCommitSha.Substring(0, 12) }
-    }
-}
-finally {
-    $ErrorActionPreference = $prevErrorActionPreference
-}
-$priorTagToken = if ($prevTag) { $prevTag } else { '' }
+if ($tagCommitSha.Length -ge 12) { $tagCommitShort = $tagCommitSha.Substring(0, 12) }
 $zipNameToken = if ($ZipName) { $ZipName } elseif ($ZipPath) { (Split-Path -Leaf $ZipPath) } else { '' }
 $tokens = @{
     '{tag}'              = $Tag
@@ -534,191 +405,77 @@ $tokens = @{
     '{full-repo}'        = $Repo
     '{commit-sha}'       = $tagCommitSha
     '{commit-sha-short}' = $tagCommitShort
-    '{prior-tag}'        = $priorTagToken
+    '{prior-tag}'        = $prevTag
     '{zip-name}'         = $zipNameToken
-}
-
-function Expand-Tokens([string] $text, [hashtable] $map) {
-    if (-not $text) { return $text }
-    foreach ($key in $map.Keys) {
-        $val = $map[$key]
-        if ($null -eq $val) { $val = '' }
-        $text = $text.Replace($key, $val)
-    }
-    return $text
-}
-
-function Format-Bytes([long] $bytes) {
-    if ($bytes -ge 1MB) { return ('{0:F2} MB' -f ($bytes / 1MB)) }
-    if ($bytes -ge 1KB) { return ('{0:F2} KB' -f ($bytes / 1KB)) }
-    return ('{0} B' -f $bytes)
-}
-
-function Read-TemplateSection([string] $name, [string] $dir, [hashtable] $tokenMap) {
-    $path = Join-Path -Path $dir -ChildPath "$name.md"
-    if (-not (Test-Path -LiteralPath $path)) {
-        Write-Host "::warning::Release-body template missing: $path. Section '$name' will not render."
-        return $null
-    }
-    $rawContent = Get-Content -LiteralPath $path -Raw -Encoding UTF8
-    if ($null -eq $rawContent) { return $null }
-    $content = $rawContent.Trim()
-    if (-not $content) { return $null }
-    return (Expand-Tokens -text $content -map $tokenMap)
 }
 
 $sb = [System.Text.StringBuilder]::new()
 if ($repoShort) {
-    [void]$sb.AppendLine("# $repoShort $Tag")
-    [void]$sb.AppendLine()
+    $null = $sb.AppendLine("# $repoShort $Tag")
+    $null = $sb.AppendLine()
 }
-[void]$sb.AppendLine("## What's Changed")
-[void]$sb.AppendLine()
+$null = $sb.AppendLine("## What's Changed")
+$null = $sb.AppendLine()
 
 if ($changelogNotes) {
-    [void]$sb.AppendLine($changelogNotes)
-    [void]$sb.AppendLine()
-}
-elseif ($useGroups) {
-    $tagged = foreach ($e in $entries) {
-        $cat = Get-Category $e.Subject
-        [pscustomobject]@{ Order = $cat.Order; Name = $cat.Name; Entry = $e }
+    $null = $sb.AppendLine($changelogNotes)
+    $null = $sb.AppendLine()
+} else {
+    foreach ($changeLine in @(Format-ChangeList -Entries $entries -UseGroups $useGroups)) {
+        $null = $sb.AppendLine($changeLine)
     }
-    $groups = $tagged | Group-Object Name | Sort-Object { ($_.Group | Select-Object -First 1).Order }
-    foreach ($g in $groups) {
-        [void]$sb.AppendLine("### $($g.Name)")
-        foreach ($t in $g.Group) {
-            $e = $t.Entry
-            [void]$sb.AppendLine("- $($e.Subject) by $(Format-AuthorCredit $e.Author) in $($e.Short)")
-        }
-        [void]$sb.AppendLine()
-    }
-}
-else {
-    foreach ($e in $entries) {
-        [void]$sb.AppendLine("- $($e.Subject) by $(Format-AuthorCredit $e.Author) in $($e.Short)")
-    }
-    [void]$sb.AppendLine()
 }
 
 if ($Repo -and $prevTag) {
-    [void]$sb.AppendLine("**Full Changelog**: https://github.com/$Repo/compare/$prevTag...$Tag")
+    $null = $sb.AppendLine("**Full Changelog**: https://github.com/$Repo/compare/$prevTag...$Tag")
 }
 
-# --- File integrity ---
-# Release and per-file hashes are published as attached TSV assets.
-$includeIntegrity = $ZipPath -and $ZipSha256 -and $ZipSize -gt 0 -and $Manifest -and (Test-Path -LiteralPath $Manifest)
-if ($includeIntegrity) {
+$hasManifest = $Manifest -and (Test-Path -LiteralPath $Manifest)
+if ($ZipPath -and $ZipSha256 -and $ZipSize -gt 0 -and $hasManifest) {
     $zipNameForLine = if ($zipNameToken) { $zipNameToken } else { Split-Path -Leaf $ZipPath }
     $integrityName = $zipNameForLine -replace '\.zip$', '.integrity.tsv'
     $manifestName = Split-Path -Leaf $Manifest
-    [void]$sb.AppendLine()
-    [void]$sb.AppendLine("## File integrity")
-    [void]$sb.AppendLine()
-    [void]$sb.AppendLine("Release SHA256 hashes are attached as ``$integrityName``. Package contents are listed in ``$manifestName``.")
-}
-elseif ($Manifest -or $ZipPath -or $ZipSha256) {
-    Write-Host "::warning::File-integrity section skipped: -Manifest, -ZipPath, -ZipSize, and -ZipSha256 must all be set. Got Manifest='$Manifest' ZipPath='$ZipPath' ZipSize=$ZipSize ZipSha256='$ZipSha256'."
+    $integrityLine = @(
+        "Release SHA256 hashes are attached as ``$integrityName``.",
+        "Package contents are listed in ``$manifestName``."
+    ) -join ' '
+    $null = $sb.AppendLine()
+    $null = $sb.AppendLine('## File integrity')
+    $null = $sb.AppendLine()
+    $null = $sb.AppendLine($integrityLine)
+} elseif ($Manifest -or $ZipPath -or $ZipSha256) {
+    $warning = @(
+        '::warning::File-integrity section skipped:',
+        '-Manifest, -ZipPath, -ZipSize, and -ZipSha256 must all be set.',
+        "Got Manifest='$Manifest' ZipPath='$ZipPath' ZipSize=$ZipSize ZipSha256='$ZipSha256'."
+    ) -join ' '
+    Write-Host $warning
 }
 
-# --- Templated evergreen sections ---
-# Each template is repo-curated content under .github/release-template/<name>.md.
-# Read in this fixed order; missing templates emit a warning and skip without
-# failing the build. Token substitution happens inside Read-TemplateSection.
-$templateOrder = @('links', 'install', 'uninstall', 'what-you-need-to-do')
-foreach ($name in $templateOrder) {
-    $section = Read-TemplateSection -name $name -dir $TemplateDir -tokenMap $tokens
+foreach ($name in @('links', 'install', 'uninstall', 'what-you-need-to-do')) {
+    $section = Read-TemplateSection -Name $name -Dir $TemplateDir -TokenMap $tokens
     if ($section) {
-        [void]$sb.AppendLine()
-        [void]$sb.AppendLine($section)
+        $null = $sb.AppendLine()
+        $null = $sb.AppendLine($section)
     }
 }
 
-# Optional extras append. Free-form prose for the rare case where a release
-# needs to communicate something that isn't captured by commit subjects --
-# server-side coordination notes, migration steps, operational context, etc. The
-# file is read verbatim so the author has full markdown control; the ASCII
-# scrub runs on the final composed body so extras are checked the same way as
-# commit subjects.
 if (Test-Path -LiteralPath $Extras) {
-    $extrasContent = (Get-Content -LiteralPath $Extras -Raw -Encoding UTF8).Trim()
+    $extrasContent = (Read-Utf8File -Path $Extras).Trim()
     if ($extrasContent) {
-        [void]$sb.AppendLine()
-        [void]$sb.AppendLine("---")
-        [void]$sb.AppendLine()
-        [void]$sb.AppendLine("## Additional notes")
-        [void]$sb.AppendLine()
-        [void]$sb.AppendLine($extrasContent)
+        $null = $sb.AppendLine()
+        $null = $sb.AppendLine('---')
+        $null = $sb.AppendLine()
+        $null = $sb.AppendLine('## Additional notes')
+        $null = $sb.AppendLine()
+        $null = $sb.AppendLine($extrasContent)
     }
 }
 
-$body = $sb.ToString().TrimEnd()
-
-# ASCII normalisation. Common typographic patterns get substituted to
-# their plain-ASCII equivalents. The substitution is one-way and silent;
-# a commit subject that contains an em-dash gets emitted with `--` instead.
-# After normalisation, anything still non-ASCII fails the scrub gate (so
-# we surface the offending byte rather than letting it ship).
-# Pattern is stored as a single-char string (not [char]) so the (string,string)
-# overload of String.Replace binds cleanly. The (char,char) overload would
-# reject a multi-char replacement like '--' or '...'.
-$asciiSubs = @(
-    @{ Pattern = [string][char]0x2014; Replacement = '--' }        # em-dash
-    @{ Pattern = [string][char]0x2013; Replacement = '-' }        # en-dash
-    @{ Pattern = [string][char]0x2026; Replacement = '...' }       # ellipsis
-    @{ Pattern = [string][char]0x201C; Replacement = '"' }        # left double quote
-    @{ Pattern = [string][char]0x201D; Replacement = '"' }        # right double quote
-    @{ Pattern = [string][char]0x2018; Replacement = "'" }        # left single quote
-    @{ Pattern = [string][char]0x2019; Replacement = "'" }        # right single quote
-    @{ Pattern = [string][char]0x00A0; Replacement = ' ' }        # non-breaking space
-    @{ Pattern = [string][char]0x2022; Replacement = '*' }        # bullet
-    @{ Pattern = [string][char]0x00D7; Replacement = 'x' }        # multiplication sign
-    @{ Pattern = [string][char]0x2192; Replacement = '->' }        # right arrow
-    @{ Pattern = [string][char]0x2190; Replacement = '<-' }        # left arrow
-    @{ Pattern = [string][char]0x21D2; Replacement = '=>' }        # double right arrow
-    @{ Pattern = [string][char]0x21D0; Replacement = '<=' }        # double left arrow
-    @{ Pattern = [string][char]0x00A7; Replacement = 'section' }   # section sign
-    @{ Pattern = [string][char]0x00B6; Replacement = 'paragraph' } # pilcrow
-)
-foreach ($sub in $asciiSubs) {
-    $body = $body.Replace($sub.Pattern, $sub.Replacement)
-}
-
+$body = ConvertTo-AsciiText -Text $sb.ToString().TrimEnd()
 if (-not $SkipScrub) {
-    # Anything outside printable ASCII (plus tab/newline) after the
-    # substitution pass fails. Prints the offending line + char code so the
-    # offending input can be found and fixed.
-    $lineNumber = 0
-    $offenders = foreach ($line in ($body -split "`r?`n")) {
-        $lineNumber++
-        for ($i = 0; $i -lt $line.Length; $i++) {
-            $ch = $line[$i]
-            $code = [int][char]$ch
-            $isAllowed = ($code -ge 0x20 -and $code -le 0x7E) -or $code -eq 9
-            if (-not $isAllowed) {
-                [pscustomobject]@{
-                    Line = $lineNumber
-                    Col  = $i + 1
-                    Char = $ch
-                    Code = ('U+{0:X4}' -f $code)
-                    Text = $line
-                }
-            }
-        }
-    }
-    if ($offenders) {
-        $report = $offenders | ForEach-Object { "  line $($_.Line) col $($_.Col): $($_.Code) in: $($_.Text)" }
-        throw "Non-ASCII characters in release body after normalisation:`n$($report -join "`n")`n" +
-        "Fix: amend the offending commit subject (or extras file) to use ASCII equivalents. " +
-        "Common substitutes are pre-mapped in Generate-ReleaseNotes.ps1; if a new character " +
-        "trips this, add it to `$asciiSubs and try again."
-    }
+    Assert-AsciiBody -Body $body
 }
 
-# Tolerated native failures above -- an absent previous tag, an unauthenticated
-# gh -- leave a non-zero $LASTEXITCODE that callers read as a script failure.
-# Everything fatal has already thrown by this point.
-$global:LASTEXITCODE = 0
-
-# Single trimmed string so $(...) capture in calling scripts gets clean text.
 $body
+exit 0

@@ -1,15 +1,13 @@
-//! Optional run-mode Pico state probe used by support bundles.
-
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
-use tokio::time::{interval, MissedTickBehavior};
+use anyhow::{Context, Result, bail};
+use tokio::time::{MissedTickBehavior, interval};
 
 use crate::{cmd_run, net, pico_cache, protocol, udp_auth};
 
 const PROBE_INTERVAL: Duration = Duration::from_millis(200);
 
-pub async fn query_pico_state(
+pub(crate) async fn query_pico_state(
     pico: &cmd_run::PicoTarget,
     timeout: Duration,
 ) -> Result<protocol::PicoStateDiag> {
@@ -49,13 +47,13 @@ pub async fn query_pico_state(
                 let state = protocol::PicoStateDiag::decode(&buf[..n])
                     .context("decoding Pico state reply")?;
                 pico_cache::record(
-                    pico_cache::PicoStateSnapshot::from_target("pico-state", pico)
+                    &pico_cache::PicoStateSnapshot::from_target("pico-state", pico)
                         .with_pico_state(&state)
                         .with_outcome("pico_state_captured"),
                 );
                 return Ok(state);
             }
-            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
                 bail!(
                     "no Pico state reply from {} within {} ms",
                     pico.peer,

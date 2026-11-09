@@ -1,10 +1,8 @@
-//! Run-mode Pico USB diagnostics over Wi-Fi.
-
 use std::fmt::Write as _;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use tokio::time::interval;
 
 use crate::tui::{input_text, select};
@@ -14,40 +12,40 @@ const DISCOVER_TIMEOUT: Duration = Duration::from_secs(5);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 const PROBE_INTERVAL: Duration = Duration::from_millis(400);
 
-pub async fn run(all: bool, ips: Vec<String>) -> Result<()> {
+pub(crate) async fn run(all: bool, ips: Vec<String>) -> Result<()> {
     let picos = resolve_targets(all, ips).await?;
     query_and_print(&picos).await
 }
 
-pub async fn run_for_targets(picos: &[cmd_run::PicoTarget]) -> Result<()> {
+pub(crate) async fn run_for_targets(picos: &[cmd_run::PicoTarget]) -> Result<()> {
     query_and_print(picos).await
 }
 
-pub async fn run_interactive() -> Result<()> {
+pub(crate) async fn run_interactive() -> Result<()> {
     loop {
-        println!("Looking for running Pico boards on Wi-Fi...");
+        outln!("Looking for running Pico boards on Wi-Fi...");
         let picos = cmd_run::discover_picos(DISCOVER_TIMEOUT).await?;
         if !picos.is_empty() {
             if let Err(e) = query_and_print(&picos).await {
-                println!("USB diagnostic could not complete: {e:#}");
+                outln!("USB diagnostic could not complete: {e:#}");
             }
             return Ok(());
         }
 
         support::print_no_pico_wifi_help(DISCOVER_TIMEOUT.as_secs());
-        println!();
-        println!(
+        outln!();
+        outln!(
             "If the Pico joined Wi-Fi but broadcast discovery is blocked, enter its IP manually."
         );
         let choices = vec!["Try discovery again", "Enter Pico IP manually", "Back"];
         match select("USB diagnostic", &choices, 0).await? {
-            0 => continue,
+            0 => {}
             1 => {
                 let Some(pico) = prompt_manual_pico_ip().await? else {
                     continue;
                 };
                 if let Err(e) = query_and_print(&[pico]).await {
-                    println!("USB diagnostic could not complete: {e:#}");
+                    outln!("USB diagnostic could not complete: {e:#}");
                 }
                 return Ok(());
             }
@@ -71,7 +69,7 @@ async fn resolve_targets(all: bool, ips: Vec<String>) -> Result<Vec<cmd_run::Pic
         bail!("{}", support::no_pico_wifi_help(DISCOVER_TIMEOUT.as_secs()));
     }
     if !all && picos.len() > 1 {
-        println!(
+        outln!(
             "{} Pico boards replied; checking the first one. Use `--all` to check every Pico.",
             picos.len()
         );
@@ -88,15 +86,15 @@ async fn prompt_manual_pico_ip() -> Result<Option<cmd_run::PicoTarget>> {
     let ip = match parse_ip_arg(&text) {
         Ok(ip) => ip,
         Err(e) => {
-            println!("Invalid IP address: {e:#}");
+            outln!("Invalid IP address: {e:#}");
             return Ok(None);
         }
     };
-    println!("Probing {ip}:{} directly...", protocol::PORT);
+    outln!("Probing {ip}:{} directly...", protocol::PORT);
     match cmd_run::probe_pico_ip(ip, Duration::from_secs(8)).await {
         Ok(pico) => Ok(Some(pico)),
         Err(e) => {
-            println!("No Pico replied at {ip}: {e:#}");
+            outln!("No Pico replied at {ip}: {e:#}");
             Ok(None)
         }
     }
@@ -110,14 +108,14 @@ fn parse_ip_arg(text: &str) -> Result<IpAddr> {
 async fn query_and_print(picos: &[cmd_run::PicoTarget]) -> Result<()> {
     let mut failures = 0usize;
     for pico in picos {
-        println!();
-        println!("{}", pico.detail_label());
+        outln!();
+        outln!("{}", pico.detail_label());
         match query_usb_diag(pico, PROBE_TIMEOUT).await {
             Ok(diag) => print_usb_diag(&diag, pico.persona),
             Err(e) => {
                 failures += 1;
-                println!("  FAIL  USB diagnostic did not reply: {e:#}");
-                println!("  Update Pico firmware, then run this check again.");
+                outln!("  FAIL  USB diagnostic did not reply: {e:#}");
+                outln!("  Update Pico firmware, then run this check again.");
             }
         }
     }
@@ -127,7 +125,7 @@ async fn query_and_print(picos: &[cmd_run::PicoTarget]) -> Result<()> {
     Ok(())
 }
 
-pub async fn query_usb_diag(
+pub(crate) async fn query_usb_diag(
     pico: &cmd_run::PicoTarget,
     timeout: Duration,
 ) -> Result<protocol::UsbDiag> {
@@ -159,13 +157,13 @@ pub async fn query_usb_diag(
                 let diag = protocol::UsbDiag::decode(&buf[..n])
                     .context("decoding USB diagnostic reply")?;
                 pico_cache::record(
-                    pico_cache::PicoStateSnapshot::from_target("usb-diag", pico)
+                    &pico_cache::PicoStateSnapshot::from_target("usb-diag", pico)
                         .with_usb_diag(&diag, pico.persona)
                         .with_outcome("usb_diag_captured"),
                 );
                 return Ok(diag);
             }
-            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
+            () = tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)) => {
                 bail!(
                     "no USB diagnostic reply from {} within {} s",
                     pico.peer,
@@ -177,10 +175,10 @@ pub async fn query_usb_diag(
 }
 
 fn print_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) {
-    print!("{}", format_usb_diag(diag, persona));
+    out!("{}", format_usb_diag(diag, persona));
 }
 
-pub fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> String {
+pub(crate) fn format_usb_diag(diag: &protocol::UsbDiag, persona: protocol::Persona) -> String {
     let device_label = match persona {
         protocol::Persona::Xinput => "XInput",
         protocol::Persona::Keyboard => "HID keyboard",
@@ -258,13 +256,19 @@ fn usb_verdict(diag: &protocol::UsbDiag, device_label: &str) -> String {
             return "FAIL  Pico sees no USB host enumeration traffic.".to_string();
         }
         protocol::UsbConfigurationState::EnumerationStarted => {
-            return format!("FAIL  USB host started enumeration but did not configure the {device_label} device.");
+            return format!(
+                "FAIL  USB host started enumeration but did not configure the {device_label} device."
+            );
         }
         protocol::UsbConfigurationState::ConfiguredThenUnmountedWithoutCallback => {
-            return format!("FAIL  USB configured the {device_label} device once, then current state is not mounted and no unmount callback was recorded.");
+            return format!(
+                "FAIL  USB configured the {device_label} device once, then current state is not mounted and no unmount callback was recorded."
+            );
         }
         protocol::UsbConfigurationState::ConfiguredThenUnmounted => {
-            return format!("FAIL  USB configured the {device_label} device once, then the host disconnected or reset it.");
+            return format!(
+                "FAIL  USB configured the {device_label} device once, then the host disconnected or reset it."
+            );
         }
         protocol::UsbConfigurationState::Suspended => {
             return format!(
@@ -316,80 +320,31 @@ fn age_label(diag: &protocol::UsbDiag, timestamp_ms: u32) -> String {
 }
 
 fn yes_no(value: bool) -> &'static str {
-    if value {
-        "yes"
-    } else {
-        "no"
-    }
+    if value { "yes" } else { "no" }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn diag(mounted: bool, sent: bool, out: bool, desc: bool) -> protocol::UsbDiag {
-        protocol::UsbDiag {
-            seq: 1,
-            flags: 0,
-            version: protocol::USB_DIAG_VERSION,
-            usb_flags: if mounted {
-                protocol::USB_DIAG_FLAG_MOUNTED
-            } else {
-                0
-            },
-            activity_flags: (if sent {
-                protocol::USB_DIAG_ACTIVITY_SENT
-            } else {
-                0
-            }) | (if out {
-                protocol::USB_DIAG_ACTIVITY_OUT
-            } else {
-                0
-            }),
-            last_out_len: 0,
-            now_ms: 10_000,
-            last_bridge_packet_ms: 0,
-            mount_count: if mounted { 1 } else { 0 },
-            umount_count: 0,
-            suspend_count: 0,
-            resume_count: 0,
-            device_desc_count: if desc { 1 } else { 0 },
-            config_desc_count: if desc { 1 } else { 0 },
-            xinput_in_queued_count: if sent { 1 } else { 0 },
-            xinput_in_sent_count: if sent { 1 } else { 0 },
-            xinput_out_count: if out { 1 } else { 0 },
-            xinput_in_blocked_not_mounted_count: 0,
-            xinput_in_blocked_not_ready_count: 0,
-            xinput_in_blocked_short_write_count: 0,
-            xinput_in_idle_suppressed_count: 0,
-            last_mount_ms: 9000,
-            last_umount_ms: 0,
-            last_in_queued_ms: 0,
-            last_in_sent_ms: if sent { 9500 } else { 0 },
-            last_out_ms: if out { 9600 } else { 0 },
-            last_in_blocked_ms: 0,
-            last_in_blocked_reason: 0,
-            last_in_blocked_want: 0,
-            last_in_blocked_got: 0,
-            last_out_byte0: 0,
-            last_out_byte1: 0,
-        }
-    }
+    use crate::test_diag::{DiagStage, usb_diag};
 
     #[test]
     fn verdict_identifies_usb_enumeration_shapes() {
-        assert!(usb_verdict(&diag(false, false, false, false), "XInput").starts_with("FAIL"));
+        assert!(usb_verdict(&usb_diag(DiagStage::Silent), "XInput").starts_with("FAIL"));
         assert!(
-            usb_verdict(&diag(false, false, false, true), "XInput").contains("started enumeration")
+            usb_verdict(&usb_diag(DiagStage::DescriptorsOnly), "XInput")
+                .contains("started enumeration")
         );
-        assert!(usb_verdict(&diag(true, false, false, true), "XInput").starts_with("WARN"));
-        assert!(usb_verdict(&diag(true, true, false, true), "XInput").starts_with("PASS"));
-        assert!(usb_verdict(&diag(true, true, true, true), "XInput").contains("OUT traffic"));
+        assert!(usb_verdict(&usb_diag(DiagStage::Mounted), "XInput").starts_with("WARN"));
+        assert!(usb_verdict(&usb_diag(DiagStage::Polling), "XInput").starts_with("PASS"));
+        assert!(
+            usb_verdict(&usb_diag(DiagStage::PollingWithOut), "XInput").contains("OUT traffic")
+        );
     }
 
     #[test]
     fn verdict_distinguishes_configured_then_unmounted() {
-        let mut d = diag(false, false, false, true);
+        let mut d = usb_diag(DiagStage::DescriptorsOnly);
         d.mount_count = 1;
         d.umount_count = 0;
 
@@ -415,25 +370,25 @@ mod tests {
 
     #[test]
     fn verdict_uses_persona_label() {
-        let warn = usb_verdict(&diag(true, false, false, true), "HID keyboard");
+        let warn = usb_verdict(&usb_diag(DiagStage::Mounted), "HID keyboard");
         assert!(warn.contains("HID keyboard report"));
     }
 
     #[test]
     fn verdict_expects_xinput_reports_for_maple_mode() {
-        let verdict = usb_verdict(&diag(true, false, false, true), "XInput (Maple mode)");
+        let verdict = usb_verdict(&usb_diag(DiagStage::Mounted), "XInput (Maple mode)");
         assert!(verdict.contains("XInput (Maple mode) report"));
     }
 
     #[test]
     fn verdict_uses_playstation_label() {
-        let verdict = usb_verdict(&diag(true, false, false, true), "PS3 HID gamepad");
+        let verdict = usb_verdict(&usb_diag(DiagStage::Mounted), "PS3 HID gamepad");
         assert!(verdict.contains("PS3 HID gamepad report"));
     }
 
     #[test]
     fn format_usb_diag_contains_persona_and_counters() {
-        let text = format_usb_diag(&diag(true, true, true, true), protocol::Persona::Ps4);
+        let text = format_usb_diag(&usb_diag(DiagStage::PollingWithOut), protocol::Persona::Ps4);
         assert!(text.contains("PS4 HID gamepad"));
         assert!(text.contains("mounts=1"));
         assert!(text.contains("host_accepted_reports=1"));
@@ -443,7 +398,7 @@ mod tests {
 
     #[test]
     fn verdict_reports_block_reason_when_configured_without_sent_report() {
-        let mut d = diag(true, false, false, true);
+        let mut d = usb_diag(DiagStage::Mounted);
         d.xinput_in_blocked_not_ready_count = 3;
         d.last_in_blocked_reason = protocol::USB_DIAG_IN_BLOCKED_NOT_READY;
         d.last_in_blocked_want = 20;
@@ -456,7 +411,7 @@ mod tests {
 
     #[test]
     fn age_label_formats_never_and_seconds() {
-        let d = diag(true, true, false, true);
+        let d = usb_diag(DiagStage::Polling);
         assert_eq!(age_label(&d, 0), "never");
         assert_eq!(age_label(&d, 9500), "500 ms ago");
         assert_eq!(age_label(&d, 8000), "2 s ago");

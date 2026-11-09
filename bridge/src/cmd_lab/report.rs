@@ -89,15 +89,15 @@ impl LabReport {
     }
 
     pub(in crate::cmd_lab) fn print_summary(&self) {
-        println!();
-        println!("Lab summary");
+        outln!();
+        outln!("Lab summary");
         for step in &self.steps {
             let uid = step
                 .uid
                 .as_ref()
                 .map(|u| format!(" {u}"))
                 .unwrap_or_default();
-            println!(
+            outln!(
                 "  {:<4} {:<24}{}  {}",
                 step.status.as_str(),
                 step.name,
@@ -115,7 +115,7 @@ impl LabReport {
             .iter()
             .filter(|step| step.status == StepStatus::Skip)
             .count();
-        println!(
+        outln!(
             "summary: {} pass, {} fail, {} skip",
             pass,
             self.fail_count(),

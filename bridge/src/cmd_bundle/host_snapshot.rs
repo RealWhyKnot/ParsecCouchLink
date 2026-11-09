@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use tokio::process::Command;
@@ -93,8 +94,9 @@ fn format_xinput_sources_snapshot(slots: &[xinput::SlotSnapshot]) -> String {
         return text;
     }
     for slot in slots {
-        text.push_str(&format!(
-            "{} live packet={} buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}\n",
+        let _ = writeln!(
+            text,
+            "{} live packet={} buttons=0x{:04X} lt={} rt={} lx={} ly={} rx={} ry={}",
             xinput::user_slot_label(slot.slot),
             slot.packet_number,
             slot.state.buttons,
@@ -104,7 +106,7 @@ fn format_xinput_sources_snapshot(slots: &[xinput::SlotSnapshot]) -> String {
             slot.state.left_y,
             slot.state.right_x,
             slot.state.right_y
-        ));
+        );
     }
     text
 }
@@ -124,8 +126,8 @@ async fn capture_command_snapshot(
             Ok(Ok(output)) => {
                 let elapsed_ms = duration_ms(started.elapsed());
                 let mut text = String::new();
-                text.push_str(&format!("# command: {command}\n"));
-                text.push_str(&format!("# exit: {}\n\n", output.status));
+                let _ = writeln!(text, "# command: {command}");
+                let _ = write!(text, "# exit: {}\n\n", output.status);
                 text.push_str(&String::from_utf8_lossy(&output.stdout));
                 if !output.stderr.is_empty() {
                     text.push_str("\n\n# stderr\n");
@@ -213,7 +215,7 @@ fn snapshot_file(
 }
 
 fn duration_ms(duration: Duration) -> u64 {
-    duration.as_millis().min(u128::from(u64::MAX)) as u64
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 fn windows_snapshot_commands() -> Vec<(&'static str, &'static str, &'static str)> {
@@ -231,7 +233,7 @@ fn windows_snapshot_commands() -> Vec<(&'static str, &'static str, &'static str)
         (
             "pnp_events_120m",
             "host/pnp-events-120m.txt",
-            "$start = (Get-Date).AddMinutes(-120); Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=$start} -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'USB|Kernel-PnP|UserPnp|DriverFrameworks' -or $_.Message -match 'USB|HID|Pico|RP2|WinUSB|usbser' } | Select-Object -First 200 TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List",
+            "$start = (Get-Date).AddMinutes(-120); Get-WinEvent -FilterHashtable @{LogName='System'; StartTime=$start} -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'USB|Kernel-PNP|UserPnp|DriverFrameworks' -or $_.Message -match 'USB|HID|Pico|RP2|WinUSB|usbser' } | Select-Object -First 200 TimeCreated,ProviderName,Id,LevelDisplayName,Message | Format-List",
         ),
         (
             "udp_endpoints",

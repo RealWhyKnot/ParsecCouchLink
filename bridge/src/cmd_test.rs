@@ -1,17 +1,21 @@
-//! `couchlink test <which>` -- run a single check from the doctor ladder.
-
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 use crate::cdc;
 use crate::cmd_doctor::{
-    check_24ghz_warning, check_cdc, check_discover, check_firewall, check_paths,
-    check_startup_shortcut, check_xinput, CheckResult,
+    CheckResult, check_24ghz_warning, check_cdc, check_discover, check_firewall, check_paths,
+    check_startup_shortcut, check_xinput,
 };
+use crate::modes::PicoScope;
 use crate::{cmd_run, cmd_usb_diag, discovery, support};
 
-pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) -> Result<()> {
+pub(crate) async fn run(
+    which: &str,
+    scope: PicoScope,
+    reboot_to_run: bool,
+    ips: Vec<String>,
+) -> Result<()> {
     if reboot_to_run && which != "cdc" {
         return Err(anyhow!(
             "--reboot-to-run is only supported for `couchlink test cdc`"
@@ -26,14 +30,14 @@ pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) 
                 "--ip is only supported for `couchlink test discover` and `couchlink test usb`"
             ));
         }
-        if all {
+        if scope.is_all() {
             return Err(anyhow!(
                 "use either `couchlink test discover --all` or `couchlink test discover --ip <addr>`, not both"
             ));
         }
         return run_discover_ips(ips).await;
     }
-    if all {
+    if scope.is_all() {
         return match which {
             "cdc" => run_cdc_all(reboot_to_run).await,
             "discover" => run_discover_all().await,
@@ -64,20 +68,20 @@ pub async fn run(which: &str, all: bool, reboot_to_run: bool, ips: Vec<String>) 
     };
     match result {
         CheckResult::Pass(m) => {
-            println!("PASS  {}", m);
+            outln!("PASS  {}", m);
             Ok(())
         }
         CheckResult::Warn(m) => {
-            println!("WARN  {}", m);
+            outln!("WARN  {}", m);
             std::process::exit(1);
         }
         CheckResult::Skip(m) => {
-            println!("SKIP  {}", m);
+            outln!("SKIP  {}", m);
             Ok(())
         }
         CheckResult::Fail(m, hint) => {
-            println!("FAIL  {}", m);
-            println!("hint: {}", hint);
+            outln!("FAIL  {}", m);
+            outln!("hint: {}", hint);
             std::process::exit(2);
         }
     }
@@ -88,12 +92,12 @@ async fn run_discover_ips(ips: Vec<String>) -> Result<()> {
     for text in ips {
         let Some(ip) = cmd_run::parse_ip_selector(&text) else {
             failures += 1;
-            println!("FAIL  {} is not a valid IP address", text);
+            outln!("FAIL  {} is not a valid IP address", text);
             continue;
         };
         match cmd_run::probe_pico_ip(ip, Duration::from_secs(8)).await {
             Ok(pico) => {
-                println!(
+                outln!(
                     "PASS  ack from {} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s",
                     pico.peer,
                     pico.info.proto_version,
@@ -102,11 +106,11 @@ async fn run_discover_ips(ips: Vec<String>) -> Result<()> {
                     pico.info.unique_id_short,
                     pico.info.uptime_seconds,
                 );
-                println!("manual IP confirmed: {}", pico.peer.ip());
+                outln!("manual IP confirmed: {}", pico.peer.ip());
             }
             Err(e) => {
                 failures += 1;
-                println!("FAIL  {} {}", ip, e);
+                outln!("FAIL  {} {}", ip, e);
             }
         }
     }
@@ -149,7 +153,7 @@ async fn run_cdc_all(reboot_to_run: bool) -> Result<()> {
         match probe {
             Ok(Ok((hello, self_test))) => {
                 let status = if self_test.passed { "PASS" } else { "FAIL" };
-                println!(
+                outln!(
                     "{}  {} HELLO proto v{} fw v{} board=0x{:02X} creds={} SELF_TEST {}{}",
                     status,
                     port,
@@ -170,11 +174,11 @@ async fn run_cdc_all(reboot_to_run: bool) -> Result<()> {
             }
             Ok(Err(e)) => {
                 failures += 1;
-                println!("FAIL  {} {}", port, e);
+                outln!("FAIL  {} {}", port, e);
             }
             Err(e) => {
                 failures += 1;
-                println!("FAIL  {} CDC probe task failed: {}", port, e);
+                outln!("FAIL  {} CDC probe task failed: {}", port, e);
             }
         }
     }
@@ -204,7 +208,7 @@ async fn run_cdc_one_reboot_to_run() -> Result<()> {
     })
     .await??;
     let (port, hello) = probe;
-    println!(
+    outln!(
         "PASS  {} HELLO proto v{} fw v{} board=0x{:02X} -> RUN",
         port,
         hello.proto_version,
@@ -222,7 +226,7 @@ async fn run_discover_all() -> Result<()> {
     }
 
     for reply in &replies {
-        println!(
+        outln!(
             "PASS  ack from {} proto v{} fw v{} board=0x{:02X} uid=0x{:08X} uptime={}s persona={} flags=0x{:02X}",
             reply.peer,
             reply.info.proto_version,
@@ -234,6 +238,6 @@ async fn run_discover_all() -> Result<()> {
             reply.flags,
         );
     }
-    println!("summary: {} unique Pico reply/replies", replies.len());
+    outln!("summary: {} unique Pico reply/replies", replies.len());
     Ok(())
 }

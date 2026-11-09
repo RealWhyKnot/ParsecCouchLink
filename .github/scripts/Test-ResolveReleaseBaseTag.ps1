@@ -3,55 +3,60 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-
-$resolver = Join-Path $PSScriptRoot 'Resolve-ReleaseBaseTag.ps1'
-$repo = Join-Path ([System.IO.Path]::GetTempPath()) ("release-base-test-" + [System.Guid]::NewGuid().ToString('N'))
+Set-StrictMode -Version Latest
 
 function Invoke-Git {
+    [CmdletBinding()]
+    [OutputType([void])]
     param(
         [Parameter(Mandatory = $true)]
         [string[]] $Arguments
     )
 
-    & git @Arguments | Out-Null
+    $null = & git @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
     }
 }
 
 function Add-TestCommit {
+    [CmdletBinding()]
+    [OutputType([void])]
     param(
+        [Parameter(Mandatory = $true)]
+        [string] $Repo,
         [Parameter(Mandatory = $true)]
         [string] $Content,
         [Parameter(Mandatory = $true)]
         [string] $Subject
     )
 
-    Set-Content -LiteralPath (Join-Path $repo 'sample.txt') -Value $Content -Encoding UTF8
-    Invoke-Git @('add', 'sample.txt')
-    Invoke-Git @('commit', '-m', $Subject)
+    [IO.File]::WriteAllText((Join-Path $Repo 'sample.txt'), $Content)
+    Invoke-Git -Arguments @('add', 'sample.txt')
+    Invoke-Git -Arguments @('commit', '-m', $Subject)
 }
 
+$resolver = Join-Path $PSScriptRoot 'Resolve-ReleaseBaseTag.ps1'
+$repo = Join-Path ([System.IO.Path]::GetTempPath()) ('release-base-test-' + [System.Guid]::NewGuid().ToString('N'))
+
 try {
-    New-Item -ItemType Directory -Path $repo -Force | Out-Null
-    Push-Location $repo
+    $null = New-Item -ItemType Directory -Path $repo -Force
+    Push-Location -LiteralPath $repo
 
-    Invoke-Git @('init', '-q')
-    Invoke-Git @('config', 'user.email', 'release-test@example.com')
-    Invoke-Git @('config', 'user.name', 'Release Test')
-    # Keep the throwaway repo hermetic: a developer's global gitconfig may
-    # sign commits/tags, which breaks plain `git tag` in this sandbox.
-    Invoke-Git @('config', 'commit.gpgsign', 'false')
-    Invoke-Git @('config', 'tag.gpgsign', 'false')
+    Invoke-Git -Arguments @('init', '-q')
+    Invoke-Git -Arguments @('config', 'user.email', 'release-test@example.com')
+    Invoke-Git -Arguments @('config', 'user.name', 'Release Test')
+    Invoke-Git -Arguments @('config', 'commit.gpgsign', 'false')
+    Invoke-Git -Arguments @('config', 'tag.gpgsign', 'false')
 
-    Add-TestCommit -Content 'base' -Subject 'chore: base'
-    Invoke-Git @('tag', 'v2026.5.1.0')
+    Add-TestCommit -Repo $repo -Content 'base' -Subject 'chore: base'
+    Invoke-Git -Arguments @('tag', 'v2026.5.1.0')
 
-    Add-TestCommit -Content 'pre' -Subject 'feat: prerelease patch'
-    Invoke-Git @('tag', 'v2026.5.2.0-beta')
+    Add-TestCommit -Repo $repo -Content 'pre' -Subject 'feat: prerelease patch'
+    Invoke-Git -Arguments @('tag', 'v2026.5.2.0-beta')
 
-    Add-TestCommit -Content 'stable' -Subject 'fix: stable patch'
-    Invoke-Git @('tag', 'v2026.5.3.0')
+    Add-TestCommit -Repo $repo -Content 'stable' -Subject 'fix: stable patch'
+    Invoke-Git -Arguments @('tag', 'v2026.5.3.0')
 
     $stableBase = & $resolver -Tag 'v2026.5.3.0'
     if ($stableBase -ne 'v2026.5.1.0') {
@@ -63,10 +68,6 @@ try {
         throw "Prerelease base was '$preBase', expected 'v2026.5.1.0'."
     }
 
-    # First release in a repo: no previous tag exists. The resolver must
-    # return empty AND leave $LASTEXITCODE at 0, because GitHub's pwsh
-    # step wrapper ends the step with `exit $LASTEXITCODE` and a stale
-    # git describe failure code would fail the release job silently.
     $firstBase = & $resolver -Tag 'v2026.5.1.0'
     if ($firstBase) {
         throw "First-release base was '$firstBase', expected empty."
@@ -76,8 +77,9 @@ try {
     }
 
     Write-Host 'Resolve-ReleaseBaseTag tests passed.'
-}
-finally {
+} finally {
     Pop-Location
     Remove-Item -LiteralPath $repo -Recurse -Force
 }
+
+exit 0

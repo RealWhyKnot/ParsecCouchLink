@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::cdc;
 use crate::protocol::{Packet, PacketKind, Persona};
@@ -32,7 +33,7 @@ pub(in crate::cmd_run) fn open_bluetooth_usb_links(
         }) {
             Ok((uid, pico)) if needed.contains(&uid) => {
                 if !quiet {
-                    println!(
+                    outln!(
                         "Bluetooth USB link ready: Pico {uid:08X} on {}.",
                         pico.port_name()
                     );
@@ -99,44 +100,43 @@ pub(in crate::cmd_run) fn refresh_bluetooth_statuses(routes: &mut [RouteRuntime]
     }
 }
 
-pub fn print_bluetooth_pairing_help(persona: Persona) {
+pub(crate) fn print_bluetooth_pairing_help(persona: Persona) {
     if !persona.is_bluetooth() {
         return;
     }
     let expected_name = bluetooth_expected_name(persona);
-    println!();
-    println!("Bluetooth mode setup");
-    println!("  Keep this Pico plugged into the bridge PC over USB.");
-    println!("  The Pico will advertise as {expected_name}.");
-    println!("  Put the receiver or console adapter into Bluetooth pairing/search mode.");
-    println!("  Pair the receiver with {expected_name}. Use PIN 0000 if it asks for one.");
-    println!("  This command keeps streaming status and controller input until you stop it.");
+    outln!();
+    outln!("Bluetooth mode setup");
+    outln!("  Keep this Pico plugged into the bridge PC over USB.");
+    outln!("  The Pico will advertise as {expected_name}.");
+    outln!("  Put the receiver or console adapter into Bluetooth pairing/search mode.");
+    outln!("  Pair the receiver with {expected_name}. Use PIN 0000 if it asks for one.");
+    outln!("  This command keeps streaming status and controller input until you stop it.");
     match persona {
         Persona::BluetoothPlaystation => {
-            println!(
+            outln!(
                 "  For BITFUNX/BlueRetro N64, try this DualShock 4 mode first; use couchlink blueretro as the fallback."
             );
         }
         Persona::BluetoothHid => {
-            println!(
+            outln!(
                 "  For BITFUNX/BlueRetro N64, couchlink blueretro-playstation is the first choice; this generic HID mode is the fallback."
             );
         }
         Persona::BluetoothXbox => {
-            println!(
+            outln!(
                 "  For BITFUNX/BlueRetro N64, try couchlink blueretro-playstation first, then couchlink blueretro; this Xbox-named Classic HID mimic is only a diagnostic."
             );
         }
         _ => {}
     }
-    println!("  Persona switching still uses Wi-Fi; live controller input then uses PC USB.");
+    outln!("  Persona switching still uses Wi-Fi; live controller input then uses PC USB.");
 }
 
 pub(in crate::cmd_run) fn bluetooth_expected_name(persona: Persona) -> &'static str {
     match persona {
         Persona::BluetoothXbox => "Xbox Wireless Controller",
         Persona::BluetoothPlaystation => "Wireless Controller",
-        Persona::BluetoothHid => "CouchLink BT HID",
         _ => "CouchLink BT HID",
     }
 }
@@ -178,116 +178,7 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
         String::new()
     };
     if !status.connected() {
-        let name = bluetooth_display_name(status);
-        if status.incoming_hid_l2cap_seen() {
-            let mut msg = format!(
-                "{version_note}receiver reached HID L2CAP for \"{name}\" but no Classic HID channel opened"
-            );
-            msg.push_str(&format!(
-                "; incoming control {} interrupt {} last PSM 0x{:04X}",
-                status.incoming_l2cap_hid_control_count,
-                status.incoming_l2cap_hid_interrupt_count,
-                status.last_incoming_l2cap_psm
-            ));
-            if status.last_connection_complete_status != 0 {
-                msg.push_str(&format!(
-                    "; ACL status 0x{:02X}",
-                    status.last_connection_complete_status
-                ));
-            }
-            msg.push_str("; keep bundle with receiver-side logs if it repeats");
-            return msg;
-        }
-        if status.reconnect_pending() || status.reconnect_in_progress() {
-            let phase = if status.reconnect_in_progress() {
-                "in progress"
-            } else {
-                "scheduled"
-            };
-            let mut msg = format!(
-                "{version_note}pairing/security seen for \"{name}\"; HID reconnect {phase}"
-            );
-            msg.push_str(&format!(
-                "; attempts {}/6 scheduled {}",
-                status.reconnect_cycle_attempts, status.reconnect_schedule_count
-            ));
-            if status.connection_complete_count > 0 {
-                msg.push_str(&format!(
-                    "; ACL completes {} last 0x{:02X}",
-                    status.connection_complete_count, status.last_connection_complete_status
-                ));
-            }
-            return msg;
-        }
-        if status.reconnect_activity_seen() {
-            let mut msg = format!(
-                "{version_note}pairing/security seen for \"{name}\"; HID reconnect attempts {} failed {} blocked {}; no Classic HID channel opened",
-                status.reconnect_attempt_count,
-                status.reconnect_failed_count,
-                status.reconnect_blocked_count
-            );
-            if status.connection_complete_count > 0 {
-                msg.push_str(&format!(
-                    "; ACL completes {} last status 0x{:02X}",
-                    status.connection_complete_count, status.last_connection_complete_status
-                ));
-            }
-            if status.last_reconnect_status != 0 {
-                msg.push_str(&format!(
-                    "; last reconnect status 0x{:02X}",
-                    status.last_reconnect_status
-                ));
-            }
-            msg.push_str("; BITFUNX/BlueRetro N64: try couchlink blueretro-playstation first, then couchlink blueretro");
-            return msg;
-        }
-        if status.pairing_security_contact_seen() || status.hid_open_failed_count > 0 {
-            let mut msg = format!(
-                "{version_note}pairing/security seen for \"{name}\" but no Classic HID channel opened; clear receiver pairing and pair again"
-            );
-            msg.push_str("; BITFUNX/BlueRetro N64: try couchlink blueretro-playstation first, then couchlink blueretro");
-            if status.user_confirmation_request_count > 0 {
-                msg.push_str(&format!(
-                    "; confirmations {}/{}",
-                    status.user_confirmation_response_count, status.user_confirmation_request_count
-                ));
-            }
-            if status.pin_code_request_count > 0 {
-                msg.push_str(&format!(
-                    "; PIN replies {}/{}",
-                    status.pin_code_response_count, status.pin_code_request_count
-                ));
-            }
-            if status.hid_open_failed_count > 0 {
-                msg.push_str(&format!(
-                    "; HID open failures {} last 0x{:02X}",
-                    status.hid_open_failed_count, status.last_hid_open_status
-                ));
-            }
-            if status.last_authentication_status != 0 {
-                msg.push_str(&format!(
-                    "; auth status 0x{:02X}",
-                    status.last_authentication_status
-                ));
-            }
-            if status.last_disconnection_reason != 0 {
-                msg.push_str(&format!(
-                    "; disconnect reason 0x{:02X}",
-                    status.last_disconnection_reason
-                ));
-            }
-            return msg;
-        }
-        let mut msg = format!(
-            "{version_note}discoverable as \"{name}\"; pair receiver/search mode, PIN 0000"
-        );
-        if status.last_status != 0 {
-            msg.push_str(&format!("; last status 0x{:02X}", status.last_status));
-        }
-        if status.close_count > 0 {
-            msg.push_str(&format!("; disconnects {}", status.close_count));
-        }
-        return msg;
+        return disconnected_peer_state(status, &version_note);
     }
 
     let mut msg = match report_delta {
@@ -303,90 +194,247 @@ pub(in crate::cmd_run) fn format_bluetooth_peer_state(
     if status.send_requested() {
         msg.push_str("; send queued");
     }
+    write_report_exchange_counts(&mut msg, status);
+    write_cdc_input_counts(&mut msg, status);
+    if status.close_count > 0 {
+        let _ = write!(msg, "; disconnects {}", status.close_count);
+    }
+    if status.newer_status_version() {
+        let _ = write!(
+            msg,
+            "; newer BT_STATUS v{} decoded as v{}; update CouchLink",
+            status.status_version, status.decoded_status_version
+        );
+    }
+    msg
+}
+
+fn disconnected_peer_state(status: &cdc::BtStatus, version_note: &str) -> String {
+    let name = bluetooth_display_name(status);
+    if status.incoming_hid_l2cap_seen() {
+        return l2cap_contact_state(status, version_note, name);
+    }
+    if status.reconnect_pending() || status.reconnect_in_progress() {
+        return reconnect_pending_state(status, version_note, name);
+    }
+    if status.reconnect_activity_seen() {
+        return reconnect_attempted_state(status, version_note, name);
+    }
+    if status.pairing_security_contact_seen() || status.hid_open_failed_count > 0 {
+        return pairing_contact_state(status, version_note, name);
+    }
+    discoverable_state(status, version_note, name)
+}
+
+fn l2cap_contact_state(status: &cdc::BtStatus, version_note: &str, name: &str) -> String {
+    let mut msg = format!(
+        "{version_note}receiver reached HID L2CAP for \"{name}\" but no Classic HID channel opened"
+    );
+    let _ = write!(
+        msg,
+        "; incoming control {} interrupt {} last PSM 0x{:04X}",
+        status.incoming_l2cap_hid_control_count,
+        status.incoming_l2cap_hid_interrupt_count,
+        status.last_incoming_l2cap_psm
+    );
+    if status.last_connection_complete_status != 0 {
+        let _ = write!(
+            msg,
+            "; ACL status 0x{:02X}",
+            status.last_connection_complete_status
+        );
+    }
+    msg.push_str("; keep bundle with receiver-side logs if it repeats");
+    msg
+}
+
+fn reconnect_pending_state(status: &cdc::BtStatus, version_note: &str, name: &str) -> String {
+    let phase = if status.reconnect_in_progress() {
+        "in progress"
+    } else {
+        "scheduled"
+    };
+    let mut msg =
+        format!("{version_note}pairing/security seen for \"{name}\"; HID reconnect {phase}");
+    let _ = write!(
+        msg,
+        "; attempts {}/6 scheduled {}",
+        status.reconnect_cycle_attempts, status.reconnect_schedule_count
+    );
+    if status.connection_complete_count > 0 {
+        let _ = write!(
+            msg,
+            "; ACL completes {} last 0x{:02X}",
+            status.connection_complete_count, status.last_connection_complete_status
+        );
+    }
+    msg
+}
+
+fn reconnect_attempted_state(status: &cdc::BtStatus, version_note: &str, name: &str) -> String {
+    let mut msg = format!(
+        "{version_note}pairing/security seen for \"{name}\"; HID reconnect attempts {} failed {} blocked {}; no Classic HID channel opened",
+        status.reconnect_attempt_count,
+        status.reconnect_failed_count,
+        status.reconnect_blocked_count
+    );
+    if status.connection_complete_count > 0 {
+        let _ = write!(
+            msg,
+            "; ACL completes {} last status 0x{:02X}",
+            status.connection_complete_count, status.last_connection_complete_status
+        );
+    }
+    if status.last_reconnect_status != 0 {
+        let _ = write!(
+            msg,
+            "; last reconnect status 0x{:02X}",
+            status.last_reconnect_status
+        );
+    }
+    msg.push_str("; BITFUNX/BlueRetro N64: try couchlink blueretro-playstation first, then couchlink blueretro");
+    msg
+}
+
+fn pairing_contact_state(status: &cdc::BtStatus, version_note: &str, name: &str) -> String {
+    let mut msg = format!(
+        "{version_note}pairing/security seen for \"{name}\" but no Classic HID channel opened; clear receiver pairing and pair again"
+    );
+    msg.push_str("; BITFUNX/BlueRetro N64: try couchlink blueretro-playstation first, then couchlink blueretro");
+    if status.user_confirmation_request_count > 0 {
+        let _ = write!(
+            msg,
+            "; confirmations {}/{}",
+            status.user_confirmation_response_count, status.user_confirmation_request_count
+        );
+    }
+    if status.pin_code_request_count > 0 {
+        let _ = write!(
+            msg,
+            "; PIN replies {}/{}",
+            status.pin_code_response_count, status.pin_code_request_count
+        );
+    }
+    if status.hid_open_failed_count > 0 {
+        let _ = write!(
+            msg,
+            "; HID open failures {} last 0x{:02X}",
+            status.hid_open_failed_count, status.last_hid_open_status
+        );
+    }
+    if status.last_authentication_status != 0 {
+        let _ = write!(
+            msg,
+            "; auth status 0x{:02X}",
+            status.last_authentication_status
+        );
+    }
+    if status.last_disconnection_reason != 0 {
+        let _ = write!(
+            msg,
+            "; disconnect reason 0x{:02X}",
+            status.last_disconnection_reason
+        );
+    }
+    msg
+}
+
+fn discoverable_state(status: &cdc::BtStatus, version_note: &str, name: &str) -> String {
+    let mut msg =
+        format!("{version_note}discoverable as \"{name}\"; pair receiver/search mode, PIN 0000");
+    if status.last_status != 0 {
+        let _ = write!(msg, "; last status 0x{:02X}", status.last_status);
+    }
+    if status.close_count > 0 {
+        let _ = write!(msg, "; disconnects {}", status.close_count);
+    }
+    msg
+}
+
+fn write_report_exchange_counts(msg: &mut String, status: &cdc::BtStatus) {
     if status.get_report_count > 0 {
-        msg.push_str(&format!(
+        let _ = write!(
+            msg,
             "; GET_REPORT ok {}/{}",
             status.get_report_success_count, status.get_report_count
-        ));
+        );
         if status.get_report_unsupported_count > 0 {
-            msg.push_str(&format!(
-                " rejected {}",
-                status.get_report_unsupported_count
-            ));
+            let _ = write!(msg, " rejected {}", status.get_report_unsupported_count);
         }
         if status.last_get_report_len > 0 {
-            msg.push_str(&format!(
+            let _ = write!(
+                msg,
                 "; last GET {} 0x{:02X} len {}",
                 hid_report_type_name(status.last_get_report_type),
                 status.last_get_report_id,
                 status.last_get_report_len
-            ));
+            );
         }
     }
     if status.set_report_count > 0 {
-        msg.push_str(&format!(
+        let _ = write!(
+            msg,
             "; SET_REPORT accepted {}/{}",
             status.set_report_accepted_count, status.set_report_count
-        ));
+        );
         if status.set_report_unsupported_count > 0 {
-            msg.push_str(&format!(" ignored {}", status.set_report_unsupported_count));
+            let _ = write!(msg, " ignored {}", status.set_report_unsupported_count);
         }
         if status.last_set_report_len > 0 {
-            msg.push_str(&format!(
+            let _ = write!(
+                msg,
                 "; last SET {} 0x{:02X} len {}",
                 hid_report_type_name(status.last_set_report_type),
                 status.last_set_report_id,
                 status.last_set_report_len
-            ));
+            );
         }
     }
     if status.out_report_count > 0 {
-        msg.push_str(&format!(
+        let _ = write!(
+            msg,
             "; interrupt OUT accepted {}/{}",
             status.out_report_accepted_count, status.out_report_count
-        ));
+        );
         if status.out_report_unsupported_count > 0 {
-            msg.push_str(&format!(" ignored {}", status.out_report_unsupported_count));
+            let _ = write!(msg, " ignored {}", status.out_report_unsupported_count);
         }
         if status.last_out_report_len > 0 {
-            msg.push_str(&format!(
+            let _ = write!(
+                msg,
                 "; last OUT {} 0x{:02X} len {}",
                 hid_report_type_name(status.last_out_report_type),
                 status.last_out_report_id,
                 status.last_out_report_len
-            ));
+            );
         }
     }
+}
+
+fn write_cdc_input_counts(msg: &mut String, status: &cdc::BtStatus) {
     if status.bt_cdc_input_seen() {
-        msg.push_str(&format!(
+        let _ = write!(
+            msg,
             "; PC CDC input state {} heartbeat {}",
             status.bt_cdc_state_count, status.bt_cdc_heartbeat_count
-        ));
+        );
         if status.bt_cdc_last_frame_ms > 0 {
-            msg.push_str(&format!(
+            let _ = write!(
+                msg,
                 " last cmd 0x{:02X} seq {} flags 0x{:02X}",
                 status.bt_cdc_last_command, status.bt_cdc_last_seq, status.bt_cdc_last_flags
-            ));
+            );
         }
     } else {
         msg.push_str("; no PC CDC input frames yet");
     }
     if status.bt_cdc_bad_length_count > 0 || status.bt_cdc_rejected_count > 0 {
-        msg.push_str(&format!(
+        let _ = write!(
+            msg,
             "; CDC input errors bad_len {} rejected {}",
             status.bt_cdc_bad_length_count, status.bt_cdc_rejected_count
-        ));
+        );
     }
-    if status.close_count > 0 {
-        msg.push_str(&format!("; disconnects {}", status.close_count));
-    }
-    if status.newer_status_version() {
-        msg.push_str(&format!(
-            "; newer BT_STATUS v{} decoded as v{}; update CouchLink",
-            status.status_version, status.decoded_status_version
-        ));
-    }
-    msg
 }
 
 fn bluetooth_display_name(status: &cdc::BtStatus) -> &str {
@@ -400,12 +448,12 @@ fn bluetooth_display_name(status: &cdc::BtStatus) -> &str {
 pub(in crate::cmd_run) fn should_print_bluetooth_pairing_hint(
     status: Option<&cdc::BtStatus>,
 ) -> bool {
-    status.map(|status| !status.connected()).unwrap_or(true)
+    status.is_none_or(|status| !status.connected())
 }
 
 pub(in crate::cmd_run) fn short_error(error: &anyhow::Error) -> String {
-    let text = error.to_string();
     const MAX_LEN: usize = 120;
+    let text = error.to_string();
     if text.len() <= MAX_LEN {
         text
     } else {

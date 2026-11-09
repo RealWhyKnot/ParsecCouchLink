@@ -1,4 +1,4 @@
-* text=auto
+* text=auto eol=lf
 
 .gitattributes text eol=lf
 .gitignore text eol=lf
@@ -12,6 +12,9 @@ CMakeLists.txt text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.sh text eol=lf
+*.bash text eol=lf
+*.sh.tpl text eol=lf
+*.bash.tpl text eol=lf
 *.py text eol=lf
 *.c text eol=lf
 *.h text eol=lf
@@ -24,6 +27,7 @@ CMakeLists.txt text eol=lf
 *.lock text eol=lf
 
 .githooks/* text eol=lf
+.shellcheckrc text eol=lf
 
 *.uf2 binary
 *.exe binary

@@ -10,17 +10,11 @@
 #include "net_udp.h"
 #include "wifi.h"
 
-// 5 seconds keeps the ring populated without burning bytes on a quiet
-// system. 16 KiB diag_log ring / ~96 bytes per heartbeat = ~170 entries
-// or ~3.5 minutes of history even if nothing else ever logs.
 #define HEARTBEAT_INTERVAL_MS 5000
 
 static absolute_time_t next_beat;
 static uint32_t beat_count = 0;
 
-// One-shot assoc_result line. Emitted on the first heartbeat after the
-// Wi-Fi state settles to a definitive outcome. Reset to "joining" when
-// a new join begins so back-to-back attempts each get their own line.
 static wifi_state_t assoc_last_observed = WIFI_STATE_IDLE;
 static bool assoc_result_logged = false;
 
@@ -57,12 +51,7 @@ static bool due(void) {
 void heartbeat_run_mode_task(void) {
     wifi_state_t ws = wifi_state();
 
-    // One-shot assoc_result line on the first heartbeat after the join
-    // attempt settles. Emitted independently of the normal heartbeat
-    // cadence so a diag pull that only gets one or two heartbeats still
-    // surfaces the association outcome.
     if (!assoc_result_logged) {
-        // Transition from JOINING to a settled state.
         bool was_joining =
             (assoc_last_observed == WIFI_STATE_JOINING || assoc_last_observed == WIFI_STATE_IDLE);
         bool settled = (ws == WIFI_STATE_JOINED || ws == WIFI_STATE_FAILED);
@@ -71,7 +60,6 @@ void heartbeat_run_mode_task(void) {
                             wifi_state_name(ws), (unsigned)wifi_last_error_code());
             assoc_result_logged = true;
         }
-        // Reset for the next join attempt when we go back to JOINING.
         if (ws == WIFI_STATE_JOINING && assoc_last_observed != WIFI_STATE_JOINING) {
             assoc_result_logged = false;
         }

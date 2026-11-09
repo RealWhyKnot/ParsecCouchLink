@@ -17,12 +17,10 @@ void watchdog_init(void) {
 
 void watchdog_tick(void) {
     uint32_t now = to_ms_since_boot(get_absolute_time());
-    uint32_t last = g_last_packet_ms; // atomic 32-bit load
+    uint32_t last = g_last_packet_ms;
     bool stale = (last == 0) || ((uint32_t)(now - last) > PICO_BRIDGE_WATCHDOG_TIMEOUT_MS);
     if (stale) {
         if (!zeroed) {
-            // Edge-trigger: log once, neutralize state, then stay quiet
-            // until the bridge starts talking again.
             zeroed = true;
             g_gamepad_state.buttons = 0;
             g_gamepad_state.left_trigger = 0;
@@ -31,8 +29,6 @@ void watchdog_tick(void) {
             g_gamepad_state.left_y = 0;
             g_gamepad_state.right_x = 0;
             g_gamepad_state.right_y = 0;
-            // Neutralize the keyboard persona too: all keys up. Harmless
-            // in gamepad modes where this state is never read.
             g_keyboard_state.modifiers = 0;
             for (int i = 0; i < 6; i++)
                 g_keyboard_state.keys[i] = 0;

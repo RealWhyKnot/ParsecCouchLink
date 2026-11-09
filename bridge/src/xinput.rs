@@ -1,30 +1,27 @@
-//! XInput helpers for reading Windows controller slots. Runtime routing
-//! polls only the slots the user mapped to a Pico; guided setup uses the
-//! scan helper to show which slots are currently live.
-
-use windows::Win32::UI::Input::XboxController::{XInputGetState, XINPUT_STATE, XUSER_MAX_COUNT};
+use windows::Win32::UI::Input::XboxController::{XINPUT_STATE, XInputGetState, XUSER_MAX_COUNT};
 
 use crate::protocol::GamepadState;
 
 const ERROR_SUCCESS: u32 = 0;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SlotSnapshot {
+pub(crate) struct SlotSnapshot {
     pub slot: u32,
     pub state: GamepadState,
     pub packet_number: u32,
 }
 
-pub fn user_slot_label(slot: u32) -> String {
+pub(crate) fn user_slot_label(slot: u32) -> String {
     format!("Controller {}", slot + 1)
 }
 
-pub fn read_slot(slot: u32) -> Option<SlotSnapshot> {
+pub(crate) fn read_slot(slot: u32) -> Option<SlotSnapshot> {
     if slot >= XUSER_MAX_COUNT {
         return None;
     }
     let mut st = XINPUT_STATE::default();
-    let r = unsafe { XInputGetState(slot, &mut st) };
+    // SAFETY: `st` is a live XINPUT_STATE that the call fills in.
+    let r = unsafe { XInputGetState(slot, &raw mut st) };
     if r != ERROR_SUCCESS {
         return None;
     }
@@ -35,7 +32,7 @@ pub fn read_slot(slot: u32) -> Option<SlotSnapshot> {
     })
 }
 
-pub fn connected_slots() -> Vec<SlotSnapshot> {
+pub(crate) fn connected_slots() -> Vec<SlotSnapshot> {
     let mut slots = Vec::new();
     for slot in 0..XUSER_MAX_COUNT {
         if let Some(snapshot) = read_slot(slot) {

@@ -1,50 +1,46 @@
-//! Windows-specific helpers: resolve `FOLDERID_Startup`, create a `.lnk`
-//! shortcut via `IShellLink` + `IPersistFile`. Used by the setup wizard
-//! to install autostart on logon.
-
 #![cfg(windows)]
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
-use windows::core::{Interface, PCWSTR};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize, IPersistFile,
 };
 use windows::Win32::UI::Shell::{
-    FOLDERID_Startup, IShellLinkW, SHGetKnownFolderPath, ShellLink, KF_FLAG_DEFAULT,
+    FOLDERID_Startup, IShellLinkW, KF_FLAG_DEFAULT, SHGetKnownFolderPath, ShellLink,
 };
+use windows::core::{Interface, PCWSTR};
 
-pub fn startup_folder() -> Result<PathBuf> {
+pub(crate) fn startup_folder() -> Result<PathBuf> {
+    // SAFETY: `pwstr` is the string the shell allocated; it is read, then freed once.
     unsafe {
         let pwstr = SHGetKnownFolderPath(&FOLDERID_Startup, KF_FLAG_DEFAULT, None)
             .map_err(|e| anyhow!("SHGetKnownFolderPath failed: {e}"))?;
-        // PWSTR contents are valid until CoTaskMemFree.
         let s = pwstr
             .to_string()
             .context("startup path was not valid UTF-16")?;
-        windows::Win32::System::Com::CoTaskMemFree(Some(pwstr.0 as *const _));
+        windows::Win32::System::Com::CoTaskMemFree(Some(pwstr.0.cast_const().cast()));
         Ok(PathBuf::from(s))
     }
 }
 
-pub fn shortcut_path_for(name: &str) -> Result<PathBuf> {
+pub(crate) fn shortcut_path_for(name: &str) -> Result<PathBuf> {
     Ok(startup_folder()?.join(format!("{name}.lnk")))
 }
 
-pub fn create_shortcut(
+pub(crate) fn create_shortcut(
     link_path: &Path,
     target_exe: &Path,
     arguments: &str,
     working_dir: Option<&Path>,
     description: &str,
 ) -> Result<()> {
+    // SAFETY: every pointer handed to COM below comes from a live NUL-terminated buffer.
     unsafe {
-        // S_FALSE means already initialized on this thread; treat as ok.
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let need_uninit = init.is_ok();
 
