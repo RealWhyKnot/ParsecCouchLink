@@ -28,6 +28,27 @@ jobs:
       contents: read
     uses: RealWhyKnot/workflows/.github/workflows/repo-checks.yml@v1
 
+  style:
+    name: Style
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PSScriptAnalyzer
+        uses: RealWhyKnot/workflows/setup-pssa@v1
+
+      - name: Check style
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s inherit_errexit
+          python3 -B .github/lint/style_check.py
+          pwsh -NoProfile -File .github/lint/Invoke-PSLint.ps1
+
   changelog-guard:
     name: Reject changelog edits in pull requests
     if: github.event_name == 'pull_request'
