@@ -68,8 +68,11 @@ try {
     }
 
     $prePushText = Get-Content -LiteralPath $prePushPath -Raw
-    if ($prePushText -notmatch "tools/lint\.ps1" -or $prePushText -notmatch "-SkipRust" -or $prePushText -notmatch "-SkipPowerShell") {
-        throw "pre-push hook must run the firmware formatting lint path."
+    if ($prePushText -notmatch "tools/lint\.ps1") {
+        throw "pre-push hook must run tools/lint.ps1."
+    }
+    if ($prePushText -match "-Skip|SKIP") {
+        throw "pre-push hook skips part of tools/lint.ps1."
     }
 
     Write-Host "Commit hook tests passed."
