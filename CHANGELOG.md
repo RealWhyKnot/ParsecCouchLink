@@ -10,6 +10,9 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 - **deps:** Update cc, flate2 and zip (ee31779)
 - **deps:** Update winnow (2426a4f)
 
+### Fixed
+- **hooks:** Run the full lint before every push (18d7244)
+
 ---
 
 ## [v2026.10.27.0-beta](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.10.27.0-beta) -- 2026-10-27
