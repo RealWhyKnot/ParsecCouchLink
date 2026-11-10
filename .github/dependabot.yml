@@ -13,6 +13,19 @@ updates:
     groups:
       actions:
         update-types: [minor, patch]
+  - package-ecosystem: pip
+    directory: /
+    commit-message:
+      prefix: chore
+      include: scope
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    groups:
+      lint-tools:
+        update-types: [minor, patch]
   - package-ecosystem: cargo
     directory: /bridge
     commit-message:
