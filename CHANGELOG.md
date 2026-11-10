@@ -4,14 +4,33 @@ All notable user-visible changes to Parsec CouchLink. The `Unreleased` section i
 
 ## Unreleased
 
+_No notable changes since the last release._
+
+---
+
+## [v2026.11.9.0](https://github.com/RealWhyKnot/ParsecCouchLink/releases/tag/v2026.11.9.0) -- 2026-11-09
+
+### Added
+- **udp:** Pair the Pico and sign its UDP commands (f659208)
+
 ### Changed
 - **deps:** Update bridge dependencies (94244b2)
 - Add a ruff config and format listen.py (3ff07ff)
 - **deps:** Update cc, flate2 and zip (ee31779)
 - **deps:** Update winnow (2426a4f)
+- **deps:** Drop unused windows 0.48 crates from the lock (dc202fd)
+- **deps:** Bump directories from 5.0.1 to 6.0.0 in /bridge (#6) (6a56c44)
+- **deps:** Bump dialoguer from 0.11.0 to 0.12.0 in /bridge (#5) (15d078d)
+- **deps:** Bump thiserror from 1.0.69 to 2.0.18 in /bridge (#3) (11e1732)
+- **deps:** Bump the cargo group in /bridge with 8 updates (#2) (32aaccc)
 
 ### Fixed
 - **hooks:** Run the full lint before every push (18d7244)
+- **bridge:** Port USB diag log reads to nusb 0.2 (29e0c78)
+- Rate-limit log replies and report the real version (33dedf3)
+- **release:** Credit authors by profile link instead of a mention (dff6f0a)
+- Keep the build stamp in the git dir under the shared hook (2026.9.8.0-16ED4) (d98d607)
+- **release:** Pass gh --json field lists as a single argument (156869e)
 
 ---
 
